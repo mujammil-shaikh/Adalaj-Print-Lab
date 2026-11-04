@@ -117,7 +117,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
               <tbody className="divide-y divide-zinc-800/80">
                 {filteredBatches.map(b => {
                   const prod = products.find(p => p.id === b.productId);
-                  const totalPrinted = b.allocations.reduce((sum, a) => sum + (a.packsPrinted || a.expectedPacks), 0);
+                  const totalPrinted = b.allocations.reduce((sum, a) => sum + (typeof a.packsPrinted === 'number' ? a.packsPrinted : 0), 0);
 
                   return (
                     <tr key={b.id} className="hover:bg-zinc-800/40 transition-colors">

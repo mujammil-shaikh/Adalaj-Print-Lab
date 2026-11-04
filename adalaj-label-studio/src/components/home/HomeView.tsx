@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import type { Batch, Product, SKU, MachineProfile, Template, PackProfile } from '../../types';
 import { renderTemplateToCanvas } from '../../services/printTransform';
+import { parseDateInput, calculateBestBeforeDate, formatCalendarDateDMY } from '../../domain/dates';
 
 interface HomeViewProps {
   batches: Batch[];
@@ -61,30 +62,49 @@ export const HomeView: React.FC<HomeViewProps> = ({
   const currentBatch = activeBatch || batches[0];
   const currentProduct = products.find(p => p.id === currentBatch?.productId) || products[0];
 
-  // Set default preview SKU
+  // Synchronize preview SKU to current product (WF-004)
   useEffect(() => {
-    if (!selectedPreviewSkuId && skus.length > 0) {
-      const defaultSku = skus.find(s => s.productId === currentProduct?.id && s.packSize === '100 g') || skus[0];
-      setSelectedPreviewSkuId(defaultSku.id);
+    if (currentProduct) {
+      const productSkus = skus.filter(s => s.productId === currentProduct.id && s.enabled);
+      if (productSkus.length > 0 && !productSkus.some(s => s.id === selectedPreviewSkuId)) {
+        const defaultSku = productSkus.find(s => s.packSize === '100 g') || productSkus[0];
+        setSelectedPreviewSkuId(defaultSku.id);
+      }
     }
-  }, [skus, currentProduct, selectedPreviewSkuId]);
+  }, [currentProduct?.id, skus, selectedPreviewSkuId]);
 
-  const activeSku = skus.find(s => s.id === selectedPreviewSkuId) || skus[0];
+  const activeSku = skus.find(s => s.id === selectedPreviewSkuId && s.productId === currentProduct?.id) ||
+                    skus.find(s => s.productId === currentProduct?.id) ||
+                    skus[0];
 
-  // Derived values for live preview
+  // Derived values for live preview - truthful dates and commercial data (P0-03, WF-004)
   const liveValues = useMemo<Record<string, string>>(() => {
     const netGrams = activeSku?.netWeightGrams || 100;
-    const mrp = activeSku?.mrp ? `₹${activeSku.mrp}` : '₹50';
-    const rate = activeSku?.mrp ? `₹${(activeSku.mrp / netGrams).toFixed(2)}` : '₹0.50';
+    const mrp = activeSku?.mrp ? `₹${activeSku.mrp}` : '[Needs MRP]';
+    const rate = activeSku?.mrp ? `₹${(activeSku.mrp / netGrams).toFixed(2)}` : '[Needs Rate]';
+
+    let mfdStr = '[Sample MFD]';
+    let bbStr = '[Sample Expiry]';
+    if (currentBatch?.lotDate) {
+      try {
+        const cal = parseDateInput(currentBatch.lotDate);
+        mfdStr = formatCalendarDateDMY(cal);
+        const shelfLife = activeSku?.shelfLifeOverrideMonths || currentProduct?.defaultShelfLifeMonths || 12;
+        const bb = calculateBestBeforeDate(cal, shelfLife);
+        bbStr = formatCalendarDateDMY(bb);
+      } catch {
+        // Keep sample label
+      }
+    }
 
     return {
       mrp,
-      batch: currentBatch?.id || 'ADTP014',
+      batch: currentBatch?.id || '[Sample Batch]',
       net_wt: activeSku?.packSize ? activeSku.packSize.toUpperCase() : '100 GM',
-      mfd: '10/10/26',
-      best_before: '09/11/27',
+      mfd: mfdStr,
+      best_before: bbStr,
       rate_per_gm: rate,
-      product: currentProduct?.name || 'Turmeric Powder',
+      product: currentProduct?.name || 'Product',
       brand: 'ADALAJ',
       pack_size: activeSku?.packSize || '100 g'
     };
@@ -201,14 +221,11 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 onChange={e => setSelectedPreviewSkuId(e.target.value)}
                 className="bg-transparent text-amber-400 font-mono font-bold focus:outline-hidden"
               >
-                {skus.map(s => {
-                  const p = products.find(prod => prod.id === s.productId);
-                  return (
-                    <option key={s.id} value={s.id} className="bg-zinc-950 text-zinc-200">
-                      {p?.shortCode || 'AD'} {s.packSize} {s.mrp ? `(₹${s.mrp})` : '(Needs MRP)'}
-                    </option>
-                  );
-                })}
+                {skus.filter(s => s.productId === currentProduct?.id && s.enabled).map(s => (
+                  <option key={s.id} value={s.id} className="bg-zinc-950 text-zinc-200">
+                    {currentProduct?.shortCode || 'AD'} {s.packSize} {s.mrp ? `(₹${s.mrp})` : '(Needs MRP)'}
+                  </option>
+                ))}
               </select>
             </div>
 

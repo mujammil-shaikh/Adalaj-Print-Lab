@@ -36,6 +36,7 @@ import { renderTemplateToCanvas, canvasTo1BitBmp, canvasToStandardBmp, createExp
 import { fitObjectsToBand, validateTemplateQuality, type QualityIssue } from '../../services/fitEngine';
 import { buildPassPlan } from '../../services/passPlanner';
 import { hardwareManager, type HardwareTransportType, type HardwareLogEntry } from '../../services/hardwareAdapters';
+import { resolveLayout } from '../../services/layoutRegistry';
 
 interface PrintViewProps {
   batches: Batch[];
@@ -45,6 +46,9 @@ interface PrintViewProps {
   template: Template;
   machine: MachineProfile;
   packProfile: PackProfile;
+  initialAllocId?: string;
+  templates?: Template[];
+  packProfiles?: PackProfile[];
   onMarkPrinted: (batchId: string, allocId: string, count: number) => void;
   onUpdateTemplate: (t: Template) => void;
 }
@@ -57,11 +61,14 @@ export const PrintView: React.FC<PrintViewProps> = ({
   template,
   machine,
   packProfile,
+  initialAllocId,
+  templates,
+  packProfiles,
   onMarkPrinted,
   onUpdateTemplate
 }) => {
   const [selectedBatchId, setSelectedBatchId] = useState<string>(activeBatch?.id || batches[0]?.id || 'ADTP014');
-  const [selectedAllocId, setSelectedAllocId] = useState<string>('');
+  const [selectedAllocId, setSelectedAllocId] = useState<string>(initialAllocId || activeBatch?.allocations[0]?.id || '');
   const [proofStatus, setProofStatus] = useState<'Not Tested' | 'Test Printed' | 'Verified' | 'Production Ready'>('Not Tested');
   const [previewMode, setPreviewMode] = useState<'pack' | 'printer'>('pack');
   const [zoomScale, setZoomScale] = useState<number>(1.5);
@@ -91,6 +98,13 @@ export const PrintView: React.FC<PrintViewProps> = ({
     return unsub;
   }, []);
 
+  // Synchronize when initialAllocId changes from parent navigation (WF-001)
+  useEffect(() => {
+    if (initialAllocId) {
+      setSelectedAllocId(initialAllocId);
+    }
+  }, [initialAllocId]);
+
   // Synchronize selection safely without infinite loops
   useEffect(() => {
     if (currentBatch && (!selectedAllocId || !currentBatch.allocations.some(a => a.id === selectedAllocId))) {
@@ -100,22 +114,39 @@ export const PrintView: React.FC<PrintViewProps> = ({
     }
   }, [currentBatch, selectedAllocId]);
 
-  // Derived values memoized with primitive dependencies to avoid infinite re-renders
+  // Dynamically resolve template for exact selected allocation (WF-002, PR-08)
+  const activeTemplate = useMemo(() => {
+    if (!currentProduct || !currentAlloc || !templates || templates.length === 0) return template;
+    const resolved = resolveLayout(currentProduct.id, currentAlloc.packSize, templates, packProfiles || [packProfile]);
+    return resolved.template || template;
+  }, [currentProduct?.id, currentAlloc?.packSize, templates, packProfiles, template, packProfile]);
+
+  // Derived values memoized with NO fallback MRP/Date/Batch (P0-03, PR-09)
   const values = useMemo<Record<string, string>>(() => {
-    const mrpVal = currentAlloc?.mrpSnapshot ? `₹${currentAlloc.mrpSnapshot}` : '₹50';
-    const netGrams = currentAlloc?.packSize.includes('kg') ? parseFloat(currentAlloc.packSize) * 1000 : parseFloat(currentAlloc?.packSize || '100');
-    const rateVal = currentAlloc?.mrpSnapshot ? `₹${(currentAlloc.mrpSnapshot / netGrams).toFixed(2)}` : '₹0.50';
+    const matchedSku = currentAlloc ? skus.find(s => s.productId === currentProduct?.id && s.packSize.toLowerCase() === currentAlloc.packSize.toLowerCase()) : null;
+    const effectiveMrp = currentAlloc?.mrpSnapshot || matchedSku?.mrp;
+    const mrpVal = (typeof effectiveMrp === 'number' && effectiveMrp > 0) ? `₹${effectiveMrp}` : '[Needs MRP]';
+
+    const netGrams = currentAlloc?.packSize.includes('kg')
+      ? parseFloat(currentAlloc.packSize) * 1000
+      : parseFloat(currentAlloc?.packSize || '100');
+
+    const rateVal = (typeof effectiveMrp === 'number' && effectiveMrp > 0 && netGrams > 0)
+      ? `₹${(effectiveMrp / netGrams).toFixed(2)}`
+      : '[Needs Rate]';
 
     return {
       mrp: mrpVal,
-      batch: currentBatch?.id || 'ADTP014',
-      net_wt: currentAlloc?.packSize.toUpperCase() || '100 GM',
-      mfd: currentAlloc?.mfd || '10/10/26',
-      best_before: currentAlloc?.bestBefore || '09/11/27',
-      rate_per_gm: currentAlloc?.ratePerGmSnapshot ? `₹${currentAlloc.ratePerGmSnapshot.toFixed(2)}` : rateVal,
-      product: currentProduct?.name || 'Turmeric Powder',
+      batch: currentBatch?.id || '[No Batch]',
+      net_wt: currentAlloc?.packSize ? currentAlloc.packSize.toUpperCase() : '[Needs Net Wt]',
+      mfd: currentAlloc?.mfd || '[Needs MFD]',
+      best_before: currentAlloc?.bestBefore || '[Needs Expiry]',
+      rate_per_gm: (currentAlloc?.ratePerGmSnapshot && currentAlloc.ratePerGmSnapshot > 0)
+        ? `₹${currentAlloc.ratePerGmSnapshot.toFixed(2)}`
+        : rateVal,
+      product: currentProduct?.name || '[No Product]',
       brand: 'ADALAJ',
-      pack_size: currentAlloc?.packSize || '100 g'
+      pack_size: currentAlloc?.packSize || ''
     };
   }, [
     currentAlloc?.id,
@@ -125,28 +156,29 @@ export const PrintView: React.FC<PrintViewProps> = ({
     currentAlloc?.bestBefore,
     currentAlloc?.ratePerGmSnapshot,
     currentBatch?.id,
-    currentProduct?.name
+    currentProduct?.id,
+    currentProduct?.name,
+    skus
   ]);
 
   // Active Printhead Band (12.5, 12.7, 21.1, 25.0 mm, or machine default)
-  const currentBandMm = template.customBandMm || machine.printBandMm || 12.7;
+  const currentBandMm = activeTemplate.customBandMm || machine.printBandMm || 12.7;
 
   // Active Travel Length (custom e.g. 80, 100, 150 mm or pack profile default)
-  const currentLengthMm = template.customLengthMm || packProfile.printWindowLengthMm || (template.travel === 'Vertical' ? 100.0 : 45.0);
+  const currentLengthMm = activeTemplate.customLengthMm || packProfile.printWindowLengthMm || (activeTemplate.travel === 'Vertical' ? 100.0 : 45.0);
 
   // Physical millimeter bounds for preview
-  const previewWidthMm = template.travel === 'Vertical' ? currentBandMm : currentLengthMm;
-  const previewHeightMm = template.travel === 'Vertical' ? currentLengthMm : currentBandMm;
+  const previewWidthMm = activeTemplate.travel === 'Vertical' ? currentBandMm : currentLengthMm;
+  const previewHeightMm = activeTemplate.travel === 'Vertical' ? currentLengthMm : currentBandMm;
 
-  // Exact 1:1 Pixel Dimensions for Export (Defaults to 148 x 1181 px for Vertical, 1181 x 148 px for Horizontal)
-  // 148 px matches the actual physical 12.5 mm printhead swath @ 300 DPI, preventing edge cutoff
-  const defaultWidthPx = template.customWidthPx || (template.travel === 'Vertical' ? 148 : 1181);
-  const defaultHeightPx = template.customHeightPx || (template.travel === 'Vertical' ? 1181 : 148);
+  // Exact 1:1 Pixel Dimensions for Export
+  const defaultWidthPx = activeTemplate.customWidthPx || (activeTemplate.travel === 'Vertical' ? 148 : 1181);
+  const defaultHeightPx = activeTemplate.customHeightPx || (activeTemplate.travel === 'Vertical' ? 1181 : 148);
 
   const [exportWidthPx, setExportWidthPx] = useState<number>(defaultWidthPx);
   const [exportHeightPx, setExportHeightPx] = useState<number>(defaultHeightPx);
   const [exportOrientation, setExportOrientation] = useState<'1to1' | 'rotate90' | 'rotate180' | 'rotate270'>(
-    template.customDownloadOrientation || '1to1'
+    activeTemplate.customDownloadOrientation || '1to1'
   );
   const [contentScale, setContentScale] = useState<number>(1.0); // 100% design scale on canvas
   const [isFitEdgeToEdge, setIsFitEdgeToEdge] = useState<boolean>(false);
@@ -204,7 +236,7 @@ export const PrintView: React.FC<PrintViewProps> = ({
   // Generate live direct canvas preview whenever template, machine, values, or dimensions change
   const updatePreview = () => {
     try {
-      const canvas = renderTemplateToCanvas(template, machine, values, {
+      const canvas = renderTemplateToCanvas(activeTemplate, machine, values, {
         forPrinterView: false, // Pure smooth direct canvas - crisp high-resolution rendering
         widthMm: previewWidthMm,
         heightMm: previewHeightMm,
@@ -240,23 +272,27 @@ export const PrintView: React.FC<PrintViewProps> = ({
     if (document.fonts) {
       document.fonts.ready.then(() => updatePreview());
     }
-  }, [template, machine, values, exportWidthPx, exportHeightPx, exportOrientation, contentScale, isFitEdgeToEdge]);
+  }, [activeTemplate, machine, values, exportWidthPx, exportHeightPx, exportOrientation, contentScale, isFitEdgeToEdge]);
 
   // Quality validation
-  const issues = validateTemplateQuality(template, machine, packProfile);
+  const issues = validateTemplateQuality(activeTemplate, machine, packProfile);
 
   // Pass plan
-  const passPlan = buildPassPlan(template, machine, packProfile, currentBatch?.id || 'TP014');
+  const passPlan = buildPassPlan(activeTemplate, machine, packProfile, currentBatch?.id || 'TP014');
 
   // One-click repair
   const handleRepairAll = () => {
-    const res = fitObjectsToBand(template, machine, packProfile);
+    const res = fitObjectsToBand(activeTemplate, machine, packProfile);
     onUpdateTemplate(res.template);
   };
 
   // Standard Windows BMP Download (Exact 1:1 Pixel Match - No forced rotation)
   const handleDownloadBmp = () => {
-    const canvas = renderTemplateToCanvas(template, machine, values, {
+    if (values.mrp === '[Needs MRP]') {
+      setExportCompleteMsg('❌ Export blocked: Missing authorized MRP for this pack size.');
+      return;
+    }
+    const canvas = renderTemplateToCanvas(activeTemplate, machine, values, {
       forDownload: true,
       widthMm: previewWidthMm,
       heightMm: previewHeightMm,
@@ -280,7 +316,11 @@ export const PrintView: React.FC<PrintViewProps> = ({
 
   // Direct 1-bit Raw Industrial BMP Download (Exact 1:1 Pixel Match)
   const handleDownload1BitBmp = () => {
-    const canvas = renderTemplateToCanvas(template, machine, values, {
+    if (values.mrp === '[Needs MRP]') {
+      setExportCompleteMsg('❌ Export blocked: Missing authorized MRP for this pack size.');
+      return;
+    }
+    const canvas = renderTemplateToCanvas(activeTemplate, machine, values, {
       forDownload: true,
       widthMm: previewWidthMm,
       heightMm: previewHeightMm,
@@ -304,9 +344,13 @@ export const PrintView: React.FC<PrintViewProps> = ({
 
   // ZIP Package with INDEX.TXT Download
   const handleDownloadZip = async () => {
+    if (values.mrp === '[Needs MRP]') {
+      setExportCompleteMsg('❌ Export blocked: Missing authorized MRP for this pack size.');
+      return;
+    }
     setIsExporting(true);
     try {
-      const canvas = renderTemplateToCanvas(template, machine, values, {
+      const canvas = renderTemplateToCanvas(activeTemplate, machine, values, {
         forDownload: true,
         widthMm: previewWidthMm,
         heightMm: previewHeightMm,
@@ -378,9 +422,13 @@ export const PrintView: React.FC<PrintViewProps> = ({
 
   // Direct Hardware Transmit (WebUSB, Bluetooth, Network Socket)
   const handleTransmitDirect = async () => {
+    if (values.mrp === '[Needs MRP]') {
+      setExportCompleteMsg('❌ Transmission blocked: Missing authorized MRP.');
+      return;
+    }
     setIsTransmitting(true);
     try {
-      const canvas = renderTemplateToCanvas(template, machine, values, {
+      const canvas = renderTemplateToCanvas(activeTemplate, machine, values, {
         forDownload: true
       });
       const bmpBlob = canvasTo1BitBmp(canvas);
@@ -891,7 +939,7 @@ export const PrintView: React.FC<PrintViewProps> = ({
                 <span>White Substrate + Pure Black Ink</span>
               </span>
               <span>•</span>
-              <span>Mode: {template.travel} + {template.layout}</span>
+              <span>Mode: {activeTemplate.travel} + {activeTemplate.layout}</span>
               <span>•</span>
               <span>{machine.printBandMm} mm Head Band @ {machine.defaultDpi} DPI</span>
               <span>•</span>

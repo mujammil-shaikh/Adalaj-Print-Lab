@@ -19,6 +19,8 @@ import {
   Trash2
 } from 'lucide-react';
 import type { Batch, BatchAllocation, Product, SKU } from '../../types';
+import { createBatchCommand, generateNextBatchId } from '../../domain/batchCommands';
+import { parseDateInput, calculateBestBeforeDate, formatCalendarDateDMY } from '../../domain/dates';
 
 interface BatchesViewProps {
   batches: Batch[];
@@ -95,48 +97,43 @@ export const BatchesView: React.FC<BatchesViewProps> = ({
     return val || 100;
   };
 
-  // Generate next sequential Batch ID (e.g. ADTP014, ADTP015, etc.)
-  const generateNextBatchId = React.useCallback((prodId?: string) => {
-    const prod = products.find(p => p.id === (prodId || selectedProductId)) || products[0];
-    const prefix = prod?.batchPrefix || 'ADTP';
-    let maxNum = 13;
-    batches.forEach(b => {
-      if (b.id && b.id.startsWith(prefix)) {
-        const numPart = parseInt(b.id.replace(prefix, '').trim(), 10);
-        if (!isNaN(numPart) && numPart > maxNum) {
-          maxNum = numPart;
-        }
-      }
-    });
-    return `${prefix}${String(maxNum + 1).padStart(3, '0')}`;
-  }, [products, selectedProductId, batches]);
-
   const handleOpenWizard = () => {
     const prod = products.find(p => p.id === selectedProductId) || products[0];
-    const nextId = generateNextBatchId(prod?.id);
+    const nextId = generateNextBatchId(prod?.batchPrefix || 'ADTP', batches);
     setBatchIdInput(nextId);
     setRawKgInput(50);
     setMrpErrorAlert('');
     setLotDateInput(new Date().toISOString().slice(0, 10));
 
-    // Pre-populate with default 100g and 500g rows
-    setWizardAllocations([
-      { id: `alloc_${Date.now()}_1`, packSize: '100 g', allocatedKg: 15, mrp: '50' },
-      { id: `alloc_${Date.now()}_2`, packSize: '500 g', allocatedKg: 15, mrp: '220' }
-    ]);
+    // Pre-populate with actual enabled SKUs for this product (WF-015)
+    const enabledSkus = skus.filter(s => s.productId === prod?.id && s.enabled);
+    const initialRows = (enabledSkus.length > 0
+      ? enabledSkus.slice(0, 2).map((s, idx) => ({
+          id: `alloc_${Date.now()}_${idx + 1}`,
+          packSize: s.packSize,
+          allocatedKg: 15,
+          mrp: s.mrp ? String(s.mrp) : ''
+        }))
+      : [
+          { id: `alloc_${Date.now()}_1`, packSize: '100 g', allocatedKg: 15, mrp: '' },
+          { id: `alloc_${Date.now()}_2`, packSize: '500 g', allocatedKg: 15, mrp: '' }
+        ]
+    );
+    setWizardAllocations(initialRows);
     setShowNewWizard(true);
   };
 
   const handleAddWizardAllocRow = (suggestedSize = '200 g') => {
-    const grams = parsePackGrams(suggestedSize);
-    const defaultMrp = grams === 500 ? '220' : grams === 100 ? '50' : `${Math.round((grams / 100) * 50)}`;
+    const prod = products.find(p => p.id === selectedProductId) || products[0];
+    const matched = skus.find(s => s.productId === prod?.id && s.packSize.toLowerCase() === suggestedSize.toLowerCase());
+    const mrp = matched?.mrp ? String(matched.mrp) : '';
     setWizardAllocations(prev => [
       ...prev,
       {
         id: `alloc_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
         packSize: suggestedSize,
         allocatedKg: 5,
-        mrp: defaultMrp
+        mrp
       }
     ]);
   };
@@ -150,107 +147,75 @@ export const BatchesView: React.FC<BatchesViewProps> = ({
     setMrpErrorAlert('');
   };
 
-  const wizardTotalAllocatedKg = wizardAllocations.reduce((sum, a) => sum + (a.allocatedKg || 0), 0);
-  const wizardRemainingLooseKg = Math.max(0, rawKgInput - wizardTotalAllocatedKg);
+  const wizardTotalAllocatedKg = wizardAllocations.reduce((sum, a) => sum + (Number(a.allocatedKg) || 0), 0);
+  const wizardRemainingLooseKg = Math.max(0, (Number(rawKgInput) || 0) - wizardTotalAllocatedKg);
 
   const handleCreateBatchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const prod = products.find(p => p.id === selectedProductId) || products[0] || {
-      id: 'prod_adtp',
-      name: 'Turmeric Powder',
-      shortCode: 'ADTP',
-      batchPrefix: 'ADTP',
-      defaultShelfLifeMonths: 12,
-      allowedPackSizes: ['100 g', '500 g']
-    };
-
-    const effectiveBatchId = (batchIdInput || '').trim() || generateNextBatchId(prod.id);
-
-    // If no allocations entered, supply default allocation
-    let allocRows = wizardAllocations;
-    if (allocRows.length === 0) {
-      allocRows = [{ id: `alloc_${Date.now()}`, packSize: '100 g', allocatedKg: Math.min(rawKgInput, 15), mrp: '50' }];
+    const prod = products.find(p => p.id === selectedProductId) || products[0];
+    if (!prod) {
+      setMrpErrorAlert('Please select a valid product first.');
+      return;
     }
 
-    const allocations: BatchAllocation[] = [];
-    const today = lotDateInput ? new Date(lotDateInput) : new Date();
-    const validDate = isNaN(today.getTime()) ? new Date() : today;
-    const day = String(validDate.getDate()).padStart(2, '0');
-    const month = String(validDate.getMonth() + 1).padStart(2, '0');
-    const year = String(validDate.getFullYear()).slice(-2);
-    const mfdFormatted = `${day}/${month}/${year}`;
+    const effectiveBatchId = (batchIdInput || '').trim() || generateNextBatchId(prod.batchPrefix || 'ADTP', batches);
 
-    // Calculate best before: MFD + shelf_life_months - 1 day
-    const shelfLife = typeof prod.defaultShelfLifeMonths === 'number' ? prod.defaultShelfLifeMonths : 12;
-    const bbDate = new Date(validDate);
-    bbDate.setMonth(bbDate.getMonth() + shelfLife);
-    bbDate.setDate(bbDate.getDate() - 1);
-    const bbFormatted = `${String(bbDate.getDate()).padStart(2, '0')}/${String(bbDate.getMonth() + 1).padStart(2, '0')}/${String(bbDate.getFullYear()).slice(-2)}`;
-
-    allocRows.forEach((row, idx) => {
-      const allocKg = typeof row.allocatedKg === 'number' && row.allocatedKg > 0 ? row.allocatedKg : 5;
-      const packGrams = parsePackGrams(row.packSize);
-      const expectedPacks = Math.max(1, Math.floor((allocKg * 1000) / packGrams));
-
-      const matchedSku = skus.find(s => s.productId === prod.id && s.packSize.toLowerCase() === row.packSize.toLowerCase());
-      const defaultMrp = matchedSku?.mrp || (packGrams === 500 ? 220 : Math.round((packGrams / 100) * 50));
-      const parsedMrp = parseFloat(row.mrp);
-      const mrp = (!isNaN(parsedMrp) && parsedMrp > 0) ? parsedMrp : defaultMrp;
-
-      allocations.push({
-        id: `alloc_${Date.now()}_${idx}`,
+    // Call pure domain command (validates uniqueness, mass balance, dates, pack counts)
+    const result = createBatchCommand(
+      {
         batchId: effectiveBatchId,
-        skuId: matchedSku?.id || `sku_${row.packSize.replace(/\s+/g, '_')}`,
         productId: prod.id,
-        packSize: row.packSize,
-        allocatedKg: allocKg,
-        expectedPacks,
-        mfd: mfdFormatted,
-        bestBefore: bbFormatted,
-        mrpSnapshot: mrp,
-        ratePerGmSnapshot: Math.round((mrp / packGrams) * 100) / 100,
-        templateVersionSnapshot: 1,
-        printStatus: 'Pending',
-        packsPrinted: 0
-      });
-    });
+        rawMaterialKg: Number(rawKgInput) || 0,
+        lotDate: lotDateInput || new Date().toISOString().slice(0, 10),
+        allocations: wizardAllocations.map(r => ({
+          packSize: r.packSize,
+          allocatedKg: Number(r.allocatedKg) || 0,
+          mrp: r.mrp ? parseFloat(r.mrp) : undefined,
+        })),
+      },
+      prod,
+      skus,
+      batches
+    );
 
-    const totalAllocKg = allocations.reduce((s, a) => s + a.allocatedKg, 0);
-    const newBatch: Batch = {
-      id: effectiveBatchId,
-      productId: prod.id,
-      rawMaterialKg: Math.max(rawKgInput, totalAllocKg),
-      lotDate: lotDateInput || new Date().toISOString().slice(0, 10),
-      status: 'Open',
-      notes: `Batch ${effectiveBatchId}: ${rawKgInput} kg input, ${totalAllocKg} kg allocated across ${allocations.length} pack size(s).`,
-      allocations,
-      createdAt: new Date().toISOString()
-    };
+    if (!result.success || !result.batch) {
+      setMrpErrorAlert(result.error || 'Failed to create batch');
+      return;
+    }
 
-    onCreateBatch(newBatch);
-    onSelectBatch(newBatch);
+    onCreateBatch(result.batch);
+    onSelectBatch(result.batch);
     setShowNewWizard(false);
-    setToastMsg(`✓ Batch ${effectiveBatchId} created successfully with ${allocations.length} pack allocation(s)!`);
+    setToastMsg(`✓ Batch ${result.batch.id} created successfully with ${result.batch.allocations.length} pack allocation(s)!`);
     setTimeout(() => setToastMsg(null), 4000);
   };
 
   const handlePackFromLoose = () => {
     if (!currentBatch || kgFromLoose <= 0 || kgFromLoose > looseBalanceKg) return;
 
-    const packGrams = packSizeFromLoose.includes('kg') ? parseFloat(packSizeFromLoose) * 1000 : parseFloat(packSizeFromLoose);
+    const packGrams = parsePackGrams(packSizeFromLoose);
     const expectedPacks = Math.floor((kgFromLoose * 1000) / packGrams);
 
-    const today = new Date();
-    const mfdFormatted = `${String(today.getDate()).padStart(2, '0')}/${String(today.getMonth() + 1).padStart(2, '0')}/${String(today.getFullYear()).slice(-2)}`;
-    const bbFormatted = '09/11/27';
+    const prod = products.find(p => p.id === currentBatch.productId);
+    const sku = skus.find(s => s.productId === currentBatch.productId && s.packSize.toLowerCase() === packSizeFromLoose.toLowerCase());
+    const mrp = sku?.mrp;
 
-    const sku = skus.find(s => s.productId === currentBatch.productId && s.packSize === packSizeFromLoose);
-    const mrp = sku?.mrp || 50;
+    let mfdFormatted = '04/11/26';
+    let bbFormatted = '03/11/27';
+    try {
+      const cal = parseDateInput(currentBatch.lotDate || new Date());
+      mfdFormatted = formatCalendarDateDMY(cal);
+      const shelfLife = sku?.shelfLifeOverrideMonths || prod?.defaultShelfLifeMonths || 12;
+      const bb = calculateBestBeforeDate(cal, shelfLife);
+      bbFormatted = formatCalendarDateDMY(bb);
+    } catch {
+      // fallback
+    }
 
     const newAlloc: BatchAllocation = {
       id: `alloc_${Date.now()}`,
       batchId: currentBatch.id,
-      skuId: sku?.id || 'sku_custom',
+      skuId: sku?.id || `sku_loose_${packSizeFromLoose.replace(/\s+/g, '_')}`,
       productId: currentBatch.productId,
       packSize: packSizeFromLoose,
       allocatedKg: kgFromLoose,
@@ -258,7 +223,7 @@ export const BatchesView: React.FC<BatchesViewProps> = ({
       mfd: mfdFormatted,
       bestBefore: bbFormatted,
       mrpSnapshot: mrp,
-      ratePerGmSnapshot: Math.round((mrp / packGrams) * 100) / 100,
+      ratePerGmSnapshot: (mrp && mrp > 0) ? Math.round((mrp / packGrams) * 100) / 100 : undefined,
       templateVersionSnapshot: 1,
       printStatus: 'Pending',
       packsPrinted: 0

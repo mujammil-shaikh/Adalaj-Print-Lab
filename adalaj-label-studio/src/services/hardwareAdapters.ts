@@ -298,14 +298,13 @@ class HardwareManager {
       this.addLog('success', `Network socket packet delivered to ${ip}:${port} (${buffer.byteLength} bytes).`);
       return { success: true, bytesWritten: buffer.byteLength };
     } catch (err: any) {
-      // If direct cross-origin HTTP fails in browser sandbox, provide transparent diagnosis
       const msg = err.name === 'AbortError'
         ? `Connection timed out to ${ip}:${port}. Check IP address and printer power.`
-        : `Network socket note: Direct cross-origin browser fetch to ${ip}:${port} completed (or intercepted by CORS policy). For isolated factory intranets, ensure printer accepts raw HTTP POST or configure a local proxy.`;
+        : `Network socket transmission to ${ip}:${port} failed: ${err.message || 'CORS / Network Error'}. Direct raw TCP printing requires a local print agent bridge; browser sandbox cannot guarantee raw socket delivery.`;
       
-      this.addLog('warning', msg);
-      // Considered dispatched in embedded industrial environments
-      return { success: true, bytesWritten: buffer.byteLength };
+      this.addLog('error', msg);
+      // P0-01/PR-01/PR-02: Never return success on adapter failure or timeout!
+      return { success: false, bytesWritten: 0, error: msg };
     }
   }
 
@@ -335,13 +334,15 @@ class HardwareManager {
       return {
         success: res.success,
         bytesWritten: res.bytesWritten,
-        message: `Network transmission dispatched to ${this.networkConfig.ip}:${this.networkConfig.port} (${res.bytesWritten} bytes).`
+        message: res.success
+          ? `Network transmission dispatched to ${this.networkConfig.ip}:${this.networkConfig.port} (${res.bytesWritten} bytes).`
+          : `Network transmission failed: ${res.error || 'Connection error'}`
       };
     } else {
       return {
         success: true,
         bytesWritten: buffer.byteLength,
-        message: 'USB Drive file ready for FAT32 export.'
+        message: 'USB Drive file ready for FAT32 export (offline file preparation).'
       };
     }
   }

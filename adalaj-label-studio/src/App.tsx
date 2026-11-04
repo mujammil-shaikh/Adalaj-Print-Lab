@@ -34,6 +34,7 @@ import {
   getCleanGlobalPackDefault,
   getFactoryProductTemplate
 } from './services/layoutRegistry';
+import { generateNextBatchId, duplicateBatchCommand } from './domain/batchCommands';
 
 // Shell Components
 import { Header } from './components/shell/Header';
@@ -81,6 +82,7 @@ export default function App() {
   const [activeSku, setActiveSku] = useState<SKU | null>(null);
   const [activePackProfile, setActivePackProfile] = useState<PackProfile | null>(null);
   const [activeTemplate, setActiveTemplate] = useState<Template | null>(null);
+  const [printAllocId, setPrintAllocId] = useState<string>('');
 
   // Initialize DB and load all data
   const loadDatabase = useCallback(async () => {
@@ -651,6 +653,7 @@ export default function App() {
             onCreateBatch={handleCreateBatch}
             onNavigateToPrint={(b, allocId) => {
               setActiveBatch(b);
+              if (allocId) setPrintAllocId(allocId);
               setCurrentRoute('print');
             }}
             onUpdateBatch={handleUpdateBatch}
@@ -700,7 +703,7 @@ export default function App() {
 
         {currentRoute === 'print' && (() => {
           const printBatch = activeBatch || batches[0];
-          const printAlloc = printBatch?.allocations[0];
+          const printAlloc = (printAllocId ? printBatch?.allocations.find(a => a.id === printAllocId) : null) || printBatch?.allocations[0];
           const printPackSize = printAlloc?.packSize || activeSku?.packSize || '100 g';
           const printProductId = printBatch?.productId || activeProduct?.id || '';
           const resolvedPrintTmpl = resolveLayout(printProductId, printPackSize, templates, packProfiles).template;
@@ -708,8 +711,11 @@ export default function App() {
             <PrintView
               batches={batches}
               activeBatch={printBatch}
+              initialAllocId={printAlloc?.id}
               products={products}
               skus={skus}
+              templates={templates}
+              packProfiles={packProfiles}
               template={resolvedPrintTmpl || activeTemplate || templates[0]}
               machine={activeMachine || machines[0]}
               packProfile={activePackProfile || packProfiles[0]}
@@ -732,15 +738,20 @@ export default function App() {
               setCurrentRoute('print');
             }}
             onDuplicateBatch={b => {
-              const duplicated: Batch = {
-                ...b,
-                id: `${b.productId === 'prod_adtp' ? 'ADTP' : 'BAT'}015`,
-                lotDate: new Date().toISOString().slice(0, 10),
-                status: 'Open',
-                createdAt: new Date().toISOString()
-              };
-              handleCreateBatch(duplicated);
-              setCurrentRoute('batches');
+              const prod = products.find(p => p.id === b.productId) || products[0];
+              const nextId = generateNextBatchId(prod.batchPrefix || 'ADTP', batches);
+              const result = duplicateBatchCommand(
+                b,
+                nextId,
+                new Date().toISOString().slice(0, 10),
+                batches,
+                prod,
+                skus
+              );
+              if (result.success && result.batch) {
+                handleCreateBatch(result.batch);
+                setCurrentRoute('batches');
+              }
             }}
           />
         )}

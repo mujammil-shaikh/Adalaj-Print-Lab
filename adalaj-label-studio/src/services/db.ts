@@ -65,8 +65,13 @@ export function initializeDatabase(): Promise<void> {
 }
 
 async function doInitializeDatabase() {
-  const businessCount = await db.businesses.count();
-  if (businessCount > 0) return;
+  const [businessCount, machCount, tmplCount] = await Promise.all([
+    db.businesses.count(),
+    db.machineProfiles.count(),
+    db.templates.count(),
+  ]);
+  // DATA-03: Ensure incomplete databases are healed rather than skipping on businessCount alone
+  if (businessCount > 0 && machCount > 0 && tmplCount > 0) return;
 
   const initialBusiness: Business = {
     id: 'biz_default',
