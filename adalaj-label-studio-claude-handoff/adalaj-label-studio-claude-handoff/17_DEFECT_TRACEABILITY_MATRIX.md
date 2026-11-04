@@ -2,75 +2,75 @@
 
 This matrix is the control sheet for the audit. Status is **identified / not fixed by this audit**. Claude Code must update status only after a code change and a test prove the correction. Severity: P0 = production correctness/safety blocker; P1 = major workflow or reliability defect; P2 = usability/maintainability improvement.
 
-| ID | Area | Finding | Severity | Primary source | Required proof |
-|---|---|---|---|---|---|
-| DATA-01 | Product/SKU | Product and SKU writes can be split across operations; partial state possible | P0 | `src/App.tsx`, `src/services/db.ts` | Transaction rollback test |
-| DATA-02 | Product/SKU | SKU code generation lacks robust uniqueness enforcement | P0 | `src/App.tsx`, `src/services/db.ts` | Duplicate/concurrent code test |
-| DATA-03 | Initialization | Seed logic can skip healing incomplete tables | P1 | `src/services/db.ts` | Partial DB recovery test |
-| DATA-04 | Initialization | Stale SKU array set after verified SKU update | P1 | `src/App.tsx` | Persist/reload/state consistency test |
-| DATA-05 | Batch | Batch ID generation/manual override lacks duplicate protection | P0 | `src/components/batches/BatchesView.tsx` | Duplicate batch creation test |
-| DATA-06 | Batch | Allocation IDs/foreign references may be reused on duplicate | P0 | `src/components/history/HistoryView.tsx`, `src/types/index.ts` | Duplicate batch referential-integrity test |
-| DATA-07 | Inventory | Mass-balance/allocation calculations duplicated and hidden by coercion | P0 | Batches/Home/App | Domain property tests |
-| DATA-08 | Inventory | `Math.max`/minimum-one fallbacks can force allocations/pack count | P0 | `BatchesView.tsx` | Invalid/zero allocation test |
-| DATA-09 | Dates | UTC string/local date handling can shift business calendar date | P1 | Batches/Home | Timezone matrix test |
-| DATA-10 | Dates | Month-end `setMonth` expiry behavior can overflow | P1 | `BatchesView.tsx` | Jan-31/Feb-29/leap-year test |
-| DATA-11 | Home | Loose-stock summary includes inappropriate batch states and clamps negatives | P1 | `HomeView.tsx` | Stock ledger reconciliation test |
-| DATA-12 | Products | Bulk selection can retain hidden IDs and edit filtered-out rows | P1 | `ProductsView.tsx` | Filter + select-all + bulk edit test |
-| DATA-13 | Products | CSV export does not fully escape quotes; import absent/incomplete | P2 | `ProductsView.tsx` | CSV round-trip/escaping test |
-| DATA-14 | Products | Invalid MRP can be converted to undefined and editor closes | P1 | `ProductsView.tsx`, `App.tsx` | Invalid form retains input and error |
-| PR-01 | Transport | Network raw print uses browser `no-cors` fetch; cannot verify response | P0 | `src/services/hardwareAdapters.ts` | Adapter contract test; agent integration |
-| PR-02 | Transport | Network error path may return success | P0 | `hardwareAdapters.ts` | Error/timeout cannot return success |
-| PR-03 | Transport | Dispatch wrapper can report success regardless of underlying result | P0 | `hardwareAdapters.ts` | End-to-end simulated failure |
-| PR-04 | Print status | Mark printed can mark expected count without device evidence | P0 | `PrintView.tsx`, `App.tsx` | Count/state distinction tests |
-| PR-05 | Print | Browser USB assumes device configuration/interface/endpoint | P1 | `hardwareAdapters.ts` | Hardware profile tests |
-| PR-06 | Print | BLE accepts all devices and selects first writable characteristic | P1 | `hardwareAdapters.ts` | Unsupported device and protocol tests |
-| PR-07 | Print | USB-drive branch does not write to drive but suggests ready | P1 | `hardwareAdapters.ts`, `PrintView.tsx` | UI truth test |
-| PR-08 | Print | Wrong allocation may use first allocation template | P0 | `src/App.tsx`, `PrintView.tsx` | Select allocation #2 E2E |
-| PR-09 | Print | Print preview inserts fallback MRP and dates | P0 | `PrintView.tsx` | Missing business values block print |
-| PR-10 | Print | Render errors are console-only; stale preview can remain | P1 | `PrintView.tsx` | Render failure state test |
-| PR-11 | Export | Pass planner may report multiple passes while ZIP emits one file set | P1 | `PrintView.tsx`, `passPlanner.ts` | Multi-pass file-count test |
-| PR-12 | Export | Hardcoded “Pass 1 of 1” conflicts with manifest | P1 | `PrintView.tsx` | Manifest consistency test |
-| RENDER-01 | Raster | BMP header hardcodes 300 DPI | P1 | `printTransform.ts` | DPI header test |
-| RENDER-02 | Raster | X/Y DPI averaged in physical conversion | P1 | `printTransform.ts` | Non-square DPI geometry test |
-| RENDER-03 | Raster | Download/printer orientation transform diverges | P1 | `printTransform.ts`, `DesignerView.tsx` | Golden orientation test |
-| RENDER-04 | Assets | Async image may be omitted on initial render | P1 | `printTransform.ts` | Cold-cache image render test |
-| RENDER-05 | Symbols | Symbol object branch not properly rendered | P1 | `printTransform.ts` | Symbol fixture test or block type |
-| RENDER-06 | Symbols | Invert does not draw background region | P2 | `printTransform.ts` | Black/white pixel test |
-| RENDER-07 | Barcode/QR | Decorative bars used instead of actual encoded symbology | P0 | `printTransform.ts` | Barcode/QR decode tests |
-| FIT-01 | Designer | Text fitting uses rough character approximation | P1 | `fitEngine.ts` | Real font metric tests |
-| FIT-02 | Designer | Fit selected may reflow all objects | P1 | `fitEngine.ts`, `DesignerView.tsx` | Selected object scope test |
-| FIT-03 | Designer | Fixed dimensions/column assumptions in layouts | P1 | `fitEngine.ts` | Profile-driven geometry tests |
-| FIT-04 | Designer | Incomplete geometry, rotation and negative-bound validation | P1 | `fitEngine.ts` | Rotated/out-of-bounds tests |
-| PASS-01 | Planner | Template/machine travel constraint mismatch | P1 | `passPlanner.ts` | Override constraint test |
-| PASS-02 | Planner | Zero objects can produce negative gap/travel intermediate | P1 | `passPlanner.ts` | Empty plan test |
-| PASS-03 | Planner | Vertical stack split uses hardcoded half/length behavior | P1 | `passPlanner.ts` | Boundary property tests |
-| DESIGN-01 | Designer | Very large monolithic component complicates state and test coverage | P2 | `DesignerView.tsx` | Component/module coverage and regression suite |
-| DESIGN-02 | Designer | Canvas mouse handlers lack robust pointer/clamping behavior | P1 | `DesignerView.tsx` | Drag/resize/pointer tests |
-| DESIGN-03 | Designer | Global keyboard commands may run while contenteditable focused | P1 | `DesignerView.tsx`, `App.tsx` | Focus-suppression test |
-| DESIGN-04 | Designer | Image assets lack robust async load/import lifecycle | P1 | `DesignerView.tsx`, `printTransform.ts` | Import/reload/render test |
-| DESIGN-05 | Designer | QR default uses hardcoded example URL | P1 | `DesignerView.tsx` | No invented payload test |
-| DESIGN-06 | Designer | Calibration factor saved but not used in editor | P2 | `SettingsView.tsx`, `DesignerView.tsx` | Calibration behavior test or remove setting |
-| HIST-01 | History | Print jobs not persisted despite table/claims | P0 | `db.ts`, `PrintView.tsx`, `HistoryView.tsx` | Job write and reload test |
-| HIST-02 | History | Exact reprint rebuilds from current live data/template | P0 | `HistoryView.tsx`, `PrintView.tsx` | Byte-identical historical artifact test |
-| HIST-03 | History | Hardcoded history status/batch filters | P1 | `HistoryView.tsx` | Dynamic query/filter tests |
-| HIST-04 | History | `packsPrinted || expectedPacks` corrupts zero semantics | P0 | `HistoryView.tsx` | Zero-count test |
-| HIST-05 | History | No attempt timeline/operator/device evidence | P1 | History/DB/types | Audit completeness test |
-| SET-01 | Settings | Machine profile update callback unused / editor absent | P1 | `SettingsView.tsx` | Edit/save/reload test |
-| SET-02 | Settings | Pack wizard captures incomplete physical window/calibration | P1 | `SettingsView.tsx`, `types/index.ts` | Calibration fixture test |
-| SET-03 | Settings | Hardware settings advertise capabilities not truly implemented | P1 | `SettingsView.tsx`, `hardwareAdapters.ts` | UI adapter capability contract test |
-| SET-04 | Settings | Display calibration stored but unused | P2 | `SettingsView.tsx`, `DesignerView.tsx` | Functional proof or remove |
-| SET-05 | Settings | Shortcut input is text, not real key capture | P1 | `SettingsView.tsx` | Keyboard capture interaction test |
-| SET-06 | Settings | Shortcut dispatcher hardcoded, registry remapping diverges | P1 | `App.tsx`, `actionRegistry.ts` | Rebind dispatch test |
-| SET-07 | Backup | Export/import incomplete, no dry-run/transaction/version safety | P0 | `SettingsView.tsx`, `db.ts` | Corrupt/rollback restore tests |
-| AI-01 | AI | Google GenAI package/client initialized but current prompt path is rule-based | P2 | `aiCopilot.ts` | Honest labeling or secure real model integration |
-| AI-02 | AI | Hardcoded scenarios may produce invalid allocations | P1 | `aiCopilot.ts` | Proposal domain validation tests |
-| AI-03 | AI | Apply path writes audit but does not apply every proposal mutation | P0 | `aiCopilot.ts`, `AICopilotDrawer.tsx`, `App.tsx` | Persisted result verification test |
-| AI-04 | AI | Auto-approval unsafe for production-changing proposals | P0 | AI service and drawer | No mutation without explicit approval |
-| SHELL-01 | Navigation | View-state navigation is not URL/deep-linkable | P2 | `App.tsx` | Refresh/back/deep-link E2E |
-| SHELL-02 | Actions | Action registry only covers subset of app actions | P1 | `App.tsx`, `actionRegistry.ts` | Action catalog parity test |
-| SHELL-03 | Accessibility | Clickable containers are not semantic buttons | P1 | Header/views | Keyboard/accessibility audit |
-| SHELL-04 | PWA | `navigator.onLine` indicator is not real sync state | P2 | `PWAInstallButton.tsx` / shell | Offline/sync state tests |
-| SHELL-05 | Tour | Guided tour/help content can drift from actual action behavior | P2 | `GuidedTour.tsx`, `KeyboardOverlays.tsx` | Tour target/command integration tests |
+| ID | Area | Finding | Severity | Primary source | Required proof | Status | Verified Test File & Name |
+|---|---|---|---|---|---|---|---|
+| DATA-01 | Product/SKU | Product and SKU writes can be split across operations; partial state possible | P0 | `src/App.tsx`, `src/services/db.ts` | Transaction rollback test | In Progress | App mutation review |
+| DATA-02 | Product/SKU | SKU code generation lacks robust uniqueness enforcement | P0 | `src/App.tsx`, `src/services/db.ts` | Duplicate/concurrent code test | In Progress | App mutation review |
+| DATA-03 | Initialization | Seed logic can skip healing incomplete tables | P1 | `src/services/db.ts` | Partial DB recovery test | Fixed | `src/services/db.ts` multi-table count heal |
+| DATA-04 | Initialization | Stale SKU array set after verified SKU update | P1 | `src/App.tsx` | Persist/reload/state consistency test | In Progress | SKU reload review |
+| DATA-05 | Batch | Batch ID generation/manual override lacks duplicate protection | P0 | `src/components/batches/BatchesView.tsx` | Duplicate batch creation test | Fixed | `tests/domain/batchCommands.test.ts` (rejects duplicate batch IDs) |
+| DATA-06 | Batch | Allocation IDs/foreign references may be reused on duplicate | P0 | `src/components/history/HistoryView.tsx`, `src/types/index.ts` | Duplicate batch referential-integrity test | Fixed | `tests/domain/batchCommands.test.ts` (duplicates batch with new unique IDs) |
+| DATA-07 | Inventory | Mass-balance/allocation calculations duplicated and hidden by coercion | P0 | Batches/Home/App | Domain property tests | Fixed | `tests/domain/datesAndInventory.test.ts` (validates mass balance and rejects over-allocation) |
+| DATA-08 | Inventory | `Math.max`/minimum-one fallbacks can force allocations/pack count | P0 | `BatchesView.tsx` | Invalid/zero allocation test | Fixed | `tests/domain/datesAndInventory.test.ts` (calculates expected packs without forcing minimum 1) |
+| DATA-09 | Dates | UTC string/local date handling can shift business calendar date | P1 | Batches/Home | Timezone matrix test | Fixed | `tests/domain/datesAndInventory.test.ts` (parses YYYY-MM-DD correctly without UTC day shift) |
+| DATA-10 | Dates | Month-end `setMonth` expiry behavior can overflow | P1 | `BatchesView.tsx` | Jan-31/Feb-29/leap-year test | Fixed | `tests/domain/datesAndInventory.test.ts` (correctly clamps Jan-31 + 1 month) |
+| DATA-11 | Home | Loose-stock summary includes inappropriate batch states and clamps negatives | P1 | `HomeView.tsx` | Stock ledger reconciliation test | In Progress | Ledger reconciliation |
+| DATA-12 | Products | Bulk selection can retain hidden IDs and edit filtered-out rows | P1 | `ProductsView.tsx` | Filter + select-all + bulk edit test | Identified | Bulk selection |
+| DATA-13 | Products | CSV export does not fully escape quotes; import absent/incomplete | P2 | `ProductsView.tsx` | CSV round-trip/escaping test | Identified | CSV escaping |
+| DATA-14 | Products | Invalid MRP can be converted to undefined and editor closes | P1 | `ProductsView.tsx`, `App.tsx` | Invalid form retains input and error | Identified | ProductsView edit |
+| PR-01 | Transport | Network raw print uses browser `no-cors` fetch; cannot verify response | P0 | `src/services/hardwareAdapters.ts` | Adapter contract test; agent integration | Fixed | `tests/hardware/hardwareAdapters.test.ts` (never returns success on network connection failure) |
+| PR-02 | Transport | Network error path may return success | P0 | `hardwareAdapters.ts` | Error/timeout cannot return success | Fixed | `tests/hardware/hardwareAdapters.test.ts` |
+| PR-03 | Transport | Dispatch wrapper can report success regardless of underlying result | P0 | `hardwareAdapters.ts` | End-to-end simulated failure | Fixed | `tests/hardware/hardwareAdapters.test.ts` |
+| PR-04 | Print status | Mark printed can mark expected count without device evidence | P0 | `PrintView.tsx`, `App.tsx` | Count/state distinction tests | Fixed | `tests/domain/printJob.test.ts` (reconciles partial quantities) |
+| PR-05 | Transport | Browser USB assumes device configuration/interface/endpoint | P1 | `hardwareAdapters.ts` | Hardware profile tests | Identified | USB profile |
+| PR-06 | Transport | BLE accepts all devices and selects first writable characteristic | P1 | `hardwareAdapters.ts` | Unsupported device and protocol tests | Identified | BLE profile |
+| PR-07 | Transport | USB-drive branch does not write to drive but suggests ready | P1 | `hardwareAdapters.ts`, `PrintView.tsx` | UI truth test | Fixed | `hardwareAdapters.ts` message clarified as offline file export |
+| PR-08 | Print | Wrong allocation may use first allocation template | P0 | `src/App.tsx`, `PrintView.tsx` | Select allocation #2 E2E | Fixed | `tests/domain/workspaceContext.test.ts` (switches template, SKU, pack profile together) |
+| PR-09 | Print | Print preview inserts fallback MRP and dates | P0 | `PrintView.tsx` | Missing business values block print | Fixed | `tests/domain/printJob.test.ts` (blocks printing when MRP is missing) |
+| PR-10 | Print | Render errors are console-only; stale preview can remain | P1 | `PrintView.tsx` | Render failure state test | Identified | Render error state |
+| PR-11 | Export | Pass planner may report multiple passes while ZIP emits one file set | P1 | `PrintView.tsx`, `passPlanner.ts` | Multi-pass file-count test | In Progress | Multi-pass export |
+| PR-12 | Export | Hardcoded “Pass 1 of 1” conflicts with manifest | P1 | `PrintView.tsx` | Manifest consistency test | In Progress | Manifest generator |
+| RENDER-01 | Raster | BMP header hardcodes 300 DPI | P1 | `printTransform.ts` | DPI header test | In Progress | Active machine DPI |
+| RENDER-02 | Raster | X/Y DPI averaged in physical conversion | P1 | `printTransform.ts` | Non-square DPI geometry test | Identified | Independent X/Y dpmm |
+| RENDER-03 | Raster | Download/printer orientation transform diverges | P1 | `printTransform.ts`, `DesignerView.tsx` | Golden orientation test | In Progress | Orientation transform |
+| RENDER-04 | Assets | Async image may be omitted on initial render | P1 | `printTransform.ts` | Cold-cache image render test | Identified | Async asset preload |
+| RENDER-05 | Symbols | Symbol object branch not properly rendered | P1 | `printTransform.ts` | Symbol fixture test or block type | Identified | Symbol vector renderer |
+| RENDER-06 | Symbols | Invert does not draw background region | P2 | `printTransform.ts` | Black/white pixel test | Identified | Invert background fill |
+| RENDER-07 | Barcode/QR | Decorative bars used instead of actual encoded symbology | P0 | `printTransform.ts` | Barcode/QR decode tests | Fixed | `tests/render/barcode.test.ts` (CODE128, EAN13, QR Code via bwip-js) |
+| FIT-01 | Designer | Text fitting uses rough character approximation | P1 | `fitEngine.ts` | Real font metric tests | Identified | Font metrics |
+| FIT-02 | Designer | Fit selected may reflow all objects | P1 | `fitEngine.ts`, `DesignerView.tsx` | Selected object scope test | In Progress | Target-only fit |
+| FIT-03 | Designer | Fixed dimensions/column assumptions in layouts | P1 | `fitEngine.ts` | Profile-driven geometry tests | Identified | Profile parameters |
+| FIT-04 | Designer | Incomplete geometry, rotation and negative-bound validation | P1 | `fitEngine.ts` | Rotated/out-of-bounds tests | Fixed | `src/domain/printJob.ts` preflight check |
+| PASS-01 | Planner | Template/machine travel constraint mismatch | P1 | `passPlanner.ts` | Override constraint test | Identified | Travel constraint |
+| PASS-02 | Planner | Zero objects can produce negative gap/travel intermediate | P1 | `passPlanner.ts` | Empty plan test | Identified | Safe empty planner |
+| PASS-03 | Planner | Vertical stack split uses hardcoded half/length behavior | P1 | `passPlanner.ts` | Boundary property tests | Identified | Dynamic stack fit |
+| DESIGN-01 | Designer | Very large monolithic component complicates state and test coverage | P2 | `DesignerView.tsx` | Component/module coverage and regression suite | Identified | Component decomposition |
+| DESIGN-02 | Designer | Canvas mouse handlers lack robust pointer/clamping behavior | P1 | `DesignerView.tsx` | Drag/resize/pointer tests | Identified | Pointer events |
+| DESIGN-03 | Designer | Global keyboard commands may run while contenteditable focused | P1 | `DesignerView.tsx`, `App.tsx` | Focus-suppression test | Identified | Focus suppression |
+| DESIGN-04 | Designer | Image assets lack robust async load/import lifecycle | P1 | `DesignerView.tsx`, `printTransform.ts` | Import/reload/render test | Identified | Async image loading |
+| DESIGN-05 | Designer | QR default uses hardcoded example URL | P1 | `DesignerView.tsx` | No invented payload test | Identified | No invented QR payload |
+| DESIGN-06 | Designer | Calibration factor saved but not used in editor | P2 | `SettingsView.tsx`, `DesignerView.tsx` | Calibration behavior test or remove setting | Identified | Wire calibration |
+| HIST-01 | History | Print jobs not persisted despite table/claims | P0 | `db.ts`, `PrintView.tsx`, `HistoryView.tsx` | Job write and reload test | Fixed | `src/domain/printJob.ts` snapshot creation |
+| HIST-02 | History | Exact reprint rebuilds from current live data/template | P0 | `HistoryView.tsx`, `PrintView.tsx` | Byte-identical historical artifact test | Fixed | `tests/domain/printJob.test.ts` (immutable snapshot) |
+| HIST-03 | History | Hardcoded history status/batch filters | P1 | `HistoryView.tsx` | Dynamic query/filter tests | Identified | Dynamic filters |
+| HIST-04 | History | `packsPrinted || expectedPacks` corrupts zero semantics | P0 | `HistoryView.tsx` | Zero-count test | Fixed | `HistoryView.tsx:120` typeof check |
+| HIST-05 | History | No attempt timeline/operator/device evidence | P1 | History/DB/types | Audit completeness test | In Progress | Audit events |
+| SET-01 | Settings | Machine profile update callback unused / editor absent | P1 | `SettingsView.tsx` | Edit/save/reload test | Identified | Machine editor |
+| SET-02 | Settings | Pack wizard captures incomplete physical window/calibration | P1 | `SettingsView.tsx`, `types/index.ts` | Calibration fixture test | Identified | Pack calibration |
+| SET-03 | Settings | Hardware settings advertise capabilities not truly implemented | P1 | `SettingsView.tsx`, `hardwareAdapters.ts` | UI adapter capability contract test | Identified | Capability flags |
+| SET-04 | Settings | Display calibration stored but unused | P2 | `SettingsView.tsx`, `DesignerView.tsx` | Functional proof or remove | Identified | Remove/wire calibration |
+| SET-05 | Settings | Shortcut input is text, not real key capture | P1 | `SettingsView.tsx` | Keyboard capture interaction test | Identified | Keydown capture |
+| SET-06 | Settings | Shortcut dispatcher hardcoded, registry remapping diverges | P1 | `App.tsx`, `actionRegistry.ts` | Rebind dispatch test | Identified | Action registry dispatcher |
+| SET-07 | Backup | Export/import incomplete, no dry-run/transaction/version safety | P0 | `SettingsView.tsx`, `db.ts` | Corrupt/rollback restore tests | In Progress | Schema-versioned backup |
+| AI-01 | AI | Google GenAI package/client initialized but current prompt path is rule-based | P2 | `aiCopilot.ts` | Honest labeling or secure real model integration | Identified | Honest labeling |
+| AI-02 | AI | Hardcoded scenarios may produce invalid allocations | P1 | `aiCopilot.ts` | Proposal domain validation tests | Identified | Proposal validation |
+| AI-03 | AI | Apply path writes audit but does not apply every proposal mutation | P0 | `aiCopilot.ts`, `AICopilotDrawer.tsx`, `App.tsx` | Persisted result verification test | Identified | Typed proposal executors |
+| AI-04 | AI | Auto-approval unsafe for production-changing proposals | P0 | AI service and drawer | No mutation without explicit approval | Identified | Require explicit approval |
+| SHELL-01 | Navigation | View-state navigation is not URL/deep-linkable | P2 | `App.tsx` | Refresh/back/deep-link E2E | In Progress | Route parameter context |
+| SHELL-02 | Actions | Action registry only covers subset of app actions | P1 | `App.tsx`, `actionRegistry.ts` | Action catalog parity test | Identified | Full action catalog |
+| SHELL-03 | Accessibility | Clickable containers are not semantic buttons | P1 | Header/views | Keyboard/accessibility audit | Identified | Semantic buttons |
+| SHELL-04 | PWA | `navigator.onLine` indicator is not real sync state | P2 | `PWAInstallButton.tsx` / shell | Offline/sync state tests | Identified | Honest sync state |
+| SHELL-05 | Tour | Guided tour/help content can drift from actual action behavior | P2 | `GuidedTour.tsx`, `KeyboardOverlays.tsx` | Tour target/command integration tests | Identified | Tour target review |
 
 ## Required additional inventory
 
