@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="96" fill="#18181b"/>
+  <rect x="48" y="48" width="416" height="416" rx="64" fill="#27272a" stroke="#f59e0b" stroke-width="16"/>
+  <!-- Printer / Tag Icon -->
+  <path d="M144 192V112C144 94.3 158.3 80 176 80H336C353.7 80 368 94.3 368 112V192" stroke="#f59e0b" stroke-width="24" stroke-linecap="round" fill="none"/>
+  <rect x="112" y="192" width="288" height="160" rx="24" fill="#18181b" stroke="#f59e0b" stroke-width="24"/>
+  <circle cx="160" cy="256" r="16" fill="#10b981"/>
+  <circle cx="208" cy="256" r="16" fill="#f59e0b"/>
+  <path d="M160 304H352" stroke="#71717a" stroke-width="16" stroke-linecap="round"/>
+  <!-- Paper Label Output -->
+  <path d="M160 352V416C160 424.8 167.2 432 176 432H336C344.8 432 352 424.8 352 416V352H160Z" fill="#ffffff" stroke="#f59e0b" stroke-width="16"/>
+  <path d="M192 384H320" stroke="#18181b" stroke-width="12" stroke-linecap="round"/>
+  <path d="M192 408H272" stroke="#18181b" stroke-width="10" stroke-linecap="round"/>
+</svg>

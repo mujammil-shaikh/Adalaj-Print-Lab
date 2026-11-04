@@ -1,0 +1,2854 @@
+/**
+ * Label Designer Workspace View
+ * Dual-axis Millimeter rulers (X and Y with 10mm/5mm/1mm ticks and corner origin),
+ * Dynamic Fit / 100% / 200% zoom engine, 4 Travel x Layout modes, Fit to nozzle,
+ * Pack View vs Printer View (1-bit Raster), Auto-Flow, interactive Tool Rail with
+ * fully working creation buttons, live object dragging, and bottom batch preview bar.
+ */
+
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { 
+  PenTool, 
+  Type, 
+  Hash, 
+  Minus, 
+  Square, 
+  QrCode, 
+  Barcode, 
+  Lock, 
+  Unlock, 
+  RotateCw, 
+  ArrowDownUp, 
+  ArrowLeftRight, 
+  Save, 
+  Sliders, 
+  Eye, 
+  Sparkles, 
+  AlertTriangle,
+  ZoomIn,
+  ZoomOut,
+  Crosshair,
+  CheckCircle2,
+  Trash2,
+  Move,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+  Bold,
+  Italic,
+  RefreshCw,
+  Printer,
+  Download,
+  FlipHorizontal,
+  FlipVertical,
+  Undo2,
+  Redo2,
+  Globe,
+  Star,
+  RotateCcw,
+  ChevronDown,
+  Layers
+} from 'lucide-react';
+import type { 
+  Template, 
+  DesignObject, 
+  MachineProfile, 
+  PackProfile, 
+  SKU, 
+  Product, 
+  Batch,
+  DesignScope,
+  TravelDirection,
+  LayoutMode
+} from '../../types';
+import { fitObjectsToBand, validateTemplateQuality, type QualityIssue } from '../../services/fitEngine';
+import { getLayoutAdvice, buildPassPlan } from '../../services/passPlanner';
+import { renderTemplateToCanvas, canvasTo1BitBmp, canvasToStandardBmp } from '../../services/printTransform';
+import { 
+  resolveLayout, 
+  buildPackDefaultTemplate, 
+  buildSkuOverrideTemplate, 
+  normalizePackSize, 
+  getCleanGlobalPackDefault,
+  getFactoryProductTemplate,
+  type LayoutSource, 
+  type ResolvedLayout 
+} from '../../services/layoutRegistry';
+
+interface DesignerViewProps {
+  template: Template;
+  machine: MachineProfile;
+  packProfile: PackProfile;
+  activeSku: SKU;
+  activeProduct: Product;
+  allSkus: SKU[];
+  allProducts?: Product[];
+  allBatches?: Batch[];
+  activeBatch?: Batch | null;
+  templates?: Template[];
+  packProfiles?: PackProfile[];
+  onSelectProduct?: (p: Product) => void;
+  onSelectSku?: (s: SKU) => void;
+  onSelectBatch?: (b: Batch) => void;
+  onSaveTemplate: (t: Template, scope: DesignScope) => void;
+  onSavePackDefault?: (t: Template, packSize: string) => Promise<void>;
+  onSaveSkuOverride?: (t: Template, productId: string, productName: string, packSize: string) => Promise<void>;
+  onRevertSkuOverride?: (productId: string, packSize: string) => Promise<void>;
+  onNavigateToPrint: () => void;
+}
+
+export const DesignerView: React.FC<DesignerViewProps> = ({
+  template: initialTemplate,
+  machine,
+  packProfile,
+  activeSku,
+  activeProduct,
+  allSkus,
+  allProducts,
+  allBatches,
+  activeBatch,
+  templates = [],
+  packProfiles = [],
+  onSelectProduct,
+  onSelectSku,
+  onSelectBatch,
+  onSaveTemplate,
+  onSavePackDefault,
+  onSaveSkuOverride,
+  onRevertSkuOverride,
+  onNavigateToPrint
+}) => {
+  const [template, setTemplate] = useState<Template>(initialTemplate);
+  const [selectedObjectId, setSelectedObjectId] = useState<string | null>(initialTemplate.objects[0]?.id || null);
+  const [viewMode, setViewMode] = useState<'pack' | 'printer'>('pack');
+  const [zoomLevel, setZoomLevel] = useState<number>(8.0); // px per mm
+  const [zoomMode, setZoomMode] = useState<'fit' | '100' | '200' | 'custom'>('fit');
+  const [activeTool, setActiveTool] = useState<'select' | 'text' | 'field' | 'line' | 'rectangle' | 'barcode' | 'qr'>('select');
+  const [scope, setScope] = useState<DesignScope>('This SKU');
+  const [showScopeConfirmModal, setShowScopeConfirmModal] = useState(false);
+  const [isSaveMenuOpen, setIsSaveMenuOpen] = useState(false);
+  const [selectedSaveTarget, setSelectedSaveTarget] = useState<'pack_default' | 'sku_override'>('pack_default');
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [issues, setIssues] = useState<QualityIssue[]>([]);
+  const [showDiagnosticModal, setShowDiagnosticModal] = useState(false);
+  const [diagnosticDataUrl, setDiagnosticDataUrl] = useState<string>('');
+  const [printerViewDataUrl, setPrinterViewDataUrl] = useState<string>('');
+  const [rasterRotation, setRasterRotation] = useState<0 | 90 | 180 | 270>(0);
+  const [rasterMirrorX, setRasterMirrorX] = useState<boolean>(false);
+  const [rasterMirrorY, setRasterMirrorY] = useState<boolean>(false);
+  
+  // Refs
+  const canvasViewportRef = useRef<HTMLDivElement | null>(null);
+  const printerCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  // Filter SKUs strictly belonging to the currently active product
+  const productSkus = useMemo(() => {
+    const filtered = allSkus.filter(s => s.productId === activeProduct.id);
+    return filtered.length > 0 ? filtered : [activeSku];
+  }, [allSkus, activeProduct.id, activeSku]);
+
+  // Live preview SKU selection (default to activeSku, keep synchronized)
+  const [previewSkuId, setPreviewSkuId] = useState<string>(activeSku.id);
+  useEffect(() => {
+    setPreviewSkuId(activeSku.id);
+  }, [activeSku.id]);
+
+  const previewSku = productSkus.find(s => s.id === previewSkuId) || productSkus[0] || activeSku;
+
+  // Resolve two-tier layout inheritance: SKU Override > Pack Default > Scratch Starter
+  const currentLayoutInfo = useMemo(() => {
+    return resolveLayout(
+      activeProduct.id,
+      previewSku.packSize,
+      templates && templates.length > 0 ? templates : [template],
+      packProfiles
+    );
+  }, [activeProduct.id, previewSku.packSize, templates, packProfiles, template.id]);
+
+  const selectedObject = template.objects.find(o => o.id === selectedObjectId);
+
+  // Synchronize template whenever product or pack size changes
+  useEffect(() => {
+    const resolved = resolveLayout(
+      activeProduct.id,
+      previewSku.packSize,
+      templates && templates.length > 0 ? templates : [initialTemplate],
+      packProfiles
+    );
+    setTemplate(resolved.template);
+    setSelectedObjectId(resolved.template.objects[0]?.id || null);
+    setHistory([]);
+    setRedoStack([]);
+  }, [activeProduct.id, previewSku.packSize, templates]);
+
+  // Undo / Redo history stacks (up to 25 states)
+  const [history, setHistory] = useState<Template[]>([]);
+  const [redoStack, setRedoStack] = useState<Template[]>([]);
+
+  // Coalescing Undo Session: aggregates multi-step movements/nudges into ONE single undo step
+  interface UndoSession {
+    initialSnapshot: Template;
+    type: 'keyboard_nudge' | 'property_tweak';
+    targetObjectId: string;
+    timer: any;
+  }
+  const undoSessionRef = useRef<UndoSession | null>(null);
+
+  // Commit any pending coalesced movement session into history
+  const commitPendingSession = useCallback(() => {
+    if (!undoSessionRef.current) return;
+    const session = undoSessionRef.current;
+    if (session.timer) {
+      clearTimeout(session.timer);
+    }
+    const initialSnapshot = session.initialSnapshot;
+    const targetId = session.targetObjectId;
+    undoSessionRef.current = null;
+
+    setTemplate(currentTmpl => {
+      const initialObj = initialSnapshot.objects.find(o => o.id === targetId);
+      const currentObj = currentTmpl.objects.find(o => o.id === targetId);
+      const hasChanged = !initialObj || !currentObj || 
+        initialObj.x !== currentObj.x || 
+        initialObj.y !== currentObj.y ||
+        initialObj.width !== currentObj.width ||
+        initialObj.height !== currentObj.height ||
+        initialObj.fontSizeMm !== currentObj.fontSizeMm ||
+        initialObj.content !== currentObj.content;
+
+      if (hasChanged) {
+        setHistory(h => [...h.slice(-24), initialSnapshot]);
+        setRedoStack([]); // Clear redo stack on committed change
+      }
+      return currentTmpl;
+    });
+  }, []);
+
+  // Update object with coalescing (coalesces rapid arrow keys / nudges / keystrokes into 1 undo step)
+  const updateObjectCoalesced = useCallback((
+    objectId: string,
+    updates: Partial<DesignObject>,
+    sessionType: 'keyboard_nudge' | 'property_tweak',
+    debounceMs: number = 650
+  ) => {
+    // If a session exists for a different object or different type, commit it first
+    if (undoSessionRef.current && (undoSessionRef.current.targetObjectId !== objectId || undoSessionRef.current.type !== sessionType)) {
+      commitPendingSession();
+    }
+
+    // Capture initial snapshot at the start of movement sequence
+    if (!undoSessionRef.current) {
+      undoSessionRef.current = {
+        initialSnapshot: JSON.parse(JSON.stringify(template)),
+        type: sessionType,
+        targetObjectId: objectId,
+        timer: null
+      };
+    }
+
+    // Reset debounce timer: once user stops pressing keys for debounceMs, finalize the session
+    if (undoSessionRef.current.timer) {
+      clearTimeout(undoSessionRef.current.timer);
+    }
+    undoSessionRef.current.timer = setTimeout(() => {
+      commitPendingSession();
+    }, debounceMs);
+
+    // Apply movement in real-time on canvas without flooding the undo stack
+    setTemplate(prev => ({
+      ...prev,
+      objects: prev.objects.map(obj => {
+        if (obj.id === objectId) {
+          const updated = { ...obj, ...updates };
+          if (updates.fontSizeMm !== undefined) {
+            updated.height = updates.fontSizeMm;
+            updated.fontSizePt = Math.round(updates.fontSizeMm * 2.83);
+          }
+          return updated;
+        }
+        return obj;
+      })
+    }));
+  }, [template, commitPendingSession]);
+
+  // Object selection wrapper that finalizes any pending movement on the previous object
+  const selectObject = useCallback((id: string | null) => {
+    if (undoSessionRef.current) {
+      commitPendingSession();
+    }
+    setSelectedObjectId(id);
+  }, [commitPendingSession]);
+
+  // Discrete action updater (adds new objects, fit band, delete, orientation)
+  const updateTemplateWithHistory = useCallback((updater: Template | ((prev: Template) => Template)) => {
+    if (undoSessionRef.current) {
+      commitPendingSession();
+    }
+    setTemplate(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      if (next !== prev) {
+        setHistory(h => [...h.slice(-24), JSON.parse(JSON.stringify(prev))]);
+        setRedoStack([]); // Clear redo stack on new action
+      }
+      return next;
+    });
+  }, [commitPendingSession]);
+
+  const handleUndo = useCallback(() => {
+    // If user nudged and immediately hits Undo without waiting for timer
+    if (undoSessionRef.current) {
+      const initial = undoSessionRef.current.initialSnapshot;
+      if (undoSessionRef.current.timer) {
+        clearTimeout(undoSessionRef.current.timer);
+      }
+      undoSessionRef.current = null;
+      setRedoStack(r => [...r, JSON.parse(JSON.stringify(template))]);
+      setTemplate(initial);
+      setToastMessage('Undo movement (back to start position)');
+      setTimeout(() => setToastMessage(null), 1200);
+      return;
+    }
+
+    if (history.length === 0) return;
+    const previous = history[history.length - 1];
+    setHistory(h => h.slice(0, -1));
+    setRedoStack(r => [...r, JSON.parse(JSON.stringify(template))]);
+    setTemplate(previous);
+    setToastMessage(`Undo (Step ${history.length})`);
+    setTimeout(() => setToastMessage(null), 1200);
+  }, [history, template]);
+
+  const handleRedo = useCallback(() => {
+    if (undoSessionRef.current) {
+      commitPendingSession();
+    }
+    if (redoStack.length === 0) return;
+    const next = redoStack[redoStack.length - 1];
+    setRedoStack(r => r.slice(0, -1));
+    setHistory(h => [...h, JSON.parse(JSON.stringify(template))]);
+    setTemplate(next);
+    setToastMessage('Redo');
+    setTimeout(() => setToastMessage(null), 1200);
+  }, [redoStack, template, commitPendingSession]);
+
+  // Clean up timer on unmount
+  useEffect(() => {
+    return () => {
+      if (undoSessionRef.current?.timer) {
+        clearTimeout(undoSessionRef.current.timer);
+      }
+    };
+  }, []);
+
+  // Keyboard shortcuts for Undo (Ctrl+Z) and Redo (Ctrl+Y / Ctrl+Shift+Z)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (['INPUT', 'SELECT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return;
+
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
+        if (e.shiftKey) {
+          e.preventDefault();
+          handleRedo();
+        } else {
+          e.preventDefault();
+          handleUndo();
+        }
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || e.key === 'Y')) {
+        e.preventDefault();
+        handleRedo();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleUndo, handleRedo]);
+
+  // Run quality validation on template update
+  useEffect(() => {
+    const q = validateTemplateQuality(template, machine, packProfile);
+    setIssues(q);
+  }, [template, machine, packProfile]);
+
+  // Active Printhead Band (12.5mm vs 12.7mm TIJ ½" cartridge, or custom)
+  const currentBandMm = template.customBandMm || machine.printBandMm || 12.7;
+
+  // Active Travel Length: Endless / Unrestricted (e.g. 35, 45, 80, 100, 150+ mm)
+  const currentLengthMm = template.customLengthMm || packProfile.printWindowLengthMm || (template.travel === 'Vertical' ? 35.0 : 45.0);
+
+  // Correct Canvas Dimensions based on Travel Direction
+  // When Vertical (head travels downwards): width is printhead band (12.5 / 12.7 mm), height is travel length (35, 80, 100+ mm)
+  // When Horizontal (head travels sideways): width is travel length (45, 80, 100+ mm), height is printhead band (12.5 / 12.7 mm)
+  const canvasWidthMm = useMemo(() => {
+    if (template.travel === 'Vertical') {
+      return currentBandMm;
+    } else {
+      return currentLengthMm;
+    }
+  }, [template.travel, currentBandMm, currentLengthMm]);
+
+  const canvasHeightMm = useMemo(() => {
+    if (template.travel === 'Vertical') {
+      return currentLengthMm;
+    } else {
+      return currentBandMm;
+    }
+  }, [template.travel, currentBandMm, currentLengthMm]);
+
+  // Set Printhead Band (12.5mm or 12.7mm)
+  const handleSetBandMm = (band: number) => {
+    updateTemplateWithHistory(prev => ({
+      ...prev,
+      customBandMm: band
+    }));
+  };
+
+  // Set Endless / Custom Travel Length (e.g. 80, 100, 150 mm)
+  const handleSetLengthMm = (len: number) => {
+    const val = Math.max(10, Math.round(len * 10) / 10);
+    updateTemplateWithHistory(prev => ({
+      ...prev,
+      customLengthMm: val
+    }));
+  };
+
+  // Dynamic canvas display dimensions taking printer raster rotation into account
+  const displayWidthMm = useMemo(() => {
+    if (viewMode === 'printer' && (rasterRotation === 90 || rasterRotation === 270)) {
+      return canvasHeightMm;
+    }
+    return canvasWidthMm;
+  }, [viewMode, rasterRotation, canvasWidthMm, canvasHeightMm]);
+
+  const displayHeightMm = useMemo(() => {
+    if (viewMode === 'printer' && (rasterRotation === 90 || rasterRotation === 270)) {
+      return canvasWidthMm;
+    }
+    return canvasHeightMm;
+  }, [viewMode, rasterRotation, canvasWidthMm, canvasHeightMm]);
+
+  // Derived live values for placeholder evaluation linked to active batch & active product
+  const previewValues = useMemo<Record<string, string>>(() => {
+    const mrp = previewSku?.mrp ? `₹${previewSku.mrp}` : '₹50';
+    const netGrams = previewSku?.netWeightGrams || 100;
+    const rate = previewSku?.mrp ? `₹${(previewSku.mrp / netGrams).toFixed(2)}` : '₹0.50';
+    const batchId = activeBatch?.id || `${activeProduct?.batchPrefix || 'ADTP'}014`;
+    const alloc = activeBatch?.allocations?.find(a => a.packSize === previewSku?.packSize) || activeBatch?.allocations?.[0];
+    const mfd = alloc?.mfd || '10/10/26';
+    const bb = alloc?.bestBefore || '09/11/27';
+
+    return {
+      mrp,
+      batch: batchId,
+      net_wt: previewSku?.packSize ? previewSku.packSize.toUpperCase() : '100 GM',
+      mfd,
+      best_before: bb,
+      rate_per_gm: rate,
+      product: activeProduct?.name || 'Turmeric Powder',
+      brand: 'ADALAJ',
+      pack_size: previewSku?.packSize || '100 g'
+    };
+  }, [previewSku, activeProduct, activeBatch]);
+
+  // Generate Printer View raster whenever needed with exact 1:1 physical millimeter bounds
+  const updatePrinterViewRaster = useCallback(() => {
+    try {
+      const canvas = renderTemplateToCanvas(template, machine, previewValues, {
+        forPrinterView: true,
+        widthMm: canvasWidthMm,
+        heightMm: canvasHeightMm,
+        transform: {
+          rotation: rasterRotation,
+          mirrorX: rasterMirrorX,
+          mirrorY: rasterMirrorY
+        }
+      });
+      const dataUrl = canvas.toDataURL('image/png');
+      setPrinterViewDataUrl(dataUrl);
+
+      if (printerCanvasRef.current) {
+        const dest = printerCanvasRef.current;
+        dest.width = canvas.width;
+        dest.height = canvas.height;
+        const ctx = dest.getContext('2d');
+        if (ctx) {
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+          ctx.clearRect(0, 0, dest.width, dest.height);
+          ctx.drawImage(canvas, 0, 0);
+        }
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  }, [template, machine, previewValues, canvasWidthMm, canvasHeightMm, rasterRotation, rasterMirrorX, rasterMirrorY]);
+
+  useEffect(() => {
+    if (viewMode === 'printer') {
+      updatePrinterViewRaster();
+    }
+  }, [viewMode, updatePrinterViewRaster]);
+
+  // DYNAMIC FIT TO WINDOW HANDLER
+  const handleFitToWindow = useCallback(() => {
+    const viewport = canvasViewportRef.current;
+    const clientWidth = viewport ? viewport.clientWidth : 800;
+    const clientHeight = viewport ? viewport.clientHeight : 500;
+    const paddingX = 120; // Rulers, margins, borders
+    const paddingY = 120;
+    const availW = Math.max(120, clientWidth - paddingX);
+    const availH = Math.max(120, clientHeight - paddingY);
+    const scaleX = availW / displayWidthMm;
+    const scaleY = availH / displayHeightMm;
+    const fitScale = Math.max(3.0, Math.min(scaleX, scaleY));
+    setZoomLevel(Math.round(fitScale * 10) / 10);
+    setZoomMode('fit');
+  }, [displayWidthMm, displayHeightMm]);
+
+  // Fit to window on initial mount, travel orientation change, or raster rotation
+  useEffect(() => {
+    handleFitToWindow();
+  }, [displayWidthMm, displayHeightMm]);
+
+  // Handle window resize only if currently in 'fit' mode
+  useEffect(() => {
+    const handleResize = () => {
+      if (zoomMode === 'fit') {
+        handleFitToWindow();
+      }
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [handleFitToWindow, zoomMode]);
+
+  // 100% Zoom (Standard crisp 100% baseline design view: 12 px/mm)
+  const handle100Percent = () => {
+    setZoomLevel(12.0);
+    setZoomMode('100');
+  };
+
+  // 200% Zoom (Magnified 200% detail view: 24 px/mm)
+  const handle200Percent = () => {
+    setZoomLevel(24.0);
+    setZoomMode('200');
+  };
+
+  const handleZoomIn = () => {
+    setZoomLevel(prev => Math.min(36.0, Math.round((prev + 2.0) * 10) / 10));
+    setZoomMode('custom');
+  };
+
+  const handleZoomOut = () => {
+    setZoomLevel(prev => Math.max(3.0, Math.round((prev - 2.0) * 10) / 10));
+    setZoomMode('custom');
+  };
+
+  // TOOL RAIL CREATION HANDLERS
+  const handleAddTextObject = () => {
+    const newId = `obj_text_${Date.now()}`;
+    const newObj: DesignObject = {
+      id: newId,
+      type: 'text',
+      content: 'CUSTOM TEXT',
+      x: 0.5,
+      y: Math.min(canvasHeightMm - 4.0, (template.objects.length * 4.2) % (canvasHeightMm - 4.0)),
+      width: Math.min(canvasWidthMm - 1.0, 15.0),
+      height: 3.2,
+      rotation: 0,
+      fontFamily: 'Barlow Condensed',
+      fontSizePt: 9,
+      fontSizeMm: 3.2,
+      fontWeight: 'normal',
+      fontStyle: 'normal',
+      letterSpacingMm: 0.1,
+      lineHeightMultiplier: 1.0,
+      horizontalStretchPercent: 100,
+      alignment: 'left',
+      uppercase: true,
+      channel: 'Black',
+      mirrorX: false,
+      mirrorY: false,
+      invert: false,
+      locked: false
+    };
+    updateTemplateWithHistory(prev => ({ ...prev, objects: [...prev.objects, newObj] }));
+    setSelectedObjectId(newId);
+    setActiveTool('select');
+  };
+
+  const handleAddFieldObject = (key: string = 'batch') => {
+    const newId = `obj_field_${Date.now()}`;
+    const newObj: DesignObject = {
+      id: newId,
+      type: 'field',
+      fieldKey: key,
+      content: `{${key}}`,
+      x: 0.5,
+      y: Math.min(canvasHeightMm - 4.0, (template.objects.length * 4.2) % (canvasHeightMm - 4.0)),
+      width: Math.min(canvasWidthMm - 1.0, 15.0),
+      height: 3.2,
+      rotation: 0,
+      fontFamily: 'Barlow Condensed',
+      fontSizePt: 9,
+      fontSizeMm: 3.2,
+      fontWeight: 'bold',
+      fontStyle: 'normal',
+      letterSpacingMm: 0.1,
+      lineHeightMultiplier: 1.0,
+      horizontalStretchPercent: 100,
+      alignment: 'left',
+      uppercase: true,
+      channel: 'Black',
+      mirrorX: false,
+      mirrorY: false,
+      invert: false,
+      locked: false
+    };
+    updateTemplateWithHistory(prev => ({ ...prev, objects: [...prev.objects, newObj] }));
+    setSelectedObjectId(newId);
+    setActiveTool('select');
+  };
+
+  const handleAddLineObject = () => {
+    const newId = `obj_line_${Date.now()}`;
+    const newObj: DesignObject = {
+      id: newId,
+      type: 'line',
+      content: '',
+      x: 0.5,
+      y: Math.min(canvasHeightMm - 1.0, 12.0),
+      width: canvasWidthMm - 1.0,
+      height: 0.4,
+      rotation: 0,
+      fontFamily: 'Barlow Condensed',
+      fontSizePt: 8,
+      fontSizeMm: 0.4,
+      fontWeight: 'normal',
+      fontStyle: 'normal',
+      letterSpacingMm: 0,
+      lineHeightMultiplier: 1.0,
+      horizontalStretchPercent: 100,
+      alignment: 'left',
+      uppercase: false,
+      channel: 'Black',
+      mirrorX: false,
+      mirrorY: false,
+      invert: false,
+      locked: false
+    };
+    updateTemplateWithHistory(prev => ({ ...prev, objects: [...prev.objects, newObj] }));
+    setSelectedObjectId(newId);
+    setActiveTool('select');
+  };
+
+  const handleAddRectangleObject = () => {
+    const newId = `obj_rect_${Date.now()}`;
+    const newObj: DesignObject = {
+      id: newId,
+      type: 'rectangle',
+      content: '',
+      x: 0.5,
+      y: 0.5,
+      width: canvasWidthMm - 1.0,
+      height: canvasHeightMm - 1.0,
+      rotation: 0,
+      fontFamily: 'Barlow Condensed',
+      fontSizePt: 8,
+      fontSizeMm: 1.0,
+      fontWeight: 'normal',
+      fontStyle: 'normal',
+      letterSpacingMm: 0,
+      lineHeightMultiplier: 1.0,
+      horizontalStretchPercent: 100,
+      alignment: 'left',
+      uppercase: false,
+      channel: 'Black',
+      mirrorX: false,
+      mirrorY: false,
+      invert: false,
+      locked: false
+    };
+    updateTemplateWithHistory(prev => ({ ...prev, objects: [...prev.objects, newObj] }));
+    setSelectedObjectId(newId);
+    setActiveTool('select');
+  };
+
+  const handleAddBarcodeObject = () => {
+    const newId = `obj_bc_${Date.now()}`;
+    const newObj: DesignObject = {
+      id: newId,
+      type: 'barcode',
+      content: 'ADTP014',
+      x: 0.5,
+      y: 2.0,
+      width: Math.min(canvasWidthMm - 1.0, 24.0),
+      height: 6.0,
+      rotation: 0,
+      fontFamily: 'Roboto Mono',
+      fontSizePt: 8,
+      fontSizeMm: 6.0,
+      fontWeight: 'normal',
+      fontStyle: 'normal',
+      letterSpacingMm: 0,
+      lineHeightMultiplier: 1.0,
+      horizontalStretchPercent: 100,
+      alignment: 'center',
+      uppercase: false,
+      channel: 'Black',
+      mirrorX: false,
+      mirrorY: false,
+      invert: false,
+      locked: false,
+      barcodeFormat: 'CODE128'
+    };
+    updateTemplateWithHistory(prev => ({ ...prev, objects: [...prev.objects, newObj] }));
+    setSelectedObjectId(newId);
+    setActiveTool('select');
+  };
+
+  const handleAddQrObject = () => {
+    const newId = `obj_qr_${Date.now()}`;
+    const newObj: DesignObject = {
+      id: newId,
+      type: 'qr',
+      content: 'https://adalaj.in/b/ADTP014',
+      x: 0.5,
+      y: 1.0,
+      width: 8.0,
+      height: 8.0,
+      rotation: 0,
+      fontFamily: 'Roboto Mono',
+      fontSizePt: 8,
+      fontSizeMm: 8.0,
+      fontWeight: 'normal',
+      fontStyle: 'normal',
+      letterSpacingMm: 0,
+      lineHeightMultiplier: 1.0,
+      horizontalStretchPercent: 100,
+      alignment: 'center',
+      uppercase: false,
+      channel: 'Black',
+      mirrorX: false,
+      mirrorY: false,
+      invert: false,
+      locked: false,
+      barcodeFormat: 'QR'
+    };
+    updateTemplateWithHistory(prev => ({ ...prev, objects: [...prev.objects, newObj] }));
+    setSelectedObjectId(newId);
+    setActiveTool('select');
+  };
+
+  // Delete Object
+  const handleDeleteSelected = () => {
+    if (!selectedObjectId) return;
+    updateTemplateWithHistory(prev => ({
+      ...prev,
+      objects: prev.objects.filter(o => o.id !== selectedObjectId)
+    }));
+    setSelectedObjectId(null);
+  };
+
+  // Fit handlers
+  const handleFitSelected = () => {
+    const targetId = selectedObjectId || template.objects[0]?.id;
+    if (!targetId) return;
+    if (!selectedObjectId) setSelectedObjectId(targetId);
+    const res = fitObjectsToBand(template, machine, packProfile, targetId);
+    updateTemplateWithHistory(res.template);
+  };
+
+  const handleFitAllLines = () => {
+    const res = fitObjectsToBand(template, machine, packProfile);
+    updateTemplateWithHistory(res.template);
+  };
+
+  // Cycle 4 Orientations
+  const handleCycleOrientation = () => {
+    const modes: Array<{ travel: TravelDirection; layout: LayoutMode }> = [
+      { travel: 'Vertical', layout: 'Stack' },
+      { travel: 'Vertical', layout: 'Strip' },
+      { travel: 'Horizontal', layout: 'Strip' },
+      { travel: 'Horizontal', layout: 'Stack' }
+    ];
+    const currentIndex = modes.findIndex(m => m.travel === template.travel && m.layout === template.layout);
+    const nextMode = modes[(currentIndex + 1) % modes.length];
+    const next: Template = {
+      ...template,
+      travel: nextMode.travel,
+      layout: nextMode.layout
+    };
+    const res = fitObjectsToBand(next, machine, packProfile);
+    updateTemplateWithHistory(res.template);
+  };
+
+  // Switch specific orientation
+  const handleSetOrientation = (travel: TravelDirection, layout: LayoutMode) => {
+    const next: Template = {
+      ...template,
+      travel,
+      layout
+    };
+    const res = fitObjectsToBand(next, machine, packProfile);
+    updateTemplateWithHistory(res.template);
+  };
+
+  // Update single object property
+  const handleUpdateSelectedObject = (updates: Partial<DesignObject>) => {
+    if (!selectedObjectId) return;
+    updateTemplateWithHistory(prev => ({
+      ...prev,
+      objects: prev.objects.map(obj => {
+        if (obj.id === selectedObjectId) {
+          const updated = { ...obj, ...updates };
+          if (updates.fontSizeMm !== undefined) {
+            updated.height = updates.fontSizeMm;
+            updated.fontSizePt = Math.round(updates.fontSizeMm * 2.83);
+          }
+          return updated;
+        }
+        return obj;
+      })
+    }));
+  };
+
+  // Update line gap with auto-reflow
+  const handleLineGapChange = (gap: number) => {
+    const nextGap = Math.max(0.1, Math.round(gap * 10) / 10);
+    const next: Template = {
+      ...template,
+      lineGapMm: nextGap
+    };
+    const res = fitObjectsToBand(next, machine, packProfile);
+    updateTemplateWithHistory(res.template);
+  };
+
+  // Tier 1: Save as General Default for all products of this pack size
+  const handleSaveGeneralPackDefault = async () => {
+    setSaveStatus('saving');
+    setIsSaveMenuOpen(false);
+    setShowScopeConfirmModal(false);
+    try {
+      const targetPackSize = previewSku.packSize;
+      if (onSavePackDefault) {
+        await onSavePackDefault(template, targetPackSize);
+      } else {
+        const packTmpl = buildPackDefaultTemplate(template, targetPackSize);
+        await onSaveTemplate(packTmpl, 'All SKUs of this pack size');
+      }
+      setSaveStatus('saved');
+      setToastMessage(`✓ Saved as General Default for all ${targetPackSize} packages!`);
+      setTimeout(() => setSaveStatus('idle'), 2500);
+      setTimeout(() => setToastMessage(null), 3500);
+    } catch (err) {
+      console.error(err);
+      setSaveStatus('idle');
+      setToastMessage('Error saving pack size default');
+      setTimeout(() => setToastMessage(null), 3000);
+    }
+  };
+
+  // Tier 2: Save as Custom Override specifically for this Product & SKU
+  const handleSaveSkuCustomOverride = async () => {
+    setSaveStatus('saving');
+    setIsSaveMenuOpen(false);
+    setShowScopeConfirmModal(false);
+    try {
+      const targetPackSize = previewSku.packSize;
+      if (onSaveSkuOverride) {
+        await onSaveSkuOverride(template, activeProduct.id, activeProduct.name, targetPackSize);
+      } else {
+        const skuTmpl = buildSkuOverrideTemplate(template, activeProduct.id, activeProduct.name, targetPackSize);
+        await onSaveTemplate(skuTmpl, 'This SKU');
+      }
+      setSaveStatus('saved');
+      setToastMessage(`✓ Saved Custom Override for ${activeProduct.name} (${targetPackSize})`);
+      setTimeout(() => setSaveStatus('idle'), 2500);
+      setTimeout(() => setToastMessage(null), 3500);
+    } catch (err) {
+      console.error(err);
+      setSaveStatus('idle');
+      setToastMessage('Error saving SKU override');
+      setTimeout(() => setToastMessage(null), 3000);
+    }
+  };
+
+  // Reset design back to the current Global Default for this pack size (clears product override if any)
+  const handleResetToGlobal = async () => {
+    setIsSaveMenuOpen(false);
+    setShowScopeConfirmModal(false);
+    try {
+      const targetPackSize = previewSku.packSize;
+      const norm = normalizePackSize(targetPackSize);
+      if (currentLayoutInfo.source === 'sku_override') {
+        if (onRevertSkuOverride) {
+          await onRevertSkuOverride(activeProduct.id, targetPackSize);
+        }
+      }
+      const overrideId = `tmpl_sku_override_${activeProduct.id}_${norm}`;
+      const remainingTemplates = (templates || []).filter(t => t.id !== overrideId && t.skuOverrideKey !== `${activeProduct.id}_${norm}`);
+      const resolved = resolveLayout(activeProduct.id, targetPackSize, remainingTemplates, packProfiles);
+      setTemplate(resolved.template);
+      setSelectedObjectId(resolved.template.objects[0]?.id || null);
+      setHistory(h => [...h.slice(-24), JSON.parse(JSON.stringify(template))]);
+      setRedoStack([]);
+      setToastMessage(`↺ Reset ${activeProduct.name} back to Global ${targetPackSize} Default`);
+      setTimeout(() => setToastMessage(null), 3000);
+    } catch (err) {
+      console.error(err);
+      setToastMessage('Error resetting to global default');
+      setTimeout(() => setToastMessage(null), 3000);
+    }
+  };
+
+  // Primary Save Button Dispatcher
+  const handlePrimarySaveClick = () => {
+    if (currentLayoutInfo.source === 'sku_override') {
+      handleSaveSkuCustomOverride();
+    } else {
+      handleSaveGeneralPackDefault();
+    }
+  };
+
+  // Save handler with scope modal for Ctrl+S or explicit scope choice
+  const handleSaveClick = () => {
+    handlePrimarySaveClick();
+  };
+
+  const handleConfirmScopeSave = () => {
+    if (selectedSaveTarget === 'pack_default') {
+      handleSaveGeneralPackDefault();
+    } else {
+      handleSaveSkuCustomOverride();
+    }
+  };
+
+  // Diagnostic bitmap modal
+  const handleOpenDiagnostic = () => {
+    const canvas = renderTemplateToCanvas(template, machine, previewValues, {
+      forPrinterView: true,
+      widthMm: canvasWidthMm,
+      heightMm: canvasHeightMm,
+      transform: {
+        rotation: rasterRotation,
+        mirrorX: rasterMirrorX,
+        mirrorY: rasterMirrorY
+      }
+    });
+    setDiagnosticDataUrl(canvas.toDataURL('image/png'));
+    setShowDiagnosticModal(true);
+  };
+
+  // Download Standard Windows BMP (Fully compatible with Windows Photos, Paint, Word, etc.)
+  const handleDownloadStandardBmp = () => {
+    try {
+      const canvas = renderTemplateToCanvas(template, machine, previewValues, {
+        forDownload: true,
+        widthMm: canvasWidthMm,
+        heightMm: canvasHeightMm,
+        transform: {
+          rotation: rasterRotation,
+          mirrorX: rasterMirrorX,
+          mirrorY: rasterMirrorY
+        }
+      });
+      const bmpBlob = canvasToStandardBmp(canvas);
+      const url = URL.createObjectURL(bmpBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${template.name.toLowerCase().replace(/\s+/g, '_')}_300dpi.bmp`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // Download 1-bit Raw Industrial BMP
+  const handleDownload1BitBmp = () => {
+    try {
+      const canvas = renderTemplateToCanvas(template, machine, previewValues, {
+        forDownload: true,
+        widthMm: canvasWidthMm,
+        heightMm: canvasHeightMm,
+        transform: {
+          rotation: rasterRotation,
+          mirrorX: rasterMirrorX,
+          mirrorY: rasterMirrorY
+        }
+      });
+      const bmpBlob = canvasTo1BitBmp(canvas);
+      const url = URL.createObjectURL(bmpBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${template.name.toLowerCase().replace(/\s+/g, '_')}_1bit_raw_300dpi.bmp`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // Download High-Res PNG
+  const handleDownloadPng = () => {
+    try {
+      const canvas = renderTemplateToCanvas(template, machine, previewValues, {
+        forPrinterView: true,
+        widthMm: canvasWidthMm,
+        heightMm: canvasHeightMm,
+        transform: {
+          rotation: rasterRotation,
+          mirrorX: rasterMirrorX,
+          mirrorY: rasterMirrorY
+        }
+      });
+      const url = canvas.toDataURL('image/png');
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${template.name.toLowerCase().replace(/\s+/g, '_')}_300dpi.png`;
+      a.click();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // Advice & Pass Plan
+  const advice = getLayoutAdvice(template, machine, packProfile);
+  const passPlan = buildPassPlan(template, machine, packProfile);
+
+  // Canvas Viewport Pan-to-Scroll (Drag background to smoothly pan canvas in both X and Y)
+  const isPanningRef = useRef(false);
+  const panStartRef = useRef({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 });
+
+  const handleViewportMouseDown = (e: React.MouseEvent) => {
+    // Only pan if clicking on the background, not on interactive objects
+    const target = e.target as HTMLElement;
+    if (target.dataset.panBackground === 'true' || target === canvasViewportRef.current) {
+      isPanningRef.current = true;
+      panStartRef.current = {
+        x: e.clientX,
+        y: e.clientY,
+        scrollLeft: canvasViewportRef.current?.scrollLeft || 0,
+        scrollTop: canvasViewportRef.current?.scrollTop || 0
+      };
+    }
+  };
+
+  const handleViewportMouseMove = (e: React.MouseEvent) => {
+    if (!isPanningRef.current || !canvasViewportRef.current) return;
+    const dx = e.clientX - panStartRef.current.x;
+    const dy = e.clientY - panStartRef.current.y;
+    canvasViewportRef.current.scrollLeft = panStartRef.current.scrollLeft - dx;
+    canvasViewportRef.current.scrollTop = panStartRef.current.scrollTop - dy;
+  };
+
+  const handleViewportMouseUp = () => {
+    isPanningRef.current = false;
+  };
+
+  // Mouse Drag to Move Objects with 0.1 mm precision (freely across X and Y without locking X!)
+  const handleStartDrag = (e: React.MouseEvent, obj: DesignObject) => {
+    if (obj.locked) return;
+    e.stopPropagation();
+    commitPendingSession();
+    selectObject(obj.id);
+
+    const initialTemplateState = JSON.parse(JSON.stringify(template));
+    const startMouseX = e.clientX;
+    const startMouseY = e.clientY;
+    const startObjX = obj.x;
+    const startObjY = obj.y;
+    let hasMoved = false;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const deltaX = (moveEvent.clientX - startMouseX) / zoomLevel;
+      const deltaY = (moveEvent.clientY - startMouseY) / zoomLevel;
+      
+      // Freely move in X and Y without locking or clamping X to 0!
+      const newX = Math.round((startObjX + deltaX) * 10) / 10;
+      const newY = Math.round((startObjY + deltaY) * 10) / 10;
+
+      if (Math.abs(deltaX) > 0.05 || Math.abs(deltaY) > 0.05) {
+        hasMoved = true;
+      }
+
+      setTemplate(prev => ({
+        ...prev,
+        objects: prev.objects.map(o => o.id === obj.id ? { ...o, x: newX, y: newY } : o)
+      }));
+    };
+
+    const onMouseUp = () => {
+      if (hasMoved) {
+        setHistory(h => [...h.slice(-24), initialTemplateState]);
+        setRedoStack([]);
+      }
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  };
+
+  // Keyboard navigation for selected object (coalesced nudging with arrow keys into 1 undo step)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!selectedObject || selectedObject.locked) return;
+      if (['INPUT', 'SELECT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return;
+
+      const step = e.shiftKey ? 1.0 : 0.1;
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        updateObjectCoalesced(selectedObject.id, { y: Math.max(0, Math.round((selectedObject.y - step) * 10) / 10) }, 'keyboard_nudge');
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        updateObjectCoalesced(selectedObject.id, { y: Math.min(canvasHeightMm - selectedObject.height, Math.round((selectedObject.y + step) * 10) / 10) }, 'keyboard_nudge');
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        updateObjectCoalesced(selectedObject.id, { x: Math.round((selectedObject.x - step) * 10) / 10 }, 'keyboard_nudge');
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        updateObjectCoalesced(selectedObject.id, { x: Math.round((selectedObject.x + step) * 10) / 10 }, 'keyboard_nudge');
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        commitPendingSession();
+        handleDeleteSelected();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedObject, canvasWidthMm, canvasHeightMm, updateObjectCoalesced, commitPendingSession]);
+
+  // Global Ctrl+S shortcut for Save Design
+  useEffect(() => {
+    const handleSaveShortcut = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        handleSaveClick();
+      }
+    };
+    window.addEventListener('keydown', handleSaveShortcut);
+    return () => window.removeEventListener('keydown', handleSaveShortcut);
+  }, [template, scope]);
+
+  return (
+    <div className="flex flex-col h-[calc(100vh-6.5rem)] select-none bg-zinc-950 relative">
+      {/* Toast Notification Banner */}
+      {toastMessage && (
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-top-3 duration-200 pointer-events-none">
+          <div className="flex items-center gap-2.5 px-4 py-2.5 rounded-xl bg-zinc-900 border border-emerald-500/60 shadow-2xl text-xs font-semibold text-emerald-300 backdrop-blur-md">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span>{toastMessage}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Top Context Toolbar */}
+      <div className="bg-zinc-900 border-b border-zinc-800 px-4 py-2 flex flex-wrap items-center justify-between gap-3 text-xs">
+        {/* Left: Synchronized Product & SKU Selectors */}
+        <div className="flex items-center gap-2.5">
+          {allProducts && allProducts.length > 0 && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-zinc-500 text-[11px] font-medium">Product:</span>
+              <select
+                value={activeProduct?.id}
+                onChange={e => {
+                  const p = allProducts.find(prod => prod.id === e.target.value);
+                  if (p && onSelectProduct) {
+                    onSelectProduct(p);
+                    const matchedSku = allSkus.find(s => s.productId === p.id && s.packSize === previewSku.packSize) || allSkus.find(s => s.productId === p.id);
+                    if (matchedSku) {
+                      setPreviewSkuId(matchedSku.id);
+                      if (onSelectSku) onSelectSku(matchedSku);
+                      const resolved = resolveLayout(p.id, matchedSku.packSize, templates && templates.length > 0 ? templates : [template], packProfiles);
+                      setTemplate(resolved.template);
+                      setSelectedObjectId(resolved.template.objects[0]?.id || null);
+                      setHistory([]);
+                      setRedoStack([]);
+                    }
+                  }
+                }}
+                className="bg-zinc-950 border border-zinc-700 hover:border-amber-500/50 rounded px-2.5 py-1 text-xs font-bold text-zinc-100 focus:outline-hidden transition-colors cursor-pointer"
+                title="Select active product (synchronized across app)"
+              >
+                {allProducts.map(p => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} ({p.shortCode})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div className="flex items-center gap-1.5">
+            <span className="text-zinc-500 text-[11px] font-medium">SKU:</span>
+            <select
+              value={previewSkuId}
+              onChange={e => {
+                const s = productSkus.find(sku => sku.id === e.target.value);
+                if (s) {
+                  setPreviewSkuId(s.id);
+                  if (onSelectSku) onSelectSku(s);
+                  const resolved = resolveLayout(activeProduct.id, s.packSize, templates && templates.length > 0 ? templates : [template], packProfiles);
+                  setTemplate(resolved.template);
+                  setSelectedObjectId(resolved.template.objects[0]?.id || null);
+                  setHistory([]);
+                  setRedoStack([]);
+                }
+              }}
+              className="bg-zinc-950 border border-zinc-700 hover:border-amber-500/50 rounded px-2 py-1 text-xs font-mono font-bold text-amber-400 focus:outline-hidden transition-colors cursor-pointer"
+              title="Select active SKU pack size"
+            >
+              {productSkus.map(s => (
+                <option key={s.id} value={s.id}>
+                  {s.packSize} {s.mrp ? `(₹${s.mrp})` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* UNDO / REDO CONTROLS (20+ STEPS) */}
+          <div className="flex items-center gap-1 bg-zinc-950 border border-zinc-800 rounded-lg p-0.5 text-xs text-zinc-300">
+            <button
+              onClick={handleUndo}
+              disabled={history.length === 0}
+              className={`flex items-center gap-1 px-2 py-1 rounded transition-colors ${
+                history.length > 0
+                  ? 'text-zinc-200 hover:bg-zinc-800 hover:text-white cursor-pointer active:scale-95'
+                  : 'text-zinc-600 cursor-not-allowed opacity-50'
+              }`}
+              title="Undo change (Ctrl+Z)"
+            >
+              <Undo2 className="w-3.5 h-3.5" />
+              <span className="text-[10px] font-semibold">Undo</span>
+              {history.length > 0 && (
+                <span className="text-[9px] font-mono text-amber-400 bg-zinc-900 px-1 rounded">
+                  {history.length}
+                </span>
+              )}
+            </button>
+
+            <button
+              onClick={handleRedo}
+              disabled={redoStack.length === 0}
+              className={`flex items-center gap-1 px-2 py-1 rounded transition-colors ${
+                redoStack.length > 0
+                  ? 'text-zinc-200 hover:bg-zinc-800 hover:text-white cursor-pointer active:scale-95'
+                  : 'text-zinc-600 cursor-not-allowed opacity-50'
+              }`}
+              title="Redo change (Ctrl+Y)"
+            >
+              <Redo2 className="w-3.5 h-3.5" />
+              <span className="text-[10px] font-semibold">Redo</span>
+              {redoStack.length > 0 && (
+                <span className="text-[9px] font-mono text-amber-400 bg-zinc-900 px-1 rounded">
+                  {redoStack.length}
+                </span>
+              )}
+            </button>
+          </div>
+
+          {/* DYNAMIC ZOOM CONTROLS (FIT, 100%, 200%, +, -) */}
+          <div className="flex items-center gap-1 bg-zinc-950 border border-zinc-800 rounded-lg p-0.5 text-xs text-zinc-300">
+            <button
+              onClick={handleZoomOut}
+              className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white"
+              title="Zoom Out (-)"
+            >
+              <ZoomOut className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={handleFitToWindow}
+              className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${
+                zoomMode === 'fit' ? 'bg-amber-500 text-black font-bold shadow-xs' : 'text-zinc-400 hover:text-white'
+              }`}
+              title="Fit entire substrate within window"
+            >
+              Fit
+            </button>
+            <button
+              onClick={handle100Percent}
+              className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${
+                zoomMode === '100' ? 'bg-amber-500 text-black font-bold shadow-xs' : 'text-zinc-400 hover:text-white'
+              }`}
+              title="100% Actual Physical Scale (1:1)"
+            >
+              100%
+            </button>
+            <button
+              onClick={handle200Percent}
+              className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${
+                zoomMode === '200' ? 'bg-amber-500 text-black font-bold shadow-xs' : 'text-zinc-400 hover:text-white'
+              }`}
+              title="200% Zoom"
+            >
+              200%
+            </button>
+            <button
+              onClick={handleZoomIn}
+              className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white"
+              title="Zoom In (+)"
+            >
+              <ZoomIn className="w-3.5 h-3.5" />
+            </button>
+            <span className="font-mono text-[10px] text-zinc-500 px-1 border-l border-zinc-800">
+              {Math.round((zoomLevel / 12.0) * 100)}%
+            </span>
+          </div>
+
+          {/* PRINTHEAD BAND SELECTOR (12.5 mm, 12.7 mm, 21.1 mm / 249px, 25.0 mm / 295px) */}
+          <div className="flex items-center gap-1 bg-zinc-950 border border-zinc-800 rounded-lg p-0.5 text-xs text-zinc-300">
+            <span className="text-[10px] text-zinc-500 px-1 font-medium">Head:</span>
+            <button
+              onClick={() => handleSetBandMm(12.5)}
+              className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold transition-colors ${
+                currentBandMm === 12.5 ? 'bg-amber-500 text-black shadow-xs' : 'text-zinc-400 hover:text-white'
+              }`}
+              title="12.5 mm (148 px @ 300 DPI)"
+            >
+              12.5mm
+            </button>
+            <button
+              onClick={() => handleSetBandMm(12.7)}
+              className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold transition-colors ${
+                currentBandMm === 12.7 ? 'bg-amber-500 text-black shadow-xs' : 'text-zinc-400 hover:text-white'
+              }`}
+              title="12.7 mm (150 px @ 300 DPI, ½ inch standard)"
+            >
+              12.7mm (½")
+            </button>
+            <button
+              onClick={() => handleSetBandMm(21.08)}
+              className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold transition-colors ${
+                Math.abs(currentBandMm - 21.08) < 0.15 ? 'bg-amber-500 text-black shadow-xs' : 'text-zinc-400 hover:text-white'
+              }`}
+              title="21.1 mm (249 px @ 300 DPI - Injector Screen 1:1)"
+            >
+              21.1mm (249px)
+            </button>
+            <button
+              onClick={() => handleSetBandMm(25.0)}
+              className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold transition-colors ${
+                Math.abs(currentBandMm - 25.0) < 0.15 ? 'bg-amber-500 text-black shadow-xs' : 'text-zinc-400 hover:text-white'
+              }`}
+              title="25.0 mm (295 px @ 300 DPI - 1 inch head)"
+            >
+              25mm (295px)
+            </button>
+          </div>
+
+          {/* ENDLESS / UNRESTRICTED TRAVEL LENGTH CONTROL (35, 45, 80, 100mm / 1181px) */}
+          <div className="flex items-center gap-1 bg-zinc-950 border border-zinc-800 rounded-lg p-0.5 text-xs text-zinc-300">
+            <span className="text-[10px] text-zinc-500 px-1 font-medium">Length:</span>
+            <input
+              type="number"
+              step="1"
+              min="10"
+              max="1000"
+              value={currentLengthMm}
+              onChange={e => handleSetLengthMm(parseFloat(e.target.value) || 35)}
+              className="w-14 bg-zinc-900 border border-zinc-700 rounded px-1.5 py-0.5 font-mono text-[11px] font-bold text-amber-400 text-center focus:outline-hidden"
+              title="Enter any travel length (e.g. 35, 45, 80, 100, 150 mm - unrestricted endless length)"
+            />
+            <span className="text-[10px] text-zinc-500 font-mono pr-1">mm</span>
+
+            {/* Quick length presets */}
+            <div className="flex items-center gap-0.5 pl-1 border-l border-zinc-800">
+              {[35, 45, 80, 100, 150].map(len => (
+                <button
+                  key={len}
+                  onClick={() => handleSetLengthMm(len)}
+                  className={`px-1.5 py-0.5 rounded text-[10px] font-mono transition-colors ${
+                    currentLengthMm === len ? 'bg-amber-500/30 text-amber-300 font-bold border border-amber-500/50' : 'text-zinc-400 hover:text-white'
+                  }`}
+                  title={`Quick preset: ${len} mm ${len === 100 ? '(1181 px @ 300 DPI)' : ''}`}
+                >
+                  {len === 100 ? '100mm (1181px)' : `${len}mm`}
+                </button>
+              ))}
+            </div>
+
+            {/* Live 1:1 Pixel Dimensions Badge */}
+            <span className="text-[10px] font-mono text-zinc-400 bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800" title="Live 1:1 Pixel Dimensions @ 300 DPI">
+              {Math.round(canvasWidthMm * (300 / 25.4))} × {Math.round(canvasHeightMm * (300 / 25.4))} px
+            </span>
+          </div>
+        </div>
+
+        {/* Center: Fit & Spacing Controls */}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleFitSelected}
+            className="flex items-center gap-1 px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold border border-zinc-700 transition-colors"
+            title="Fit Selected line into usable band (Shift+F)"
+          >
+            <span>Fit Selected</span>
+            <kbd className="text-[10px] font-mono text-amber-400">Shift+F</kbd>
+          </button>
+
+          <button
+            onClick={handleFitAllLines}
+            className="flex items-center gap-1 px-2.5 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-bold border border-amber-500/50 transition-colors"
+            title="Fit All Lines into usable band (Shift+A)"
+          >
+            <Crosshair className="w-3.5 h-3.5" />
+            <span>Fit All Lines</span>
+            <kbd className="text-[10px] font-mono text-amber-400">Shift+A</kbd>
+          </button>
+
+          {/* Line Gap Stepper */}
+          <div className="flex items-center gap-1 pl-2 border-l border-zinc-800">
+            <span className="text-zinc-400 text-[11px]">Gap:</span>
+            <button
+              onClick={() => handleLineGapChange(template.lineGapMm - 0.1)}
+              className="px-1.5 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono"
+              title="Decrease line gap by 0.1mm"
+            >
+              -
+            </button>
+            <span className="font-mono font-bold text-amber-400 w-12 text-center">
+              {template.lineGapMm.toFixed(1)} mm
+            </span>
+            <button
+              onClick={() => handleLineGapChange(template.lineGapMm + 0.1)}
+              className="px-1.5 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono"
+              title="Increase line gap by 0.1mm"
+            >
+              +
+            </button>
+          </div>
+        </div>
+
+        {/* Right: Clean, Symmetric Layout Actions */}
+        <div className="flex items-center gap-2 relative">
+          {/* Status Badge */}
+          <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold select-none">
+            {currentLayoutInfo.source === 'sku_override' ? (
+              <span className="flex items-center gap-1 text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded">
+                <Star className="w-3.5 h-3.5 fill-amber-400" />
+                <span>Custom: {activeProduct.name} ({previewSku.packSize})</span>
+              </span>
+            ) : (
+              <span className="flex items-center gap-1 text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded">
+                <Globe className="w-3.5 h-3.5" />
+                <span>Global {previewSku.packSize} Default</span>
+              </span>
+            )}
+          </div>
+
+          {/* Reset to Global Button */}
+          <button
+            onClick={handleResetToGlobal}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white border border-zinc-700 text-xs font-semibold transition-colors"
+            title={`Reset ${activeProduct.name} to the active Global ${previewSku.packSize} Default layout`}
+          >
+            <RotateCcw className="w-3.5 h-3.5 text-zinc-400" />
+            <span>Reset to Global {previewSku.packSize}</span>
+          </button>
+
+          {/* Split Save Action Button */}
+          <div className="flex items-center rounded-lg shadow-sm border border-amber-500/50 overflow-visible relative">
+            <button
+              onClick={handlePrimarySaveClick}
+              disabled={saveStatus === 'saving'}
+              className={`flex items-center gap-1.5 px-3 py-1.5 font-bold text-xs transition-all active:scale-95 ${
+                saveStatus === 'saved'
+                  ? 'bg-emerald-500 hover:bg-emerald-400 text-black'
+                  : saveStatus === 'saving'
+                  ? 'bg-amber-600 text-black cursor-wait opacity-90'
+                  : 'bg-amber-500 hover:bg-amber-400 text-black'
+              }`}
+              title={
+                currentLayoutInfo.source === 'sku_override'
+                  ? `Save independent layout for ${activeProduct.name} (${previewSku.packSize}) only`
+                  : `Set as Global Default for ALL ${previewSku.packSize} products`
+              }
+            >
+              {saveStatus === 'saving' ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  <span>Saving...</span>
+                </>
+              ) : saveStatus === 'saved' ? (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5 stroke-[2.5]" />
+                  <span>Saved!</span>
+                </>
+              ) : currentLayoutInfo.source === 'sku_override' ? (
+                <>
+                  <Star className="w-3.5 h-3.5 fill-black text-black" />
+                  <span>Save for {activeProduct.name} only</span>
+                </>
+              ) : (
+                <>
+                  <Globe className="w-3.5 h-3.5 text-black" />
+                  <span>Set as Global {previewSku.packSize}</span>
+                </>
+              )}
+            </button>
+
+            {/* Dropdown Options Toggle */}
+            <button
+              onClick={() => setIsSaveMenuOpen(prev => !prev)}
+              className="px-1.5 py-1.5 bg-amber-600 hover:bg-amber-500 text-black border-l border-amber-600/60 font-bold transition-colors cursor-pointer"
+              title="Select save target (Global or Product only)..."
+            >
+              <ChevronDown className="w-3.5 h-3.5" />
+            </button>
+
+            {/* Floating Dropdown Menu */}
+            {isSaveMenuOpen && (
+              <div 
+                className="absolute right-0 top-full mt-1.5 w-80 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl p-2 z-50 animate-in fade-in zoom-in-95 duration-150 space-y-1"
+                onClick={e => e.stopPropagation()}
+              >
+                <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-zinc-400 border-b border-zinc-800">
+                  Save Scope Options
+                </div>
+
+                {/* Option 1: Set as Global Default */}
+                <button
+                  onClick={handleSaveGeneralPackDefault}
+                  className="w-full text-left p-2.5 rounded-lg hover:bg-zinc-800 transition-colors flex items-start gap-2.5 group cursor-pointer"
+                >
+                  <div className="w-6 h-6 rounded-md bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0 mt-0.5 group-hover:bg-emerald-500/30">
+                    <Globe className="w-3.5 h-3.5" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-zinc-100 flex items-center gap-1.5">
+                      <span>Set as Global {previewSku.packSize} Default</span>
+                      {currentLayoutInfo.source === 'pack_default' && (
+                        <span className="text-[9px] font-mono bg-emerald-500/20 text-emerald-400 px-1 rounded">Active</span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-zinc-400 leading-tight mt-0.5">
+                      Applies this layout to all {previewSku.packSize} products (Turmeric, Coriander, Garam Masala, Chilli, etc.) that use the global default.
+                    </p>
+                  </div>
+                </button>
+
+                {/* Option 2: Save for Product only (Independent) */}
+                <button
+                  onClick={handleSaveSkuCustomOverride}
+                  className="w-full text-left p-2.5 rounded-lg hover:bg-zinc-800 transition-colors flex items-start gap-2.5 group cursor-pointer"
+                >
+                  <div className="w-6 h-6 rounded-md bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0 mt-0.5 group-hover:bg-amber-500/30">
+                    <Star className="w-3.5 h-3.5" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-zinc-100 flex items-center gap-1.5">
+                      <span>Save for {activeProduct.name} only (Independent)</span>
+                      {currentLayoutInfo.source === 'sku_override' && (
+                        <span className="text-[9px] font-mono bg-amber-500/20 text-amber-400 px-1 rounded">Active</span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-zinc-400 leading-tight mt-0.5">
+                      Saves an independent custom layout specifically for {activeProduct.name} ({previewSku.packSize}). Does not affect any other product.
+                    </p>
+                  </div>
+                </button>
+              </div>
+            )}
+          </div>
+
+          <button
+            onClick={onNavigateToPrint}
+            className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-100 font-semibold text-xs border border-zinc-700 transition-colors"
+          >
+            <span>Proceed to Print</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Clean, Non-Cluttered 1-Line State Info Strip */}
+      {currentLayoutInfo.source === 'sku_override' && (
+        <div className="bg-amber-950/30 border-b border-amber-900/40 px-4 py-1.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2 text-amber-300">
+            <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400 shrink-0" />
+            <span className="font-semibold">Independent Layout:</span>
+            <span className="text-zinc-300">
+              Customized for <strong>{activeProduct.name} ({previewSku.packSize})</strong>. Other products follow the Global {previewSku.packSize} Default.
+            </span>
+          </div>
+          <button
+            onClick={handleResetToGlobal}
+            className="text-[11px] text-amber-300 hover:text-white flex items-center gap-1 underline underline-offset-2 hover:no-underline transition-colors cursor-pointer"
+          >
+            <RotateCcw className="w-3 h-3" />
+            <span>Reset to Global {previewSku.packSize}</span>
+          </button>
+        </div>
+      )}
+
+      {currentLayoutInfo.source === 'pack_default' && (
+        <div className="bg-zinc-900/60 border-b border-zinc-800 px-4 py-1.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2 text-zinc-300">
+            <Globe className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+            <span className="font-semibold text-emerald-400">Global {previewSku.packSize} Default:</span>
+            <span className="text-zinc-400">
+              Synchronized geometry for all <strong>{previewSku.packSize}</strong> products. Values (MRP, Batch, Net Wt) load dynamically.
+            </span>
+          </div>
+          <button
+            onClick={handleSaveSkuCustomOverride}
+            className="text-[11px] text-amber-400 hover:text-amber-300 flex items-center gap-1 underline underline-offset-2 hover:no-underline transition-colors cursor-pointer"
+          >
+            <Star className="w-3 h-3" />
+            <span>Save as Independent for {activeProduct.name}</span>
+          </button>
+        </div>
+      )}
+
+      {currentLayoutInfo.source === 'scratch_new' && (
+        <div className="bg-cyan-950/30 border-b border-cyan-800/40 px-4 py-1.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2 text-cyan-300">
+            <Sparkles className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+            <span className="font-semibold">New Pack Size:</span>
+            <span className="text-cyan-200/90">
+              Fresh starter layout for <strong>{previewSku.packSize}</strong>.
+            </span>
+          </div>
+          <button
+            onClick={handleSaveGeneralPackDefault}
+            className="text-[11px] text-emerald-400 hover:text-emerald-300 flex items-center gap-1 underline underline-offset-2 hover:no-underline transition-colors cursor-pointer"
+          >
+            <Globe className="w-3 h-3" />
+            <span>Set as Global {previewSku.packSize}</span>
+          </button>
+        </div>
+      )}
+
+      {/* Main Designer Workspace */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Left Tool Rail: ALL BUTTONS FULLY FUNCTIONAL */}
+        <div className="w-14 bg-zinc-900 border-r border-zinc-800 flex flex-col items-center py-3 gap-2 shrink-0">
+          <button
+            onClick={() => setActiveTool('select')}
+            className={`p-2.5 rounded-lg transition-colors ${
+              activeTool === 'select' ? 'bg-amber-500 text-black shadow-xs font-bold' : 'text-zinc-400 hover:bg-zinc-800 hover:text-white'
+            }`}
+            title="Select & Move Tool (V)"
+          >
+            <PenTool className="w-4 h-4" />
+          </button>
+
+          <button
+            onClick={handleAddTextObject}
+            className="p-2.5 rounded-lg text-zinc-400 hover:bg-zinc-800 hover:text-white transition-colors"
+            title="Add Text Object (T)"
+          >
+            <Type className="w-4 h-4" />
+          </button>
+
+          <button
+            onClick={() => handleAddFieldObject('batch')}
+            className="p-2.5 rounded-lg text-zinc-400 hover:bg-zinc-800 hover:text-white transition-colors"
+            title="Add Variable Field (F)"
+          >
+            <Hash className="w-4 h-4" />
+          </button>
+
+          <button
+            onClick={handleAddLineObject}
+            className="p-2.5 rounded-lg text-zinc-400 hover:bg-zinc-800 hover:text-white transition-colors"
+            title="Add Horizontal Dividing Line (L)"
+          >
+            <Minus className="w-4 h-4" />
+          </button>
+
+          <button
+            onClick={handleAddRectangleObject}
+            className="p-2.5 rounded-lg text-zinc-400 hover:bg-zinc-800 hover:text-white transition-colors"
+            title="Add Rectangle Box (R)"
+          >
+            <Square className="w-4 h-4" />
+          </button>
+
+          <button
+            onClick={handleAddBarcodeObject}
+            className="p-2.5 rounded-lg text-zinc-400 hover:bg-zinc-800 hover:text-white transition-colors"
+            title="Add 1D Barcode (B)"
+          >
+            <Barcode className="w-4 h-4" />
+          </button>
+
+          <button
+            onClick={handleAddQrObject}
+            className="p-2.5 rounded-lg text-zinc-400 hover:bg-zinc-800 hover:text-white transition-colors"
+            title="Add 2D QR Code (Q)"
+          >
+            <QrCode className="w-4 h-4" />
+          </button>
+
+          <div className="w-8 border-t border-zinc-800 my-1" />
+
+          {/* Diagnostic Raster Trigger */}
+          <button
+            onClick={handleOpenDiagnostic}
+            className="p-2.5 rounded-lg text-amber-400 hover:bg-zinc-800 transition-colors"
+            title="Preview Final 1-Bit Machine Raster (Eye)"
+          >
+            <Eye className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Center Canvas Workspace Wrapper */}
+        <div className="flex-1 relative flex flex-col overflow-hidden bg-zinc-950">
+          {/* Scrollable Viewport with Full Top-to-Bottom, Left-to-Right Scrolling without Cutoff */}
+          <div 
+            ref={canvasViewportRef}
+            onMouseDown={handleViewportMouseDown}
+            onMouseMove={handleViewportMouseMove}
+            onMouseUp={handleViewportMouseUp}
+            onMouseLeave={handleViewportMouseUp}
+            className="flex-1 overflow-auto relative select-none cursor-grab active:cursor-grabbing"
+            style={{
+              scrollbarGutter: 'stable',
+              overscrollBehavior: 'contain'
+            }}
+          >
+            <div 
+              data-pan-background="true"
+              className="inline-flex min-w-full min-h-full p-16"
+              style={{
+                justifyContent: 'safe center',
+                alignItems: 'safe center'
+              }}
+            >
+              {/* UNIFIED DUAL-AXIS RULERS INTEGRATED FOR BOTH PACK VIEW & PRINTER RASTER VIEW */}
+              <div className="relative inline-flex flex-col shadow-2xl shrink-0 my-auto mx-auto cursor-default">
+                {/* Top Row: Corner Origin Box + X Horizontal Ruler */}
+                <div className="flex">
+                  {/* (0,0) Corner Box */}
+                  <div className="w-7 h-6 bg-zinc-900 border-r border-b border-zinc-700/80 flex items-center justify-center text-[9px] font-mono font-bold text-amber-400 select-none shrink-0">
+                    mm
+                  </div>
+
+                  {/* X RULER (Horizontal Axis) */}
+                  <div 
+                    className="h-6 bg-zinc-900 border-b border-zinc-800 relative select-none overflow-hidden shrink-0"
+                    style={{ 
+                      width: `${displayWidthMm * zoomLevel}px`,
+                      minWidth: `${displayWidthMm * zoomLevel}px`,
+                      maxWidth: `${displayWidthMm * zoomLevel}px`
+                    }}
+                  >
+                    {/* Millimeter Ticks on X Axis */}
+                    {Array.from({ length: Math.ceil(displayWidthMm) + 1 }).map((_, mm) => {
+                      const is10mm = mm % 10 === 0;
+                      const is5mm = mm % 5 === 0 && !is10mm;
+                      const posPx = mm * zoomLevel;
+
+                      return (
+                        <div 
+                          key={mm} 
+                          className="absolute bottom-0 flex flex-col items-center pointer-events-none -translate-x-1/2"
+                          style={{ left: `${posPx}px` }}
+                        >
+                          {is10mm && (
+                            <span className="text-[8px] font-mono text-zinc-400 leading-none mb-0.5 select-none">
+                              {mm}
+                            </span>
+                          )}
+                          <div 
+                            className={`w-px ${
+                              is10mm ? 'h-3 bg-zinc-400' : is5mm ? 'h-2 bg-zinc-600' : 'h-1 bg-zinc-700'
+                            }`} 
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Bottom Row: Y Vertical Ruler + Printable White Substrate */}
+                <div className="flex">
+                  {/* Y RULER (Vertical Axis) */}
+                  <div 
+                    className="w-7 bg-zinc-900 border-r border-zinc-800 relative select-none overflow-hidden shrink-0"
+                    style={{ 
+                      height: `${displayHeightMm * zoomLevel}px`,
+                      minHeight: `${displayHeightMm * zoomLevel}px`,
+                      maxHeight: `${displayHeightMm * zoomLevel}px`
+                    }}
+                  >
+                    {/* Millimeter Ticks on Y Axis */}
+                    {Array.from({ length: Math.ceil(displayHeightMm) + 1 }).map((_, mm) => {
+                      const is10mm = mm % 10 === 0;
+                      const is5mm = mm % 5 === 0 && !is10mm;
+                      const posPx = mm * zoomLevel;
+
+                      return (
+                        <div 
+                          key={mm} 
+                          className="absolute right-0 flex items-center pointer-events-none -translate-y-1/2"
+                          style={{ top: `${posPx}px` }}
+                        >
+                          {is10mm && (
+                            <span className="text-[8px] font-mono text-zinc-400 leading-none mr-1 select-none">
+                              {mm}
+                            </span>
+                          )}
+                          <div 
+                            className={`h-px ${
+                              is10mm ? 'w-3 bg-zinc-400' : is5mm ? 'w-2 bg-zinc-600' : 'h-1 bg-zinc-700'
+                            }`} 
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* WHITE PAPER / SUBSTRATE CANVAS */}
+                  <div 
+                    className="relative bg-white text-black border border-zinc-300 shadow-xl select-none overflow-hidden cursor-crosshair shrink-0"
+                    style={{
+                      width: `${displayWidthMm * zoomLevel}px`,
+                      minWidth: `${displayWidthMm * zoomLevel}px`,
+                      maxWidth: `${displayWidthMm * zoomLevel}px`,
+                      height: `${displayHeightMm * zoomLevel}px`,
+                      minHeight: `${displayHeightMm * zoomLevel}px`,
+                      maxHeight: `${displayHeightMm * zoomLevel}px`
+                    }}
+                    onClick={() => {
+                      if (viewMode === 'pack') selectObject(null);
+                    }}
+                  >
+                    {/* Subtle 5mm Grid Lines */}
+                    <svg className="absolute inset-0 w-full h-full pointer-events-none opacity-10">
+                      <defs>
+                        <pattern id="grid5mm" width={5 * zoomLevel} height={5 * zoomLevel} patternUnits="userSpaceOnUse">
+                          <path d={`M ${5 * zoomLevel} 0 L 0 0 0 ${5 * zoomLevel}`} fill="none" stroke="#000" strokeWidth="0.5" />
+                        </pattern>
+                      </defs>
+                      <rect width="100%" height="100%" fill="url(#grid5mm)" />
+                    </svg>
+
+                    {viewMode === 'printer' ? (
+                      /* SMOOTH CRISP TRANSFORMED DIRECT CANVAS (NO PIXELATED DOWNSCALING) */
+                      <div className="relative w-full h-full bg-white flex items-center justify-center pointer-events-none overflow-hidden">
+                        <canvas 
+                          ref={printerCanvasRef} 
+                          className="w-full h-full pointer-events-none block object-contain" 
+                          style={{ imageRendering: 'auto' }}
+                        />
+                      </div>
+                    ) : (
+                      /* PACK VIEW: INTERACTIVE VECTOR OBJECTS */
+                      template.objects.map(obj => {
+                        const isSelected = selectedObjectId === obj.id;
+                        const xPx = obj.x * zoomLevel;
+                        const yPx = obj.y * zoomLevel;
+                        const wPx = Math.max(2, obj.width * zoomLevel);
+                        const hPx = obj.height * zoomLevel;
+
+                        let displayText = obj.content || '';
+                        if (obj.fieldKey && previewValues[obj.fieldKey]) {
+                          displayText = previewValues[obj.fieldKey];
+                        } else {
+                          displayText = displayText.replace(/\{(\w+)\}/g, (_, k) => previewValues[k] || `{${k}}`);
+                        }
+
+                        const rot = obj.rotation || 0;
+                        const scaleX = (obj.mirrorX ? -1 : 1) * (obj.horizontalStretchPercent / 100);
+                        const scaleY = obj.mirrorY ? -1 : 1;
+
+                        return (
+                          <div
+                            key={obj.id}
+                            onMouseDown={e => handleStartDrag(e, obj)}
+                            onClick={e => {
+                              e.stopPropagation();
+                              selectObject(obj.id);
+                            }}
+                            className={`absolute flex items-center transition-shadow select-none ${
+                              isSelected 
+                                ? 'outline outline-1.5 outline-amber-500 shadow-sm cursor-grab active:cursor-grabbing z-30' 
+                                : 'hover:bg-zinc-100/60 cursor-pointer z-10'
+                            }`}
+                            style={{
+                              left: `${xPx}px`,
+                              top: `${yPx}px`,
+                              width: `${wPx}px`,
+                              height: `${hPx}px`,
+                              fontFamily: `${obj.fontFamily}, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`,
+                              fontSize: `${Math.max(6, Math.round(obj.fontSizeMm * zoomLevel))}px`,
+                              fontWeight: obj.fontWeight === 'bold' ? 'bold' : 'normal',
+                              fontStyle: obj.fontStyle === 'italic' ? 'italic' : 'normal',
+                              transform: `rotate(${rot}deg) scale(${scaleX}, ${scaleY})`,
+                              transformOrigin: `${obj.alignment === 'center' ? 'center' : obj.alignment === 'right' ? 'right' : 'left'} center`,
+                              filter: obj.invert ? 'invert(1)' : 'none',
+                              justifyContent: obj.alignment === 'center' ? 'center' : obj.alignment === 'right' ? 'flex-end' : 'flex-start'
+                            }}
+                          >
+                            {obj.type === 'line' ? (
+                              <div className="w-full bg-black" style={{ height: `${Math.max(1, obj.height * zoomLevel)}px` }} />
+                            ) : obj.type === 'rectangle' ? (
+                              <div className="w-full h-full border border-black" />
+                            ) : obj.type === 'barcode' ? (
+                              <div className="w-full h-full flex flex-col items-center justify-center bg-zinc-100 border border-zinc-400 p-0.5">
+                                <Barcode className="w-full h-4/5 text-black" />
+                                <span className="text-[7px] font-mono leading-none">{displayText}</span>
+                              </div>
+                            ) : obj.type === 'qr' ? (
+                              <div className="w-full h-full flex items-center justify-center bg-white border border-zinc-400 p-0.5">
+                                <QrCode className="w-full h-full text-black" />
+                              </div>
+                            ) : (
+                              <span className="leading-none whitespace-nowrap overflow-visible">
+                                {displayText}
+                              </span>
+                            )}
+
+                            {/* Selected Bounding Box Handles */}
+                            {isSelected && (
+                              <>
+                                <div className="absolute -top-1 -left-1 w-2 h-2 bg-amber-500 border border-white rounded-xs" />
+                                <div className="absolute -top-1 -right-1 w-2 h-2 bg-amber-500 border border-white rounded-xs" />
+                                <div className="absolute -bottom-1 -left-1 w-2 h-2 bg-amber-500 border border-white rounded-xs" />
+                                <div className="absolute -bottom-1 -right-1 w-2 h-2 bg-amber-500 border border-white rounded-xs" />
+                              </>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Orientation & Travel Indicator Badge (Fixed in bottom-right of workspace, never scrolls away or blocks content) */}
+          <div className="absolute bottom-3 right-5 z-20 pointer-events-none flex items-center gap-2 px-3 py-1.5 rounded-lg bg-zinc-900/95 backdrop-blur-xs border border-zinc-800 text-xs font-mono text-zinc-300 shadow-xl">
+            <span className="text-zinc-500">Travel:</span>
+            <span className="font-bold text-amber-400">{template.travel}</span>
+            <span className="text-zinc-600">•</span>
+            <span className="text-zinc-500">Layout:</span>
+            <span className="font-bold text-amber-400">{template.layout}</span>
+            <span className="text-zinc-600">•</span>
+            <span className="text-zinc-500">Band:</span>
+            <span className="font-bold text-zinc-200">{machine.printBandMm} mm</span>
+          </div>
+        </div>
+
+        {/* Right Properties & Orientation Panel */}
+        <div className="w-80 bg-zinc-900 border-l border-zinc-800 flex flex-col overflow-y-auto p-4 space-y-5 text-xs shrink-0">
+          {viewMode === 'printer' ? (
+            /* PRINTER 1-BIT RASTER DIAGNOSTICS & HARDWARE CONTROLS */
+            <div className="space-y-4">
+              <div className="flex items-center justify-between pb-2 border-b border-zinc-800">
+                <span className="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+                  <Printer className="w-4 h-4" />
+                  <span>1-Bit Raster Properties</span>
+                </span>
+                <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-mono text-[10px] font-bold border border-emerald-500/30">
+                  {machine.defaultDpi} DPI
+                </span>
+              </div>
+
+              {/* Technical Metrics Card */}
+              <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800 space-y-2 text-xs font-mono">
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-500">Raster Res:</span>
+                  <span className="font-bold text-white">
+                    {Math.round(canvasWidthMm * (machine.defaultDpi / 25.4))} × {Math.round(canvasHeightMm * (machine.defaultDpi / 25.4))} px
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-500">Physical Size:</span>
+                  <span className="text-zinc-300">{canvasWidthMm.toFixed(1)} × {canvasHeightMm.toFixed(1)} mm</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-500">Head Nozzles:</span>
+                  <span className="text-amber-400 font-bold">{machine.printBandMm} mm ({Math.round(machine.printBandMm * (machine.defaultDpi / 25.4))} nozzles)</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-500">Feed Direction:</span>
+                  <span className="text-zinc-300">{machine.feedOrigin}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-500">Binary Bit Depth:</span>
+                  <span className="text-emerald-400 font-bold">1-Bit Pure Monochrome</span>
+                </div>
+              </div>
+
+              {/* Raster Orientation & Flip Transforms */}
+              <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800 space-y-2 text-xs">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-amber-400 block mb-1">
+                  Raster Orientation & Mirror
+                </span>
+                
+                {/* 4-way Rotation */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[10px] text-zinc-500">Raster Rotation</label>
+                    <button
+                      onClick={() => setRasterRotation(prev => ((prev + 90) % 360) as 0 | 90 | 180 | 270)}
+                      className="text-[10px] text-amber-400 hover:text-amber-300 flex items-center gap-1 font-mono"
+                      title="Quick Rotate 90° Clockwise"
+                    >
+                      <RotateCw className="w-3 h-3" />
+                      <span>+90°</span>
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-4 gap-1">
+                    {([0, 90, 180, 270] as const).map(deg => (
+                      <button
+                        key={deg}
+                        onClick={() => setRasterRotation(deg)}
+                        className={`py-1 rounded font-mono text-[11px] transition-colors ${
+                          rasterRotation === deg
+                            ? 'bg-amber-500 text-black font-bold shadow-xs'
+                            : 'bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white'
+                        }`}
+                      >
+                        {deg}°
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Mirroring / Flips */}
+                <div className="grid grid-cols-2 gap-1.5 pt-1">
+                  <button
+                    onClick={() => setRasterMirrorX(prev => !prev)}
+                    className={`flex items-center justify-center gap-1.5 py-1.5 rounded text-[11px] border transition-colors ${
+                      rasterMirrorX
+                        ? 'bg-amber-500 text-black border-amber-400 font-bold'
+                        : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:bg-zinc-800'
+                    }`}
+                    title="Flip Horizontally (Mirror X)"
+                  >
+                    <FlipHorizontal className="w-3.5 h-3.5" />
+                    <span>Flip X</span>
+                  </button>
+
+                  <button
+                    onClick={() => setRasterMirrorY(prev => !prev)}
+                    className={`flex items-center justify-center gap-1.5 py-1.5 rounded text-[11px] border transition-colors ${
+                      rasterMirrorY
+                        ? 'bg-amber-500 text-black border-amber-400 font-bold'
+                        : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:bg-zinc-800'
+                    }`}
+                    title="Flip Vertically (Mirror Y)"
+                  >
+                    <FlipVertical className="w-3.5 h-3.5" />
+                    <span>Flip Y</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Quick Raster Operations */}
+              <div className="space-y-2 pt-1">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-400 block mb-1">
+                  Download & Inspect
+                </span>
+
+                {/* Standard BMP button (Universal Windows Photos compatible) */}
+                <button
+                  onClick={handleDownloadStandardBmp}
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs shadow-sm transition-colors"
+                  title="Download Windows BMP (Compatible with Windows Photos, Paint, and all viewers)"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download Windows BMP (300 DPI)</span>
+                </button>
+
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button
+                    onClick={handleDownload1BitBmp}
+                    className="flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-semibold text-[11px] border border-zinc-700 transition-colors"
+                    title="Download Raw 1-Bit Indexed BMP for direct industrial controllers"
+                  >
+                    <Download className="w-3 h-3" />
+                    <span>Raw 1-Bit BMP</span>
+                  </button>
+
+                  <button
+                    onClick={handleDownloadPng}
+                    className="flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-semibold text-[11px] border border-zinc-700 transition-colors"
+                    title="Download High-Resolution PNG"
+                  >
+                    <Download className="w-3 h-3" />
+                    <span>PNG (300 DPI)</span>
+                  </button>
+                </div>
+
+                <button
+                  onClick={updatePrinterViewRaster}
+                  className="w-full flex items-center justify-center gap-2 px-3 py-1.5 rounded-lg bg-zinc-800/80 hover:bg-zinc-700 text-zinc-200 font-semibold text-xs border border-zinc-700 transition-colors"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Re-Rasterize Template</span>
+                </button>
+
+                <button
+                  onClick={handleOpenDiagnostic}
+                  className="w-full flex items-center justify-center gap-2 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-amber-300 font-semibold text-xs border border-zinc-700 transition-colors"
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                  <span>Inspect Binary Bitmap</span>
+                </button>
+
+                <button
+                  onClick={() => setViewMode('pack')}
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-zinc-950 hover:bg-zinc-800 text-zinc-300 font-semibold text-xs border border-zinc-800 transition-colors"
+                >
+                  <span>← Back to Vector Pack View</span>
+                </button>
+              </div>
+
+              {/* Raster Readiness Notice */}
+              <div className="border-t border-zinc-800 pt-3 space-y-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-zinc-300 flex items-center gap-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Raster Readiness</span>
+                </span>
+                <div className="p-2.5 rounded bg-emerald-950/20 border border-emerald-500/30 text-emerald-400 text-[11px] leading-relaxed">
+                  ✓ Pure 1-bit binary raster generated at {machine.defaultDpi} DPI. Ready for direct industrial TIJ head streaming.
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* 2x2 Orientation Selector */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-zinc-300">
+                Travel × Layout (2×2)
+              </span>
+              <button
+                onClick={handleCycleOrientation}
+                className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-zinc-800 text-amber-400 hover:bg-zinc-700"
+                title="Cycle Orientation (Alt+O)"
+              >
+                Cycle (Alt+O)
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => handleSetOrientation('Vertical', 'Stack')}
+                className={`p-2.5 rounded-lg border text-left flex flex-col gap-1 transition-colors ${
+                  template.travel === 'Vertical' && template.layout === 'Stack'
+                    ? 'bg-amber-500 text-black border-amber-400 font-bold shadow-xs'
+                    : 'bg-zinc-950 border-zinc-800 text-zinc-300 hover:bg-zinc-800'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <ArrowDownUp className="w-3.5 h-3.5" />
+                  <span className="text-[9px] font-mono">1 Pass</span>
+                </div>
+                <span className="text-[11px]">Vertical + Stack</span>
+              </button>
+
+              <button
+                onClick={() => handleSetOrientation('Vertical', 'Strip')}
+                className={`p-2.5 rounded-lg border text-left flex flex-col gap-1 transition-colors ${
+                  template.travel === 'Vertical' && template.layout === 'Strip'
+                    ? 'bg-amber-500 text-black border-amber-400 font-bold shadow-xs'
+                    : 'bg-zinc-950 border-zinc-800 text-zinc-300 hover:bg-zinc-800'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <RotateCw className="w-3.5 h-3.5" />
+                  <span className="text-[9px] font-mono">2 Passes</span>
+                </div>
+                <span className="text-[11px]">Vertical + Strip</span>
+              </button>
+
+              <button
+                onClick={() => handleSetOrientation('Horizontal', 'Strip')}
+                className={`p-2.5 rounded-lg border text-left flex flex-col gap-1 transition-colors ${
+                  template.travel === 'Horizontal' && template.layout === 'Strip'
+                    ? 'bg-amber-500 text-black border-amber-400 font-bold shadow-xs'
+                    : 'bg-zinc-950 border-zinc-800 text-zinc-300 hover:bg-zinc-800'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <ArrowLeftRight className="w-3.5 h-3.5" />
+                  <span className="text-[9px] font-mono">1 Pass</span>
+                </div>
+                <span className="text-[11px]">Horizontal + Strip</span>
+              </button>
+
+              <button
+                onClick={() => handleSetOrientation('Horizontal', 'Stack')}
+                className={`p-2.5 rounded-lg border text-left flex flex-col gap-1 transition-colors ${
+                  template.travel === 'Horizontal' && template.layout === 'Stack'
+                    ? 'bg-amber-500 text-black border-amber-400 font-bold shadow-xs'
+                    : 'bg-zinc-950 border-zinc-800 text-zinc-300 hover:bg-zinc-800'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <RotateCw className="w-3.5 h-3.5" />
+                  <span className="text-[9px] font-mono">Column</span>
+                </div>
+                <span className="text-[11px]">Horizontal + Stack</span>
+              </button>
+            </div>
+
+            {/* Layout Advisor Recommendation */}
+            <div className="p-2.5 rounded-lg bg-zinc-950 border border-zinc-800 text-[11px] text-zinc-400 space-y-1">
+              <span className="font-bold text-amber-400 block">Layout Advisor:</span>
+              <p>{advice.recommended.oneLineReason}</p>
+            </div>
+          </div>
+
+          {/* Selected Object Properties */}
+          {selectedObject ? (
+            <div className="space-y-4 border-t border-zinc-800 pt-4">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold uppercase tracking-wider text-zinc-300">
+                  Object: {selectedObject.fieldKey || selectedObject.content || selectedObject.type}
+                </span>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => handleUpdateSelectedObject({ locked: !selectedObject.locked })}
+                    className={`p-1 rounded ${selectedObject.locked ? 'text-amber-400' : 'text-zinc-500 hover:text-zinc-300'}`}
+                    title={selectedObject.locked ? 'Unlock object' : 'Lock object position'}
+                  >
+                    {selectedObject.locked ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
+                  </button>
+                  <button
+                    onClick={handleDeleteSelected}
+                    className="p-1 rounded text-rose-500 hover:text-rose-400 hover:bg-rose-500/10"
+                    title="Delete object"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Coordinates: X, Y, W, H with 0.1 mm step & Directional Nudges */}
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div>
+                  <div className="flex items-center justify-between mb-0.5">
+                    <label className="text-[10px] text-zinc-500">X (mm)</label>
+                    <div className="flex items-center gap-0.5">
+                      <button 
+                        type="button"
+                        onClick={() => updateObjectCoalesced(selectedObject.id, { x: Math.round((selectedObject.x - 0.5) * 10) / 10 }, 'property_tweak')}
+                        className="px-1 py-0.2 text-[9px] bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded font-mono"
+                        title="Move left 0.5mm"
+                      >
+                        ◀
+                      </button>
+                      <button 
+                        type="button"
+                        onClick={() => updateObjectCoalesced(selectedObject.id, { x: Math.round((selectedObject.x + 0.5) * 10) / 10 }, 'property_tweak')}
+                        className="px-1 py-0.2 text-[9px] bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded font-mono"
+                        title="Move right 0.5mm"
+                      >
+                        ▶
+                      </button>
+                    </div>
+                  </div>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={selectedObject.x}
+                    onChange={e => {
+                      const v = parseFloat(e.target.value);
+                      updateObjectCoalesced(selectedObject.id, { x: isNaN(v) ? 0 : v }, 'property_tweak');
+                    }}
+                    onBlur={commitPendingSession}
+                    className="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-1 font-mono text-zinc-200"
+                  />
+                </div>
+                <div>
+                  <div className="flex items-center justify-between mb-0.5">
+                    <label className="text-[10px] text-zinc-500">Y (mm)</label>
+                    <div className="flex items-center gap-0.5">
+                      <button 
+                        type="button"
+                        onClick={() => updateObjectCoalesced(selectedObject.id, { y: Math.round((selectedObject.y - 0.5) * 10) / 10 }, 'property_tweak')}
+                        className="px-1 py-0.2 text-[9px] bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded font-mono"
+                        title="Move up 0.5mm"
+                      >
+                        ▲
+                      </button>
+                      <button 
+                        type="button"
+                        onClick={() => updateObjectCoalesced(selectedObject.id, { y: Math.round((selectedObject.y + 0.5) * 10) / 10 }, 'property_tweak')}
+                        className="px-1 py-0.2 text-[9px] bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded font-mono"
+                        title="Move down 0.5mm"
+                      >
+                        ▼
+                      </button>
+                    </div>
+                  </div>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={selectedObject.y}
+                    onChange={e => {
+                      const v = parseFloat(e.target.value);
+                      updateObjectCoalesced(selectedObject.id, { y: isNaN(v) ? 0 : v }, 'property_tweak');
+                    }}
+                    onBlur={commitPendingSession}
+                    className="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-1 font-mono text-zinc-200"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-zinc-500 block mb-0.5">Width (mm)</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={selectedObject.width}
+                    onChange={e => {
+                      const v = parseFloat(e.target.value);
+                      updateObjectCoalesced(selectedObject.id, { width: isNaN(v) ? 0 : v }, 'property_tweak');
+                    }}
+                    onBlur={commitPendingSession}
+                    className="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-1 font-mono text-zinc-200"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-zinc-500 block mb-0.5">Height (mm)</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={selectedObject.height}
+                    onChange={e => {
+                      const v = parseFloat(e.target.value);
+                      updateObjectCoalesced(selectedObject.id, { height: isNaN(v) ? 0 : v, fontSizeMm: isNaN(v) ? 0 : v }, 'property_tweak');
+                    }}
+                    onBlur={commitPendingSession}
+                    className="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-1 font-mono text-zinc-200"
+                  />
+                </div>
+              </div>
+
+              {/* Typography Controls */}
+              {selectedObject.type !== 'line' && selectedObject.type !== 'rectangle' && (
+                <div className="space-y-2">
+                  <div>
+                    <label className="text-[10px] text-zinc-500 block mb-0.5">Font Family</label>
+                    <select
+                      value={selectedObject.fontFamily}
+                      onChange={e => handleUpdateSelectedObject({ fontFamily: e.target.value })}
+                      className="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-zinc-200 text-xs"
+                    >
+                      <option value="Barlow Condensed">Barlow Condensed</option>
+                      <option value="Roboto Condensed">Roboto Condensed</option>
+                      <option value="Noto Sans">Noto Sans</option>
+                      <option value="Roboto Mono">Roboto Mono</option>
+                      <option value="Oswald">Oswald</option>
+                    </select>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1">
+                      <label className="text-[10px] text-zinc-500 block mb-0.5">Text Height (mm)</label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="1.0"
+                        value={selectedObject.fontSizeMm}
+                        onChange={e => {
+                          const v = parseFloat(e.target.value) || 1.8;
+                          updateObjectCoalesced(selectedObject.id, { fontSizeMm: v, height: v }, 'property_tweak');
+                        }}
+                        onBlur={commitPendingSession}
+                        className="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-1 font-mono text-zinc-200"
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between mb-0.5">
+                        <label className="text-[10px] text-zinc-500">Condense (%)</label>
+                        <span className="text-[9px] font-mono text-amber-400 font-bold">{selectedObject.horizontalStretchPercent}%</span>
+                      </div>
+                      <input
+                        type="number"
+                        min="40"
+                        max="150"
+                        step="5"
+                        value={selectedObject.horizontalStretchPercent}
+                        onChange={e => {
+                          const val = Math.max(30, Math.min(200, parseInt(e.target.value) || 100));
+                          updateObjectCoalesced(selectedObject.id, { horizontalStretchPercent: val }, 'property_tweak');
+                        }}
+                        onBlur={commitPendingSession}
+                        className="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-1 font-mono text-zinc-200"
+                      />
+                      <div className="flex items-center gap-1 mt-1">
+                        {[75, 80, 85, 90, 100].map(pct => (
+                          <button
+                            key={pct}
+                            type="button"
+                            onClick={() => {
+                              commitPendingSession();
+                              updateTemplateWithHistory(prev => ({
+                                ...prev,
+                                objects: prev.objects.map(o => o.id === selectedObject.id ? { ...o, horizontalStretchPercent: pct } : o)
+                              }));
+                            }}
+                            className={`px-1 py-0.5 rounded text-[8px] font-mono transition-colors ${
+                              selectedObject.horizontalStretchPercent === pct ? 'bg-amber-500 text-black font-bold' : 'bg-zinc-800 text-zinc-400 hover:text-white'
+                            }`}
+                          >
+                            {pct}%
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Alignment & Styles */}
+                  <div className="flex items-center justify-between pt-1">
+                    <div className="flex rounded bg-zinc-950 border border-zinc-800 p-0.5">
+                      <button
+                        onClick={() => handleUpdateSelectedObject({ alignment: 'left' })}
+                        className={`p-1.5 rounded ${selectedObject.alignment === 'left' ? 'bg-zinc-800 text-amber-400' : 'text-zinc-500 hover:text-white'}`}
+                      >
+                        <AlignLeft className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => handleUpdateSelectedObject({ alignment: 'center' })}
+                        className={`p-1.5 rounded ${selectedObject.alignment === 'center' ? 'bg-zinc-800 text-amber-400' : 'text-zinc-500 hover:text-white'}`}
+                      >
+                        <AlignCenter className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => handleUpdateSelectedObject({ alignment: 'right' })}
+                        className={`p-1.5 rounded ${selectedObject.alignment === 'right' ? 'bg-zinc-800 text-amber-400' : 'text-zinc-500 hover:text-white'}`}
+                      >
+                        <AlignRight className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    <div className="flex rounded bg-zinc-950 border border-zinc-800 p-0.5">
+                      <button
+                        onClick={() => handleUpdateSelectedObject({ fontWeight: selectedObject.fontWeight === 'bold' ? 'normal' : 'bold' })}
+                        className={`p-1.5 rounded ${selectedObject.fontWeight === 'bold' ? 'bg-zinc-800 text-amber-400 font-bold' : 'text-zinc-500 hover:text-white'}`}
+                      >
+                        <Bold className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => handleUpdateSelectedObject({ fontStyle: selectedObject.fontStyle === 'italic' ? 'normal' : 'italic' })}
+                        className={`p-1.5 rounded ${selectedObject.fontStyle === 'italic' ? 'bg-zinc-800 text-amber-400' : 'text-zinc-500 hover:text-white'}`}
+                      >
+                        <Italic className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Object Rotation, Mirroring & Invert Controls */}
+              <div className="space-y-2 pt-3 border-t border-zinc-800">
+                <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider block">
+                  Rotate & Mirror Object
+                </span>
+
+                {/* 4-way Rotation */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[10px] text-zinc-500">Angle</label>
+                    <button
+                      onClick={() => handleUpdateSelectedObject({ rotation: ((selectedObject.rotation || 0) + 90) % 360 })}
+                      className="text-[10px] text-amber-400 hover:text-amber-300 flex items-center gap-1 font-mono"
+                      title="Quick Rotate 90° Clockwise"
+                    >
+                      <RotateCw className="w-3 h-3" />
+                      <span>+90°</span>
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-4 gap-1">
+                    {[0, 90, 180, 270].map(deg => (
+                      <button
+                        key={deg}
+                        onClick={() => handleUpdateSelectedObject({ rotation: deg })}
+                        className={`py-1 rounded font-mono text-[11px] transition-colors ${
+                          (selectedObject.rotation || 0) === deg
+                            ? 'bg-amber-500 text-black font-bold shadow-xs'
+                            : 'bg-zinc-950 border border-zinc-800 text-zinc-400 hover:text-white'
+                        }`}
+                      >
+                        {deg}°
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Mirroring / Flips */}
+                <div className="grid grid-cols-3 gap-1.5 pt-1">
+                  <button
+                    onClick={() => handleUpdateSelectedObject({ mirrorX: !selectedObject.mirrorX })}
+                    className={`flex items-center justify-center gap-1 py-1.5 rounded text-[11px] border transition-colors ${
+                      selectedObject.mirrorX
+                        ? 'bg-amber-500 text-black border-amber-400 font-bold'
+                        : 'bg-zinc-950 border-zinc-800 text-zinc-300 hover:bg-zinc-800'
+                    }`}
+                    title="Mirror / Flip Horizontally (X)"
+                  >
+                    <FlipHorizontal className="w-3.5 h-3.5" />
+                    <span>Flip X</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleUpdateSelectedObject({ mirrorY: !selectedObject.mirrorY })}
+                    className={`flex items-center justify-center gap-1 py-1.5 rounded text-[11px] border transition-colors ${
+                      selectedObject.mirrorY
+                        ? 'bg-amber-500 text-black border-amber-400 font-bold'
+                        : 'bg-zinc-950 border-zinc-800 text-zinc-300 hover:bg-zinc-800'
+                    }`}
+                    title="Mirror / Flip Vertically (Y)"
+                  >
+                    <FlipVertical className="w-3.5 h-3.5" />
+                    <span>Flip Y</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleUpdateSelectedObject({ invert: !selectedObject.invert })}
+                    className={`flex items-center justify-center gap-1 py-1.5 rounded text-[11px] border transition-colors ${
+                      selectedObject.invert
+                        ? 'bg-amber-500 text-black border-amber-400 font-bold'
+                        : 'bg-zinc-950 border-zinc-800 text-zinc-300 hover:bg-zinc-800'
+                    }`}
+                    title="Invert Polarity"
+                  >
+                    <span>Invert</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            /* Template Global Properties */
+            <div className="space-y-4 border-t border-zinc-800 pt-4">
+              <span className="text-xs font-bold uppercase tracking-wider text-zinc-400">
+                Template Controls
+              </span>
+              <div className="space-y-2 text-xs">
+                <label className="flex items-center gap-2 text-zinc-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={template.autoFlow}
+                    onChange={e => setTemplate(prev => ({ ...prev, autoFlow: e.target.checked }))}
+                    className="accent-amber-500 rounded"
+                  />
+                  <span>Auto-Flow Stacked Lines</span>
+                </label>
+                <label className="flex items-center gap-2 text-zinc-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={template.preventOverlap}
+                    onChange={e => setTemplate(prev => ({ ...prev, preventOverlap: e.target.checked }))}
+                    className="accent-amber-500 rounded"
+                  />
+                  <span>Prevent Object Overlap</span>
+                </label>
+                <label className="flex items-center gap-2 text-zinc-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={template.printCaptions}
+                    onChange={e => setTemplate(prev => ({ ...prev, printCaptions: e.target.checked }))}
+                    className="accent-amber-500 rounded"
+                  />
+                  <span>Print Caption Labels ("M.R.P.:")</span>
+                </label>
+              </div>
+
+              {/* Printhead Band & Endless Travel Length Controls */}
+              <div className="space-y-3 pt-3 border-t border-zinc-800">
+                <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider block">
+                  Printhead & Substrate Length
+                </span>
+
+                {/* Printhead Band: 12.5mm vs 12.7mm */}
+                <div>
+                  <label className="text-[10px] text-zinc-500 block mb-1">Printhead Band (Locked Axis)</label>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button
+                      onClick={() => handleSetBandMm(12.5)}
+                      className={`py-1.5 px-2 rounded text-xs font-mono transition-colors ${
+                        currentBandMm === 12.5 ? 'bg-amber-500 text-black font-bold shadow-xs' : 'bg-zinc-950 border border-zinc-800 text-zinc-400 hover:text-white'
+                      }`}
+                    >
+                      12.5 mm
+                    </button>
+                    <button
+                      onClick={() => handleSetBandMm(12.7)}
+                      className={`py-1.5 px-2 rounded text-xs font-mono transition-colors ${
+                        currentBandMm === 12.7 ? 'bg-amber-500 text-black font-bold shadow-xs' : 'bg-zinc-950 border border-zinc-800 text-zinc-400 hover:text-white'
+                      }`}
+                    >
+                      12.7 mm (½")
+                    </button>
+                  </div>
+                </div>
+
+                {/* Unrestricted / Endless Length */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[10px] text-zinc-500">Travel Length (Unrestricted)</label>
+                    <span className="text-[10px] text-emerald-400 font-mono">Endless Mode</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      step="1"
+                      min="10"
+                      max="1000"
+                      value={currentLengthMm}
+                      onChange={e => handleSetLengthMm(parseFloat(e.target.value) || 35)}
+                      className="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-1 font-mono text-zinc-200 text-xs font-bold focus:outline-hidden"
+                    />
+                    <span className="text-zinc-500 text-xs font-mono">mm</span>
+                  </div>
+                  <div className="grid grid-cols-4 gap-1 mt-1.5">
+                    {[35, 45, 80, 100].map(len => (
+                      <button
+                        key={len}
+                        onClick={() => handleSetLengthMm(len)}
+                        className={`py-1 rounded text-[10px] font-mono transition-colors ${
+                          currentLengthMm === len ? 'bg-amber-500/30 text-amber-300 font-bold border border-amber-500/50' : 'bg-zinc-950 border border-zinc-800 text-zinc-400 hover:text-white'
+                        }`}
+                      >
+                        {len}mm
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Quality Readiness Check Box */}
+          <div className="border-t border-zinc-800 pt-4 space-y-2">
+            <span className="text-xs font-bold uppercase tracking-wider text-zinc-300 flex items-center gap-1.5">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Readiness ({issues.length} issues)</span>
+            </span>
+
+            {issues.length === 0 ? (
+              <div className="p-2.5 rounded bg-emerald-950/20 border border-emerald-500/30 text-emerald-400 text-[11px]">
+                ✓ All objects within printable 12.5mm band. Safe for direct printing.
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {issues.map(iss => (
+                  <div key={iss.id} className="p-2 rounded bg-zinc-950 border border-zinc-800 text-[11px] space-y-0.5">
+                    <span className="font-bold text-amber-400">{iss.title}</span>
+                    <p className="text-zinc-400">{iss.message}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Bottom Batch-Value Preview Bar with Working Action Buttons */}
+      <div className="h-10 bg-zinc-900 border-t border-zinc-800 px-4 flex items-center justify-between text-xs overflow-x-auto scrollbar-none gap-4 shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="font-bold uppercase tracking-wider text-[10px] text-zinc-400">Live Values:</span>
+          <select
+            value={previewSkuId}
+            onChange={e => {
+              const s = productSkus.find(sku => sku.id === e.target.value);
+              if (s) {
+                setPreviewSkuId(s.id);
+                if (onSelectSku) onSelectSku(s);
+                const resolved = resolveLayout(activeProduct.id, s.packSize, templates && templates.length > 0 ? templates : [template], packProfiles);
+                setTemplate(resolved.template);
+                setSelectedObjectId(resolved.template.objects[0]?.id || null);
+                setHistory([]);
+                setRedoStack([]);
+              }
+            }}
+            className="bg-zinc-950 border border-zinc-700 rounded px-2 py-0.5 text-xs text-amber-400 font-mono font-bold focus:outline-hidden cursor-pointer"
+            title="Live values for active product SKUs"
+          >
+            {productSkus.map(s => (
+              <option key={s.id} value={s.id}>
+                {activeProduct?.shortCode || 'ADTP'} {s.packSize} {s.mrp ? `(₹${s.mrp})` : '(No MRP)'}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Live Evaluated Values Strip */}
+        <div className="flex items-center gap-3 font-mono text-[11px] text-zinc-400 whitespace-nowrap overflow-hidden">
+          <span>MRP: <strong className="text-white">{previewValues.mrp}</strong></span>
+          <span className="text-zinc-700">•</span>
+          <span>Batch: <strong className="text-amber-400">{previewValues.batch}</strong></span>
+          <span className="text-zinc-700">•</span>
+          <span>Net Wt: <strong className="text-white">{previewValues.net_wt}</strong></span>
+          <span className="text-zinc-700">•</span>
+          <span>MFD: <strong className="text-zinc-400">{previewValues.mfd}</strong></span>
+          <span className="text-zinc-700">•</span>
+          <span>Best Before: <strong className="text-zinc-400">{previewValues.best_before}</strong></span>
+          <span className="text-zinc-700">•</span>
+          <span>Rate: <strong className="text-white">{previewValues.rate_per_gm}</strong></span>
+        </div>
+
+        {/* Clickable Quick Action Buttons */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            onClick={handleFitSelected}
+            className="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-amber-300 font-mono text-[10px] border border-zinc-700"
+          >
+            Shift+F Fit
+          </button>
+          <button
+            onClick={handleFitAllLines}
+            className="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-amber-300 font-mono text-[10px] border border-zinc-700"
+          >
+            Shift+A All
+          </button>
+          <button
+            onClick={handleCycleOrientation}
+            className="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono text-[10px] border border-zinc-700"
+          >
+            Alt+O Rotate
+          </button>
+        </div>
+      </div>
+
+      {/* Two-Tier Scope Confirmation Modal */}
+      {showScopeConfirmModal && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 max-w-lg w-full space-y-4 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-start justify-between">
+              <div>
+                <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Save className="w-4 h-4 text-amber-400" />
+                  <span>Save Design Layout Scope</span>
+                </h4>
+                <p className="text-xs text-zinc-400 mt-1">
+                  Choose how these design coordinates, sizes, fonts, and travel lengths should be applied.
+                </p>
+              </div>
+              <button 
+                onClick={() => setShowScopeConfirmModal(false)}
+                className="text-zinc-500 hover:text-white transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Scope Choices */}
+            <div className="space-y-2.5">
+              {/* Option 1: Pack Default */}
+              <label 
+                onClick={() => setSelectedSaveTarget('pack_default')}
+                className={`p-3 rounded-lg border flex items-start gap-3 cursor-pointer transition-colors ${
+                  selectedSaveTarget === 'pack_default'
+                    ? 'bg-emerald-500/10 border-emerald-500/60 ring-1 ring-emerald-500/40'
+                    : 'bg-zinc-950 border-zinc-800 hover:border-zinc-700'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="save_scope"
+                  checked={selectedSaveTarget === 'pack_default'}
+                  onChange={() => setSelectedSaveTarget('pack_default')}
+                  className="mt-0.5 accent-emerald-500"
+                />
+                <div>
+                  <div className="text-xs font-bold text-zinc-100 flex items-center gap-1.5">
+                    <Globe className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>General Default for all {previewSku.packSize} packs (All Products)</span>
+                  </div>
+                  <p className="text-[11px] text-zinc-400 mt-0.5 leading-relaxed">
+                    Saves this layout as the standard for <strong>all {previewSku.packSize} packaging</strong> across all categories (Turmeric, Chilli, Coriander, etc.). Does NOT alter 500g, 200g, or any other pack size. Dynamic values (MRP, Batch, Net Wt) will come from each product automatically.
+                  </p>
+                </div>
+              </label>
+
+              {/* Option 2: SKU Override */}
+              <label 
+                onClick={() => setSelectedSaveTarget('sku_override')}
+                className={`p-3 rounded-lg border flex items-start gap-3 cursor-pointer transition-colors ${
+                  selectedSaveTarget === 'sku_override'
+                    ? 'bg-amber-500/10 border-amber-500/60 ring-1 ring-amber-500/40'
+                    : 'bg-zinc-950 border-zinc-800 hover:border-zinc-700'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="save_scope"
+                  checked={selectedSaveTarget === 'sku_override'}
+                  onChange={() => setSelectedSaveTarget('sku_override')}
+                  className="mt-0.5 accent-amber-500"
+                />
+                <div>
+                  <div className="text-xs font-bold text-zinc-100 flex items-center gap-1.5">
+                    <Star className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Custom Override for {activeProduct.name} ({previewSku.packSize}) only</span>
+                  </div>
+                  <p className="text-[11px] text-zinc-400 mt-0.5 leading-relaxed">
+                    Isolates these visual placement tweaks strictly for <strong>{activeProduct.name} {previewSku.packSize}</strong>. All other {previewSku.packSize} products continue using their General Default layout.
+                  </p>
+                </div>
+              </label>
+            </div>
+
+            <div className="flex items-center justify-between pt-2 border-t border-zinc-800">
+              <span className="text-[10px] text-zinc-500 font-mono">
+                Active SKU: {activeProduct.shortCode} • {previewSku.packSize}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowScopeConfirmModal(false)}
+                  className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold text-zinc-300"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleConfirmScopeSave}
+                  className="px-4 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs shadow-md transition-all active:scale-95 flex items-center gap-1.5"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>Save {selectedSaveTarget === 'pack_default' ? `General ${previewSku.packSize} Default` : 'Custom Override'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Diagnostic Raster Preview Modal */}
+      {showDiagnosticModal && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-5 max-w-2xl w-full space-y-4">
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                <Eye className="w-4 h-4 text-amber-400" />
+                <span>1-Bit Pure Monochrome Machine Raster</span>
+              </h4>
+              <button onClick={() => setShowDiagnosticModal(false)} className="text-zinc-400 hover:text-white">✕</button>
+            </div>
+            <p className="text-xs text-zinc-400">
+              Raw binary bitmap rendered at {machine.defaultDpi} DPI. This is the exact bitmap delivered to the printer head.
+            </p>
+            <div className="p-6 bg-zinc-950 rounded-lg flex items-center justify-center border border-zinc-800">
+              {diagnosticDataUrl && (
+                <img 
+                  src={diagnosticDataUrl} 
+                  alt="Diagnostic 1-bit BMP" 
+                  className="max-h-72 object-contain shadow-md"
+                  style={{ imageRendering: 'pixelated' }}
+                />
+              )}
+            </div>
+            <div className="flex justify-end">
+              <button
+                onClick={() => setShowDiagnosticModal(false)}
+                className="px-4 py-2 rounded-lg bg-amber-500 text-black font-bold text-xs"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};

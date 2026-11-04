@@ -1,0 +1,539 @@
+/**
+ * IndexedDB Database Service using Dexie
+ * Handles local-first persistent storage, initial seed data, and transaction management
+ */
+
+import Dexie, { type Table } from 'dexie';
+import type { 
+  Business, 
+  Brand, 
+  Product, 
+  SKU, 
+  PackProfile, 
+  MachineProfile, 
+  MediaProfile, 
+  Template, 
+  Batch, 
+  PrintJob, 
+  AuditLogEntry 
+} from '../types';
+
+export class LabelStudioDatabase extends Dexie {
+  businesses!: Table<Business, string>;
+  brands!: Table<Brand, string>;
+  products!: Table<Product, string>;
+  skus!: Table<SKU, string>;
+  packProfiles!: Table<PackProfile, string>;
+  machineProfiles!: Table<MachineProfile, string>;
+  mediaProfiles!: Table<MediaProfile, string>;
+  templates!: Table<Template, string>;
+  batches!: Table<Batch, string>;
+  printJobs!: Table<PrintJob, string>;
+  auditLogs!: Table<AuditLogEntry, string>;
+
+  constructor() {
+    super('AdalajLabelStudioDB');
+    this.version(1).stores({
+      businesses: 'id, name',
+      brands: 'id, businessId, name',
+      products: 'id, brandId, shortCode, archived',
+      skus: 'id, productId, packSize',
+      packProfiles: 'id, name, status',
+      machineProfiles: 'id, name, technology',
+      mediaProfiles: 'id, name',
+      templates: 'id, name, status, version',
+      batches: 'id, productId, status, createdAt',
+      printJobs: 'id, jobCode, batchId, productionStatus, createdAt',
+      auditLogs: 'id, timestamp, action'
+    });
+  }
+}
+
+export const db = new LabelStudioDatabase();
+
+// Seed initial values if empty with promise deduplication
+let initPromise: Promise<void> | null = null;
+
+export function initializeDatabase(): Promise<void> {
+  if (!initPromise) {
+    initPromise = doInitializeDatabase().catch(err => {
+      initPromise = null;
+      throw err;
+    });
+  }
+  return initPromise;
+}
+
+async function doInitializeDatabase() {
+  const businessCount = await db.businesses.count();
+  if (businessCount > 0) return;
+
+  const initialBusiness: Business = {
+    id: 'biz_default',
+    name: 'ADALAJ Organics & Packaging',
+    industry: 'Consumer Goods / Food & Manufacturing',
+    currencySymbol: '₹',
+    currencyPosition: 'prefix',
+    dateFormat: 'DD/MM/YY',
+    updatedAt: new Date().toISOString()
+  };
+
+  const initialBrand: Brand = {
+    id: 'brand_adalaj',
+    businessId: 'biz_default',
+    name: 'ADALAJ',
+    description: 'Universal seed brand for food, spice, and packaging products'
+  };
+
+  const initialMachine: MachineProfile = {
+    id: 'mach_r2d2',
+    name: 'R2D2-SX100',
+    manufacturer: 'Universal TIJ Systems',
+    model: 'R2D2-SX100',
+    technology: 'TIJ Inkjet',
+    headWidthMm: 12.7,
+    printBandMm: 12.5,
+    defaultDpi: 300,
+    edgeBufferMm: 0.1,
+    contentPaddingTopMm: 0.2,
+    contentPaddingBottomMm: 0.2,
+    contentPaddingLeftMm: 0.2,
+    contentPaddingRightMm: 0.2,
+    maxTravelLengthMm: 150.0,
+    minimumLegibleTextHeightMm: 1.8,
+    exportRotation: 0,
+    mirrorX: false,
+    mirrorY: false,
+    feedOrigin: 'Top -> Bottom',
+    inkSpreadCompensationPx: 0,
+    supportedChannels: ['Black'],
+    notes: 'Default seed TIJ handheld printer. Usable band 12.5 mm across 12.7 mm physical head (150 px @ 300 dpi).'
+  };
+
+  // Laser marker profile as second technology proof
+  const laserMachine: MachineProfile = {
+    id: 'mach_fiber_laser',
+    name: 'Lumix Pro 20W Laser',
+    manufacturer: 'Industrial Marking Tech',
+    model: 'LM-20W',
+    technology: 'Laser Marker',
+    headWidthMm: 100.0,
+    printBandMm: 95.0,
+    defaultDpi: 600,
+    edgeBufferMm: 2.5,
+    contentPaddingTopMm: 1.0,
+    contentPaddingBottomMm: 1.0,
+    contentPaddingLeftMm: 1.0,
+    contentPaddingRightMm: 1.0,
+    maxTravelLengthMm: 100.0,
+    minimumLegibleTextHeightMm: 1.0,
+    exportRotation: 0,
+    mirrorX: false,
+    mirrorY: false,
+    feedOrigin: 'Top -> Bottom',
+    inkSpreadCompensationPx: 0,
+    supportedChannels: ['Black'],
+    notes: 'Direct-to-metal and direct-to-plastic industrial laser marking.'
+  };
+
+  // Pack profiles
+  const pack100g: PackProfile = {
+    id: 'pack_100g',
+    name: '100 g',
+    surfaceType: 'Pouch',
+    packWidthMm: 120,
+    packHeightMm: 170,
+    referenceEdge: 'Top Seal',
+    printWindowStartX: 65,
+    printWindowStartY: 85,
+    printWindowLengthMm: 35,
+    printWindowWidthMm: 12.5,
+    valueLinePitchMm: 4.3,
+    status: 'estimated from photo, ±1 mm, please verify',
+    notes: 'Value block ≈ 25 mm, caption block ≈ 27 mm, line pitch ≈ 4.3 mm, text height ≈ 3.3 mm, widest value ≈ 11.5 mm',
+    captionRows: [
+      { id: 'c1', fieldKey: 'mrp', label: 'M.R.P. ₹', baselineMm: 0, captionTextHeightMm: 3.2, valueStartX: 2.0, valueMaxWidthMm: 11.5, targetValueTextHeightMm: 3.5 },
+      { id: 'c2', fieldKey: 'batch', label: 'Batch No.', baselineMm: 4.3, captionTextHeightMm: 3.0, valueStartX: 2.0, valueMaxWidthMm: 11.5, targetValueTextHeightMm: 3.2 },
+      { id: 'c3', fieldKey: 'net_wt', label: 'Net Wt.', baselineMm: 8.6, captionTextHeightMm: 2.8, valueStartX: 2.0, valueMaxWidthMm: 11.5, targetValueTextHeightMm: 3.0 },
+      { id: 'c4', fieldKey: 'mfd', label: 'Mfg Date', baselineMm: 12.9, captionTextHeightMm: 2.8, valueStartX: 2.0, valueMaxWidthMm: 11.5, targetValueTextHeightMm: 3.0 },
+      { id: 'c5', fieldKey: 'best_before', label: 'Best Before', baselineMm: 17.2, captionTextHeightMm: 2.6, valueStartX: 2.0, valueMaxWidthMm: 11.5, targetValueTextHeightMm: 2.8 },
+      { id: 'c6', fieldKey: 'rate_per_gm', label: 'Rate / g', baselineMm: 21.5, captionTextHeightMm: 2.4, valueStartX: 2.0, valueMaxWidthMm: 11.5, targetValueTextHeightMm: 2.5 }
+    ]
+  };
+
+  const pack500g: PackProfile = {
+    id: 'pack_500g',
+    name: '500 g',
+    surfaceType: 'Pouch',
+    packWidthMm: 160,
+    packHeightMm: 240,
+    referenceEdge: 'Top Seal',
+    printWindowStartX: 90,
+    printWindowStartY: 120,
+    printWindowLengthMm: 45.0,
+    printWindowWidthMm: 12.5,
+    valueLinePitchMm: 5.0,
+    status: 'Awaiting measurements',
+    notes: 'Provisional design area ~45 mm along longest axis. Verify on physical pack.',
+    captionRows: []
+  };
+
+  const otherPacks: PackProfile[] = ['50 g', '200 g', '1 kg', '2 kg', '5 kg'].map(sz => ({
+    id: `pack_${sz.replace(/\s+/g, '_')}`,
+    name: sz,
+    surfaceType: 'Pouch',
+    referenceEdge: 'Top Seal',
+    printWindowStartX: 50,
+    printWindowStartY: 80,
+    printWindowLengthMm: 35,
+    printWindowWidthMm: 12.5,
+    valueLinePitchMm: 4.5,
+    status: 'Awaiting measurements',
+    notes: sz === '50 g' ? 'May use ~6x8 cm sticker format.' : 'Awaiting physical measurement.',
+    captionRows: []
+  }));
+
+  // Products
+  const products: Product[] = [
+    { id: 'prod_adtp', brandId: 'brand_adalaj', name: 'Turmeric Powder', shortCode: 'ADTP', batchPrefix: 'ADTP', defaultShelfLifeMonths: 12, allowedPackSizes: ['100 g', '200 g', '500 g', '1 kg', '2 kg', '5 kg'] },
+    { id: 'prod_adrc', brandId: 'brand_adalaj', name: 'Red Chilli Powder', shortCode: 'ADRC', batchPrefix: 'ADRC', defaultShelfLifeMonths: 12, allowedPackSizes: ['100 g', '200 g', '500 g', '1 kg', '2 kg', '5 kg'] },
+    { id: 'prod_adcp', brandId: 'brand_adalaj', name: 'Coriander Powder', shortCode: 'ADCP', batchPrefix: 'ADCP', defaultShelfLifeMonths: 12, allowedPackSizes: ['100 g', '200 g', '500 g', '1 kg', '2 kg', '5 kg'] },
+    { id: 'prod_adgm', brandId: 'brand_adalaj', name: 'Garam Masala', shortCode: 'ADGM', batchPrefix: 'ADGM', defaultShelfLifeMonths: 9, allowedPackSizes: ['100 g', '500 g'] },
+    { id: 'prod_adkc', brandId: 'brand_adalaj', name: 'Kashmiri Red Chilli Powder', shortCode: 'ADKC', batchPrefix: 'ADKC', defaultShelfLifeMonths: 12, allowedPackSizes: ['100 g', '200 g', '500 g', '1 kg', '2 kg', '5 kg'] }
+  ];
+
+  // SKUs
+  const skus: SKU[] = [];
+  products.forEach(p => {
+    p.allowedPackSizes.forEach(sz => {
+      const isTurmeric100g = p.shortCode === 'ADTP' && sz === '100 g';
+      const netGrams = sz.includes('kg') ? parseFloat(sz) * 1000 : parseFloat(sz);
+      skus.push({
+        id: `sku_${p.shortCode.toLowerCase()}_${sz.replace(/\s+/g, '')}`,
+        productId: p.id,
+        packType: 'Stand-up Pouch',
+        packSize: sz,
+        netWeightGrams: netGrams,
+        unit: sz.includes('kg') ? 'kg' : 'g',
+        mrp: isTurmeric100g ? 50 : undefined, // Turmeric 100g = ₹50, all others empty "Needs MRP"
+        templateId: 'tmpl_adalaj_6line',
+        enabled: true
+      });
+    });
+  });
+
+  // Default Template (ADALAJ-6LINE)
+  // Values: {mrp}, {batch}, {net_wt}, {mfd}, {best_before}, {rate_per_gm}
+  // Hierarchy: MRP (largest 3.5mm), Batch (3.2mm), MFD (3.0mm), Net Wt (3.0mm), Best Before (2.8mm), Rate/unit (2.4mm)
+  const defaultTemplate: Template = {
+    id: 'tmpl_adalaj_6line',
+    name: 'ADALAJ-6LINE',
+    description: 'Universal six-line variable data template (MRP, Batch, Net Wt, MFD, Best Before, Rate)',
+    version: 1,
+    status: 'Approved',
+    travel: 'Vertical',
+    layout: 'Stack',
+    printCaptions: false,
+    currencySymbol: '₹',
+    currencyPosition: 'prefix',
+    lineGapMm: 0.8,
+    autoFlow: true,
+    preventOverlap: true,
+    respectPadding: true,
+    customLengthMm: 35,
+    customBandMm: 12.5,
+    packSizeScope: '100g',
+    isPackSizeDefault: true,
+    objects: [
+      {
+        id: 'obj_line_1',
+        type: 'field',
+        fieldKey: 'mrp',
+        content: '{mrp}',
+        x: 0.5,
+        y: 0.2,
+        width: 11.5,
+        height: 3.5,
+        rotation: 0,
+        fontFamily: 'Barlow Condensed',
+        fontSizePt: 10,
+        fontSizeMm: 3.5,
+        fontWeight: 'bold',
+        fontStyle: 'normal',
+        letterSpacingMm: 0.1,
+        lineHeightMultiplier: 1.0,
+        horizontalStretchPercent: 100,
+        alignment: 'left',
+        uppercase: true,
+        channel: 'Black',
+        mirrorX: false,
+        mirrorY: false,
+        invert: false,
+        locked: false,
+        lineIndex: 0
+      },
+      {
+        id: 'obj_line_2',
+        type: 'field',
+        fieldKey: 'batch',
+        content: '{batch}',
+        x: 0.5,
+        y: 4.5,
+        width: 11.5,
+        height: 3.2,
+        rotation: 0,
+        fontFamily: 'Roboto Condensed',
+        fontSizePt: 9,
+        fontSizeMm: 3.2,
+        fontWeight: 'bold',
+        fontStyle: 'normal',
+        letterSpacingMm: 0.1,
+        lineHeightMultiplier: 1.0,
+        horizontalStretchPercent: 100,
+        alignment: 'left',
+        uppercase: true,
+        channel: 'Black',
+        mirrorX: false,
+        mirrorY: false,
+        invert: false,
+        locked: false,
+        lineIndex: 1
+      },
+      {
+        id: 'obj_line_3',
+        type: 'field',
+        fieldKey: 'net_wt',
+        content: '{net_wt}',
+        x: 0.5,
+        y: 8.5,
+        width: 11.5,
+        height: 3.0,
+        rotation: 0,
+        fontFamily: 'Noto Sans',
+        fontSizePt: 8.5,
+        fontSizeMm: 3.0,
+        fontWeight: 'bold',
+        fontStyle: 'normal',
+        letterSpacingMm: 0.1,
+        lineHeightMultiplier: 1.0,
+        horizontalStretchPercent: 100,
+        alignment: 'left',
+        uppercase: true,
+        channel: 'Black',
+        mirrorX: false,
+        mirrorY: false,
+        invert: false,
+        locked: false,
+        lineIndex: 2
+      },
+      {
+        id: 'obj_line_4',
+        type: 'field',
+        fieldKey: 'mfd',
+        content: '{mfd}',
+        x: 0.5,
+        y: 12.3,
+        width: 11.5,
+        height: 3.0,
+        rotation: 0,
+        fontFamily: 'Roboto Mono',
+        fontSizePt: 8.5,
+        fontSizeMm: 3.0,
+        fontWeight: 'bold',
+        fontStyle: 'normal',
+        letterSpacingMm: 0.1,
+        lineHeightMultiplier: 1.0,
+        horizontalStretchPercent: 100,
+        alignment: 'left',
+        uppercase: true,
+        channel: 'Black',
+        mirrorX: false,
+        mirrorY: false,
+        invert: false,
+        locked: false,
+        lineIndex: 3
+      },
+      {
+        id: 'obj_line_5',
+        type: 'field',
+        fieldKey: 'best_before',
+        content: '{best_before}',
+        x: 0.5,
+        y: 16.1,
+        width: 11.5,
+        height: 2.8,
+        rotation: 0,
+        fontFamily: 'Roboto Mono',
+        fontSizePt: 8,
+        fontSizeMm: 2.8,
+        fontWeight: 'normal',
+        fontStyle: 'normal',
+        letterSpacingMm: 0.1,
+        lineHeightMultiplier: 1.0,
+        horizontalStretchPercent: 100,
+        alignment: 'left',
+        uppercase: true,
+        channel: 'Black',
+        mirrorX: false,
+        mirrorY: false,
+        invert: false,
+        locked: false,
+        lineIndex: 4
+      },
+      {
+        id: 'obj_line_6',
+        type: 'field',
+        fieldKey: 'rate_per_gm',
+        content: '{rate_per_gm}',
+        x: 0.5,
+        y: 19.7,
+        width: 11.5,
+        height: 2.4,
+        rotation: 0,
+        fontFamily: 'Noto Sans',
+        fontSizePt: 7,
+        fontSizeMm: 2.4,
+        fontWeight: 'normal',
+        fontStyle: 'normal',
+        letterSpacingMm: 0.05,
+        lineHeightMultiplier: 1.0,
+        horizontalStretchPercent: 100,
+        alignment: 'left',
+        uppercase: false,
+        channel: 'Black',
+        mirrorX: false,
+        mirrorY: false,
+        invert: false,
+        locked: false,
+        lineIndex: 5
+      }
+    ],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+
+  // Historical Batch: ADTP013 (Turmeric 100 g, MFD 01/03/26)
+  const historicalBatch: Batch = {
+    id: 'ADTP013',
+    productId: 'prod_adtp',
+    rawMaterialKg: 20,
+    lotDate: '2026-03-01',
+    status: 'Completed',
+    notes: 'Historical batch printed on 01/03/26',
+    allocations: [
+      {
+        id: 'alloc_adtp013_1',
+        batchId: 'ADTP013',
+        skuId: 'sku_adtp_100g',
+        productId: 'prod_adtp',
+        packSize: '100 g',
+        allocatedKg: 20,
+        expectedPacks: 200,
+        mfd: '01/03/26',
+        bestBefore: '28/02/27',
+        mrpSnapshot: 50,
+        ratePerGmSnapshot: 0.50,
+        templateVersionSnapshot: 1,
+        printStatus: 'Printed',
+        packsPrinted: 200
+      }
+    ],
+    createdAt: '2026-03-01T08:00:00.000Z'
+  };
+
+  // Seed Media Profiles
+  const initialMedia: MediaProfile[] = [
+    {
+      id: 'med_pouch_gloss',
+      name: 'Glossy Laminated Plastic Pouch',
+      substrate: 'BOPP / MET-PET / Poly',
+      preferredDpi: 300,
+      densityPercent: 100,
+      contrastPercent: 85,
+      dotGainCompensationPercent: -5,
+      notes: 'Quick-drying solvent ink profile for barrier packaging.'
+    },
+    {
+      id: 'med_corrugate',
+      name: 'Corrugated Kraft Carton',
+      substrate: 'Brown / White Kraft',
+      preferredDpi: 300,
+      densityPercent: 90,
+      contrastPercent: 75,
+      dotGainCompensationPercent: 10,
+      notes: 'Porous board; ink spreads slightly.'
+    }
+  ];
+
+  await db.transaction('rw', [
+    db.businesses,
+    db.brands,
+    db.machineProfiles,
+    db.packProfiles,
+    db.mediaProfiles,
+    db.products,
+    db.skus,
+    db.templates,
+    db.batches,
+    db.auditLogs
+  ], async () => {
+    await db.businesses.put(initialBusiness);
+    await db.brands.put(initialBrand);
+    await db.machineProfiles.bulkPut([initialMachine, laserMachine]);
+    await db.packProfiles.bulkPut([pack100g, pack500g, ...otherPacks]);
+    await db.mediaProfiles.bulkPut(initialMedia);
+    await db.products.bulkPut(products);
+    await db.skus.bulkPut(skus);
+    const pack100gDefaultTmpl: Template = {
+      ...defaultTemplate,
+      id: 'tmpl_pack_default_100g',
+      name: 'Default 100 g Layout',
+      description: 'General visual layout default for all 100 g packaging across all products'
+    };
+    const pack500gDefaultTmpl: Template = {
+      ...defaultTemplate,
+      id: 'tmpl_pack_default_500g',
+      name: 'Default 500 g Layout',
+      description: 'General visual layout default for all 500 g packaging across all products (45 mm travel length, 12.5 mm nozzle band, 5.0 mm line pitch)',
+      customLengthMm: 45,
+      customBandMm: 12.5,
+      lineGapMm: 1.0,
+      packSizeScope: '500g',
+      isPackSizeDefault: true,
+      objects: [
+        { ...defaultTemplate.objects[0], id: 'obj_500g_line_1', y: 0.5, height: 3.8, fontSizeMm: 3.8 },
+        { ...defaultTemplate.objects[1], id: 'obj_500g_line_2', y: 5.5, height: 3.5, fontSizeMm: 3.5 },
+        { ...defaultTemplate.objects[2], id: 'obj_500g_line_3', y: 10.5, height: 3.2, fontSizeMm: 3.2 },
+        { ...defaultTemplate.objects[3], id: 'obj_500g_line_4', y: 15.2, height: 3.2, fontSizeMm: 3.2 },
+        { ...defaultTemplate.objects[4], id: 'obj_500g_line_5', y: 19.8, height: 3.0, fontSizeMm: 3.0 },
+        { ...defaultTemplate.objects[5], id: 'obj_500g_line_6', y: 24.2, height: 2.6, fontSizeMm: 2.6 }
+      ]
+    };
+    const turmeric100gTmpl: Template = {
+      ...pack100gDefaultTmpl,
+      id: 'tmpl_sku_override_prod_adtp_100g',
+      name: 'Turmeric Powder (100 g) Custom Override',
+      isSkuOverride: true,
+      isPackSizeDefault: false,
+      skuOverrideKey: 'prod_adtp_100g'
+    };
+    const turmeric500gTmpl: Template = {
+      ...pack500gDefaultTmpl,
+      id: 'tmpl_sku_override_prod_adtp_500g',
+      name: 'Turmeric Powder (500 g) Custom Override',
+      isSkuOverride: true,
+      isPackSizeDefault: false,
+      skuOverrideKey: 'prod_adtp_500g'
+    };
+    await db.templates.bulkPut([defaultTemplate, pack100gDefaultTmpl, pack500gDefaultTmpl, turmeric100gTmpl, turmeric500gTmpl]);
+    await db.batches.put(historicalBatch);
+    await db.auditLogs.put({
+      id: 'audit_init',
+      timestamp: new Date().toISOString(),
+      action: 'SYSTEM_INIT',
+      details: 'ADALAJ Label Studio database initialized with seed catalog and historical batch ADTP013.',
+      user: 'System',
+      undoable: false
+    });
+  });
+}

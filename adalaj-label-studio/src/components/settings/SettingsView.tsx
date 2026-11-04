@@ -1,0 +1,799 @@
+/**
+ * Settings Workspace View
+ * Machine Profiles, Pack Profiles (with Measurement Wizard), Media Profiles,
+ * Keyboard Shortcut Editor with conflict detection, Screen Scale Calibration, and JSON Backup/Restore.
+ */
+
+import React, { useState, useEffect } from 'react';
+import { 
+  Settings as SettingsIcon, 
+  Cpu, 
+  Package, 
+  Keyboard, 
+  Sliders, 
+  Ruler, 
+  Download, 
+  Upload, 
+  Check, 
+  AlertTriangle,
+  RotateCw,
+  Plus,
+  RefreshCw,
+  Layers,
+  Usb,
+  Radio,
+  Wifi,
+  Terminal,
+  Send
+} from 'lucide-react';
+import type { MachineProfile, PackProfile, MediaProfile, Business, Brand } from '../../types';
+import { actionRegistry } from '../../services/actionRegistry';
+import { db } from '../../services/db';
+import { hardwareManager, type HardwareLogEntry } from '../../services/hardwareAdapters';
+
+interface SettingsViewProps {
+  business: Business;
+  brand: Brand;
+  machines: MachineProfile[];
+  activeMachine: MachineProfile;
+  packProfiles: PackProfile[];
+  mediaProfiles: MediaProfile[];
+  onSelectMachine: (m: MachineProfile) => void;
+  onUpdateMachine: (m: MachineProfile) => void;
+  onUpdatePackProfile: (p: PackProfile) => void;
+  onRestoreBackup: () => void;
+}
+
+export const SettingsView: React.FC<SettingsViewProps> = ({
+  business,
+  brand,
+  machines,
+  activeMachine,
+  packProfiles,
+  mediaProfiles,
+  onSelectMachine,
+  onUpdateMachine,
+  onUpdatePackProfile,
+  onRestoreBackup
+}) => {
+  const [activeTab, setActiveTab] = useState<'machine' | 'pack' | 'hardware' | 'keyboard' | 'calibrate' | 'backup'>('machine');
+
+  // Hardware Tab state
+  const [hwLogs, setHwLogs] = useState<HardwareLogEntry[]>([]);
+  const [testNetIp, setTestNetIp] = useState('192.168.1.100');
+  const [testNetPort, setTestNetPort] = useState(9100);
+  const [hwDeviceName, setHwDeviceName] = useState('');
+
+  useEffect(() => {
+    setHwLogs(hardwareManager.getLogs());
+    const unsub = hardwareManager.subscribeLogs(() => {
+      setHwLogs(hardwareManager.getLogs());
+    });
+    return unsub;
+  }, []);
+
+  // Screen scale calibration state
+  const [calibratedMm, setCalibratedMm] = useState<number>(100);
+  const [calibrationSuccess, setCalibrationSuccess] = useState(false);
+
+  // Measurement wizard modal state
+  const [selectedPackForWizard, setSelectedPackForWizard] = useState<PackProfile | null>(null);
+  const [wizardDistSealToMrp, setWizardDistSealToMrp] = useState<number>(17.2);
+  const [wizardLinePitch, setWizardLinePitch] = useState<number>(4.3);
+  const [wizardTextHeight, setWizardTextHeight] = useState<number>(3.3);
+  const [wizardBlockHeight, setWizardBlockHeight] = useState<number>(25.0);
+
+  // Keyboard shortcut editor state
+  const [shortcutFilter, setShortcutFilter] = useState('');
+  const [editingActionId, setEditingActionId] = useState<string | null>(null);
+  const [capturedKey, setCapturedKey] = useState('');
+  const [conflictWarning, setConflictWarning] = useState<string | null>(null);
+
+  const registeredActions = actionRegistry.getAll();
+  const filteredActions = registeredActions.filter(a => 
+    !shortcutFilter || 
+    a.label.toLowerCase().includes(shortcutFilter.toLowerCase()) ||
+    (a.shortcut && a.shortcut.toLowerCase().includes(shortcutFilter.toLowerCase()))
+  );
+
+  const handleSaveCalibration = () => {
+    localStorage.setItem('als_screen_scale_factor', String(100 / calibratedMm));
+    setCalibrationSuccess(true);
+    setTimeout(() => setCalibrationSuccess(false), 3000);
+  };
+
+  const handleOpenMeasurementWizard = (p: PackProfile) => {
+    setSelectedPackForWizard(p);
+    setWizardDistSealToMrp(p.printWindowStartY);
+    setWizardLinePitch(p.valueLinePitchMm);
+    setWizardTextHeight(3.3);
+    setWizardBlockHeight(p.printWindowLengthMm);
+  };
+
+  const handleSaveWizard = () => {
+    if (!selectedPackForWizard) return;
+    const updated: PackProfile = {
+      ...selectedPackForWizard,
+      printWindowStartY: wizardDistSealToMrp,
+      valueLinePitchMm: wizardLinePitch,
+      printWindowLengthMm: wizardBlockHeight,
+      status: 'verified',
+      notes: `Physically measured: Seal-to-MRP: ${wizardDistSealToMrp}mm, Line pitch: ${wizardLinePitch}mm, Text height: ${wizardTextHeight}mm.`
+    };
+    onUpdatePackProfile(updated);
+    setSelectedPackForWizard(null);
+  };
+
+  const handleAssignShortcut = (actionId: string) => {
+    if (!capturedKey) return;
+    const res = actionRegistry.updateShortcut(actionId, capturedKey);
+    if (!res.success && res.conflictWith) {
+      setConflictWarning(`Conflict detected: "${capturedKey}" is already assigned to "${res.conflictWith}". Please choose another shortcut.`);
+    } else {
+      setConflictWarning(null);
+      setEditingActionId(null);
+      setCapturedKey('');
+    }
+  };
+
+  const handleExportBackup = async () => {
+    const data = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      business: await db.businesses.toArray(),
+      brands: await db.brands.toArray(),
+      products: await db.products.toArray(),
+      skus: await db.skus.toArray(),
+      packProfiles: await db.packProfiles.toArray(),
+      machineProfiles: await db.machineProfiles.toArray(),
+      templates: await db.templates.toArray(),
+      batches: await db.batches.toArray(),
+      auditLogs: await db.auditLogs.toArray()
+    };
+
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ADALAJ_BACKUP_${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImportBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const json = JSON.parse(event.target?.result as string);
+        if (json.batches && json.products) {
+          await db.transaction('rw', [
+            db.businesses,
+            db.brands,
+            db.products,
+            db.skus,
+            db.packProfiles,
+            db.machineProfiles,
+            db.templates,
+            db.batches,
+            db.auditLogs
+          ], async () => {
+            if (json.businesses) await db.businesses.bulkPut(json.businesses);
+            if (json.brands) await db.brands.bulkPut(json.brands);
+            if (json.products) await db.products.bulkPut(json.products);
+            if (json.skus) await db.skus.bulkPut(json.skus);
+            if (json.packProfiles) await db.packProfiles.bulkPut(json.packProfiles);
+            if (json.machineProfiles) await db.machineProfiles.bulkPut(json.machineProfiles);
+            if (json.templates) await db.templates.bulkPut(json.templates);
+            if (json.batches) await db.batches.bulkPut(json.batches);
+            if (json.auditLogs) await db.auditLogs.bulkPut(json.auditLogs);
+          });
+          onRestoreBackup();
+          alert('Backup restored successfully!');
+        }
+      } catch (err) {
+        alert('Invalid backup file JSON structure.');
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  return (
+    <div className="p-6 max-w-7xl mx-auto space-y-6">
+      {/* Header */}
+      <div>
+        <h2 className="text-xl font-black text-white tracking-tight flex items-center gap-2">
+          <SettingsIcon className="w-5 h-5 text-amber-400" />
+          Settings & Machine Profiles
+        </h2>
+        <p className="text-xs text-zinc-400 mt-0.5">
+          Configure printer heads, pack physical measurements, screen scale calibration, and keyboard keymaps.
+        </p>
+      </div>
+
+      {/* Tabs Bar */}
+      <div className="flex rounded-lg bg-zinc-900 border border-zinc-800 p-1 text-xs font-semibold gap-1 overflow-x-auto scrollbar-none">
+        <button
+          onClick={() => setActiveTab('machine')}
+          className={`px-3 py-1.5 rounded transition-colors whitespace-nowrap ${
+            activeTab === 'machine' ? 'bg-amber-500 text-black shadow-xs' : 'text-zinc-400 hover:text-white'
+          }`}
+        >
+          Machine Profiles ({machines.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('pack')}
+          className={`px-3 py-1.5 rounded transition-colors whitespace-nowrap ${
+            activeTab === 'pack' ? 'bg-amber-500 text-black shadow-xs' : 'text-zinc-400 hover:text-white'
+          }`}
+        >
+          Pack Profiles & Measurements ({packProfiles.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('hardware')}
+          className={`px-3 py-1.5 rounded transition-colors whitespace-nowrap ${
+            activeTab === 'hardware' ? 'bg-amber-500 text-black shadow-xs' : 'text-zinc-400 hover:text-white'
+          }`}
+        >
+          Hardware Adapters (WebUSB/BT/IP)
+        </button>
+        <button
+          onClick={() => setActiveTab('calibrate')}
+          className={`px-3 py-1.5 rounded transition-colors whitespace-nowrap ${
+            activeTab === 'calibrate' ? 'bg-amber-500 text-black shadow-xs' : 'text-zinc-400 hover:text-white'
+          }`}
+        >
+          Screen Scale Calibration
+        </button>
+        <button
+          onClick={() => setActiveTab('keyboard')}
+          className={`px-3 py-1.5 rounded transition-colors whitespace-nowrap ${
+            activeTab === 'keyboard' ? 'bg-amber-500 text-black shadow-xs' : 'text-zinc-400 hover:text-white'
+          }`}
+        >
+          Keyboard Hotkeys ({registeredActions.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('backup')}
+          className={`px-3 py-1.5 rounded transition-colors whitespace-nowrap ${
+            activeTab === 'backup' ? 'bg-amber-500 text-black shadow-xs' : 'text-zinc-400 hover:text-white'
+          }`}
+        >
+          Backup & Restore JSON
+        </button>
+      </div>
+
+      {/* Tab Content: Machines */}
+      {activeTab === 'machine' && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {machines.map(m => {
+            const isActive = activeMachine.id === m.id;
+            return (
+              <div 
+                key={m.id}
+                className={`p-5 rounded-xl border shadow-md space-y-4 ${
+                  isActive ? 'bg-zinc-900 border-amber-500/80 ring-1 ring-amber-500/50' : 'bg-zinc-900/60 border-zinc-800'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 rounded-lg bg-zinc-800 text-amber-400 border border-zinc-700">
+                      <Cpu className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-white">{m.name}</h3>
+                      <p className="text-[11px] text-zinc-400">{m.manufacturer} • {m.technology}</p>
+                    </div>
+                  </div>
+                  {isActive ? (
+                    <span className="px-2 py-0.5 rounded text-[10px] uppercase font-bold bg-amber-500 text-black">
+                      Active
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => onSelectMachine(m)}
+                      className="px-2.5 py-1 text-xs font-semibold rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700"
+                    >
+                      Make Active
+                    </button>
+                  )}
+                </div>
+
+                {/* Geometry Specs */}
+                <div className="grid grid-cols-2 gap-2 text-xs font-mono bg-zinc-950 p-3 rounded-lg border border-zinc-800/80">
+                  <div>
+                    <span className="text-[10px] text-zinc-500 block uppercase">Physical Head:</span>
+                    <span className="text-zinc-200 font-bold">{m.headWidthMm} mm</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-zinc-500 block uppercase">Usable Print Band:</span>
+                    <span className="text-amber-400 font-bold">{m.printBandMm} mm</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-zinc-500 block uppercase">Resolution:</span>
+                    <span className="text-zinc-200 font-bold">{m.defaultDpi} DPI</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-zinc-500 block uppercase">Locked Axis Px:</span>
+                    <span className="text-zinc-200 font-bold">{Math.round((m.headWidthMm * m.defaultDpi) / 25.4)} px</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-zinc-500 block uppercase">Feed Origin:</span>
+                    <span className="text-zinc-300">{m.feedOrigin}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-zinc-500 block uppercase">Rotation / Mirror:</span>
+                    <span className="text-zinc-300">{m.exportRotation}° / {m.mirrorX ? 'Mirror' : 'None'}</span>
+                  </div>
+                </div>
+
+                <p className="text-[11px] text-zinc-400 leading-relaxed">{m.notes}</p>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Tab Content: Pack Profiles & Measurement Wizard */}
+      {activeTab === 'pack' && (
+        <div className="space-y-4">
+          <div className="p-3.5 rounded-xl bg-zinc-900 border border-zinc-800 text-xs text-zinc-300 flex items-start gap-2.5">
+            <Ruler className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <div>
+              <span className="font-bold text-white block">Measurement-Driven Calibration:</span>
+              <p className="text-zinc-400 mt-0.5">
+                Physical pouch measurements control the placement of variable data lines. Use the Measurement Wizard to enter measured seal offsets and line pitch values.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {packProfiles.map(p => (
+              <div key={p.id} className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-mono font-bold text-amber-400 text-sm">{p.name}</span>
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                    p.status === 'verified' 
+                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' 
+                      : 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+                  }`}>
+                    {p.status}
+                  </span>
+                </div>
+
+                <div className="text-xs text-zinc-300 space-y-1 font-mono">
+                  <div className="flex justify-between">
+                    <span className="text-zinc-500">Ref Edge:</span>
+                    <span>{p.referenceEdge}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-500">Seal to Print Y:</span>
+                    <span>{p.printWindowStartY} mm</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-500">Line Pitch:</span>
+                    <span>{p.valueLinePitchMm} mm</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-500">Window Length:</span>
+                    <span>{p.printWindowLengthMm} mm</span>
+                  </div>
+                </div>
+
+                <p className="text-[11px] text-zinc-400 italic">{p.notes}</p>
+
+                <button
+                  onClick={() => handleOpenMeasurementWizard(p)}
+                  className="w-full py-1.5 text-xs font-semibold rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700"
+                >
+                  Open Measurement Wizard
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Tab Content: Hardware Communication Adapters */}
+      {activeTab === 'hardware' && (
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* WebUSB Adapter Card */}
+            <div className="p-5 rounded-xl bg-zinc-900 border border-zinc-800 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 rounded-lg bg-amber-500/20 text-amber-400">
+                    <Usb className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-white">Direct WebUSB</h4>
+                    <span className="text-[10px] text-zinc-500 font-mono">USB Cable / FTDI Serial</span>
+                  </div>
+                </div>
+                <span className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold ${
+                  hardwareManager.isWebUsbSupported() ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'
+                }`}>
+                  {hardwareManager.isWebUsbSupported() ? 'Supported' : 'Unsupported'}
+                </span>
+              </div>
+              <p className="text-xs text-zinc-400 leading-relaxed">
+                Connect directly to industrial TIJ, CIJ, or USB-to-serial print controllers without driver software.
+              </p>
+              <button
+                onClick={async () => {
+                  const res = await hardwareManager.connectWebUsb();
+                  if (res.success) setHwDeviceName(res.deviceName || 'WebUSB Controller');
+                }}
+                className="w-full py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-amber-300 font-bold text-xs border border-zinc-700 shadow-xs"
+              >
+                Scan & Pair WebUSB
+              </button>
+            </div>
+
+            {/* Bluetooth Adapter Card */}
+            <div className="p-5 rounded-xl bg-zinc-900 border border-zinc-800 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 rounded-lg bg-sky-500/20 text-sky-400">
+                    <Radio className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-white">Bluetooth Wireless</h4>
+                    <span className="text-[10px] text-zinc-500 font-mono">BLE GATT Serial</span>
+                  </div>
+                </div>
+                <span className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold ${
+                  hardwareManager.isBluetoothSupported() ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'
+                }`}>
+                  {hardwareManager.isBluetoothSupported() ? 'Supported' : 'Unsupported'}
+                </span>
+              </div>
+              <p className="text-xs text-zinc-400 leading-relaxed">
+                Wireless transmission directly to portable handheld battery inkjet marking printers.
+              </p>
+              <button
+                onClick={async () => {
+                  const res = await hardwareManager.connectBluetooth();
+                  if (res.success) setHwDeviceName(res.deviceName || 'Bluetooth Printer');
+                }}
+                className="w-full py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sky-300 font-bold text-xs border border-zinc-700 shadow-xs"
+              >
+                Scan & Pair Bluetooth
+              </button>
+            </div>
+
+            {/* Network IP Socket Adapter Card */}
+            <div className="p-5 rounded-xl bg-zinc-900 border border-zinc-800 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-400">
+                    <Wifi className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-white">Network Socket</h4>
+                    <span className="text-[10px] text-zinc-500 font-mono">Raw TCP Port 9100</span>
+                  </div>
+                </div>
+                <span className="px-2 py-0.5 rounded text-[10px] uppercase font-bold bg-emerald-500/20 text-emerald-400">
+                  Ready
+                </span>
+              </div>
+              <div className="space-y-1.5 text-xs">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={testNetIp}
+                    onChange={e => setTestNetIp(e.target.value)}
+                    placeholder="192.168.1.100"
+                    className="flex-1 bg-zinc-950 border border-zinc-700 rounded px-2 py-1 font-mono text-zinc-200"
+                  />
+                  <input
+                    type="number"
+                    value={testNetPort}
+                    onChange={e => setTestNetPort(parseInt(e.target.value) || 9100)}
+                    placeholder="9100"
+                    className="w-20 bg-zinc-950 border border-zinc-700 rounded px-2 py-1 font-mono text-zinc-200"
+                  />
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  hardwareManager.setNetworkConfig({ ip: testNetIp, port: testNetPort });
+                  alert(`Network target set to ${testNetIp}:${testNetPort}`);
+                }}
+                className="w-full py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-emerald-300 font-bold text-xs border border-zinc-700 shadow-xs"
+              >
+                Save Network Target
+              </button>
+            </div>
+          </div>
+
+          {/* Live Hardware Activity Console */}
+          <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-5 space-y-3">
+            <div className="flex items-center justify-between text-xs">
+              <div className="flex items-center gap-2 text-zinc-300">
+                <Terminal className="w-4 h-4 text-amber-400" />
+                <h4 className="font-bold">Hardware Communication Stream</h4>
+              </div>
+              <span className="font-mono text-zinc-500 text-[11px]">Real-time adapter logs</span>
+            </div>
+
+            <div className="bg-zinc-950 rounded-lg p-3 border border-zinc-800 max-h-48 overflow-y-auto space-y-1 font-mono text-[11px]">
+              {hwLogs.map(log => (
+                <div key={log.id} className="flex items-start gap-2">
+                  <span className="text-zinc-600 shrink-0">[{log.timestamp}]</span>
+                  <span className={`shrink-0 uppercase text-[9px] font-bold px-1 rounded ${
+                    log.type === 'error' ? 'bg-rose-500/20 text-rose-400' :
+                    log.type === 'tx' ? 'bg-sky-500/20 text-sky-400' :
+                    log.type === 'success' ? 'bg-emerald-500/20 text-emerald-400' :
+                    log.type === 'warning' ? 'bg-amber-500/20 text-amber-400' : 'bg-zinc-800 text-zinc-400'
+                  }`}>
+                    {log.type}
+                  </span>
+                  <span className="text-zinc-300 leading-tight">{log.message}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Tab Content: Screen Scale Calibration */}
+      {activeTab === 'calibrate' && (
+        <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-6 space-y-5 max-w-2xl">
+          <div>
+            <h3 className="text-base font-bold text-white">Calibrate Screen Physical Scale</h3>
+            <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
+              Hold a physical metric ruler against the display line below. Enter what the line actually measures with your physical ruler in millimetres.
+            </p>
+          </div>
+
+          {/* Reference Line */}
+          <div className="p-6 bg-zinc-950 rounded-xl border border-zinc-800 flex flex-col items-center gap-3">
+            <span className="text-xs font-mono text-zinc-400">Target Reference: 100.0 mm</span>
+            <div 
+              className="h-3 bg-amber-400 rounded-xs shadow-md border border-amber-300"
+              style={{ width: `${100 * 3.779}px` }} // Approx 100mm in standard 96dpi
+            />
+            <span className="text-[10px] text-zinc-500 font-mono">← Measure physical length between line ends →</span>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div className="flex-1">
+              <label className="text-xs font-semibold text-zinc-300 block mb-1">
+                Your Measured Ruler Value (mm)
+              </label>
+              <input
+                type="number"
+                step="0.5"
+                value={calibratedMm}
+                onChange={e => setCalibratedMm(parseFloat(e.target.value) || 100)}
+                className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 text-white font-mono text-sm focus:outline-hidden focus:border-amber-500"
+              />
+            </div>
+
+            <button
+              onClick={handleSaveCalibration}
+              className="mt-5 px-5 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs shadow-sm"
+            >
+              Save Calibration
+            </button>
+          </div>
+
+          {calibrationSuccess && (
+            <div className="p-3 rounded-lg bg-emerald-950/40 border border-emerald-500/50 text-emerald-300 text-xs">
+              ✓ Screen physical scale calibrated. 100% canvas zoom now represents true physical dimensions.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Tab Content: Keyboard Remapping */}
+      {activeTab === 'keyboard' && (
+        <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-6 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-800 pb-4">
+            <div>
+              <h3 className="text-base font-bold text-white">Keyboard Shortcut Manager</h3>
+              <p className="text-xs text-zinc-400">
+                Remap any action, resolve key conflicts, or restore standard factory defaults.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => actionRegistry.resetAllShortcuts()}
+                className="px-3 py-1.5 text-xs font-semibold rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700"
+              >
+                Reset All Defaults
+              </button>
+            </div>
+          </div>
+
+          {conflictWarning && (
+            <div className="p-3 rounded-lg bg-rose-950/40 border border-rose-500 text-rose-200 text-xs flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+              <span>{conflictWarning}</span>
+            </div>
+          )}
+
+          <div className="p-2.5 rounded-lg bg-zinc-950 border border-zinc-800">
+            <input
+              type="text"
+              placeholder="Search shortcuts..."
+              value={shortcutFilter}
+              onChange={e => setShortcutFilter(e.target.value)}
+              className="w-full bg-transparent text-xs text-zinc-200 placeholder-zinc-500 focus:outline-hidden"
+            />
+          </div>
+
+          <div className="divide-y divide-zinc-800 border border-zinc-800 rounded-lg overflow-hidden max-h-96 overflow-y-auto">
+            {filteredActions.map(action => (
+              <div key={action.id} className="p-3 flex items-center justify-between text-xs hover:bg-zinc-800/40">
+                <div>
+                  <span className="font-semibold text-zinc-200 block">{action.label}</span>
+                  <span className="text-[10px] text-zinc-500 font-mono uppercase">{action.area}</span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {editingActionId === action.id ? (
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="text"
+                        placeholder="Press key..."
+                        value={capturedKey}
+                        onChange={e => setCapturedKey(e.target.value)}
+                        className="w-24 bg-zinc-950 border border-amber-500 rounded px-1.5 py-0.5 text-xs text-amber-300 font-mono"
+                      />
+                      <button
+                        onClick={() => handleAssignShortcut(action.id)}
+                        className="px-2 py-0.5 rounded bg-emerald-500 text-black font-bold text-xs"
+                      >
+                        Save
+                      </button>
+                      <button
+                        onClick={() => {
+                          setEditingActionId(null);
+                          setConflictWarning(null);
+                        }}
+                        className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 text-xs"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      {action.shortcut ? (
+                        <kbd className="px-2 py-0.5 text-xs font-mono rounded bg-zinc-950 text-amber-400 border border-zinc-700">
+                          {action.shortcut}
+                        </kbd>
+                      ) : (
+                        <span className="text-[10px] text-zinc-600 font-mono">None</span>
+                      )}
+                      <button
+                        onClick={() => {
+                          setEditingActionId(action.id);
+                          setCapturedKey(action.shortcut || '');
+                          setConflictWarning(null);
+                        }}
+                        className="px-2 py-1 text-[11px] font-semibold rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
+                      >
+                        Change
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Tab Content: Backup & Restore */}
+      {activeTab === 'backup' && (
+        <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-6 space-y-5 max-w-xl">
+          <div>
+            <h3 className="text-base font-bold text-white">Local-First Database Backup & Restore</h3>
+            <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
+              Export all local catalogs, templates, historical batches, and machine configurations to a portable JSON backup file.
+            </p>
+          </div>
+
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <button
+              onClick={handleExportBackup}
+              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs shadow-sm"
+            >
+              <Download className="w-4 h-4" />
+              <span>Export Complete Backup (.JSON)</span>
+            </button>
+
+            <label className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold text-xs border border-zinc-700 cursor-pointer">
+              <Upload className="w-4 h-4" />
+              <span>Restore from File</span>
+              <input type="file" accept=".json" onChange={handleImportBackup} className="hidden" />
+            </label>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Measurement Wizard */}
+      {selectedPackForWizard && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
+          <div className="w-full max-w-lg rounded-2xl bg-zinc-900 border-2 border-zinc-700 p-6 shadow-2xl space-y-4">
+            <div className="border-b border-zinc-800 pb-2">
+              <h3 className="text-base font-bold text-white">
+                Pack Measurement Wizard — {selectedPackForWizard.name}
+              </h3>
+              <p className="text-xs text-zinc-400">
+                Enter actual physical dimensions measured with a ruler or calliper.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 text-xs">
+              <div>
+                <label className="text-zinc-300 font-semibold block mb-1">Seal to Top of MRP (mm)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={wizardDistSealToMrp}
+                  onChange={e => setWizardDistSealToMrp(parseFloat(e.target.value) || 0)}
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-zinc-200"
+                />
+              </div>
+
+              <div>
+                <label className="text-zinc-300 font-semibold block mb-1">Line Pitch (mm)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={wizardLinePitch}
+                  onChange={e => setWizardLinePitch(parseFloat(e.target.value) || 0)}
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-zinc-200"
+                />
+              </div>
+
+              <div>
+                <label className="text-zinc-300 font-semibold block mb-1">Target Text Height (mm)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={wizardTextHeight}
+                  onChange={e => setWizardTextHeight(parseFloat(e.target.value) || 0)}
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-zinc-200"
+                />
+              </div>
+
+              <div>
+                <label className="text-zinc-300 font-semibold block mb-1">Value Block Height (mm)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={wizardBlockHeight}
+                  onChange={e => setWizardBlockHeight(parseFloat(e.target.value) || 0)}
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-zinc-200"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-zinc-800">
+              <button
+                onClick={() => setSelectedPackForWizard(null)}
+                className="px-3 py-1.5 text-xs font-semibold text-zinc-400 hover:text-zinc-200"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveWizard}
+                className="px-4 py-2 text-xs font-bold rounded-lg bg-amber-500 hover:bg-amber-400 text-black shadow-sm"
+              >
+                Save Measurements
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
