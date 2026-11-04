@@ -5,6 +5,7 @@
 
 import type { Template, MachineProfile, PrintTransform, TravelDirection, LayoutMode, DesignObject } from '../types';
 import JSZip from 'jszip';
+import bwipjs from 'bwip-js';
 
 export interface RenderRasterResult {
   widthPx: number;
@@ -523,14 +524,49 @@ function renderSingleObject(
       ctx.drawImage(img, 0, 0, w, h);
     }
   } else if (obj.type === 'barcode' || obj.type === 'qr') {
-    // Crisp placeholder barcode/QR rendering with high-contrast lines
-    ctx.fillStyle = '#000000';
-    const bars = 24;
-    const barWidth = w / (bars * 1.5);
-    for (let i = 0; i < bars; i++) {
-      if ((i * 7 + 3) % 2 === 0 || i === 0 || i === bars - 1) {
-        ctx.fillRect(i * barWidth * 1.5, 0, barWidth, h);
+    // P0-02/RENDER-07: Standards-compliant barcode and QR code vector rendering
+    let text = obj.content || '';
+    if (obj.fieldKey && values[obj.fieldKey]) {
+      text = values[obj.fieldKey];
+    } else {
+      text = text.replace(/\{(\w+)\}/g, (_, k) => values[k] || `{${k}}`);
+    }
+    const payload = text.trim() || (obj.type === 'barcode' ? (values.batch || 'ADTP014') : 'https://adalaj.in');
+
+    try {
+      const bcid = obj.type === 'qr'
+        ? 'qrcode'
+        : (obj.barcodeFormat === 'EAN13' ? 'ean13' : 'code128');
+
+      const svg = bwipjs.toSVG({
+        bcid,
+        text: payload,
+        scale: 2,
+        height: obj.type === 'barcode' ? 10 : undefined,
+        includetext: obj.type === 'barcode',
+      });
+
+      const viewBoxMatch = svg.match(/viewBox="0 0 ([\d.]+) ([\d.]+)"/);
+      const vbW = viewBoxMatch ? parseFloat(viewBoxMatch[1]) : 100;
+      const vbH = viewBoxMatch ? parseFloat(viewBoxMatch[2]) : 100;
+
+      const dMatches = Array.from(svg.matchAll(/d="([^"]+)"/g));
+      ctx.save();
+      ctx.scale(w / vbW, h / vbH);
+      ctx.fillStyle = '#000000';
+
+      for (const m of dMatches) {
+        if (typeof Path2D !== 'undefined' && m && m[1]) {
+          const p = new Path2D(m[1]);
+          ctx.fill(p);
+        }
       }
+      ctx.restore();
+    } catch {
+      // If payload fails checksum or format constraints, render visible indicator
+      ctx.fillStyle = '#000000';
+      ctx.font = `${Math.max(8, 2 * dpmm)}px monospace`;
+      ctx.fillText(`[${obj.type.toUpperCase()}: ${payload}]`, 0, h / 2);
     }
   }
 
