@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
+    "agent": "tsx scripts/print-agent.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

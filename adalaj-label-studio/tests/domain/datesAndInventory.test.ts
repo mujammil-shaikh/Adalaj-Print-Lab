@@ -25,6 +25,28 @@ describe('Domain: Date Calculations (DATA-09, DATA-10)', () => {
     expect(formatCalendarDateDMY(bb)).toBe('09/10/27');
   });
 
+  it('matches all 4 product-owner verified shelf-life test vectors', () => {
+    // 1. 15 Jan 2026 + 6 months -> 14 Jul 2026
+    const mfd1 = parseDateInput('2026-01-15');
+    const bb1 = calculateBestBeforeDate(mfd1, 6);
+    expect(formatCalendarDateDMY(bb1)).toBe('14/07/26');
+
+    // 2. 31 Jan 2026 + 1 month -> 27 Feb 2026 (clamped to Feb 28 - 1 day)
+    const mfd2 = parseDateInput('2026-01-31');
+    const bb2 = calculateBestBeforeDate(mfd2, 1);
+    expect(formatCalendarDateDMY(bb2)).toBe('27/02/26');
+
+    // 3. 31 Aug 2026 + 6 months -> 27 Feb 2027 (clamped to Feb 28 - 1 day)
+    const mfd3 = parseDateInput('2026-08-31');
+    const bb3 = calculateBestBeforeDate(mfd3, 6);
+    expect(formatCalendarDateDMY(bb3)).toBe('27/02/27');
+
+    // 4. 15 Nov 2026 + 12 months -> 14 Nov 2027
+    const mfd4 = parseDateInput('2026-11-15');
+    const bb4 = calculateBestBeforeDate(mfd4, 12);
+    expect(formatCalendarDateDMY(bb4)).toBe('14/11/27');
+  });
+
   it('correctly clamps Jan-31 + 1 month without overflowing into March (DATA-10)', () => {
     const mfd = parseDateInput('2026-01-31');
     const bb = calculateBestBeforeDate(mfd, 1);
