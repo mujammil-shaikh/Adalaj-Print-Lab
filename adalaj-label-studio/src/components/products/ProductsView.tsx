@@ -34,6 +34,36 @@ interface ProductsViewProps {
   onBulkUpdateSkus: (skuIds: string[], updates: Partial<SKU>) => void;
 }
 
+export const formatSkuNetWeight = (netWeightGrams: number, unit?: string): string => {
+  if (unit === 'kg' || netWeightGrams >= 1000) {
+    const inKg = netWeightGrams / 1000;
+    return `${Number.isInteger(inKg) ? inKg : inKg.toFixed(2)} kg`;
+  }
+  return `${netWeightGrams} ${unit || 'g'}`;
+};
+
+export const normalizePackSizeLabel = (raw: string): string => {
+  if (!raw) return '';
+  const trimmed = raw.trim();
+  const match = trimmed.match(/^(\d+(?:\.\d+)?)\s*([a-zA-Z]+)$/);
+  if (match) {
+    return `${match[1]} ${match[2].toLowerCase()}`;
+  }
+  return trimmed;
+};
+
+export const generateSampleBarcode = (productCode: string, grams: number): string => {
+  const codeNum = Math.abs((productCode || 'ITEM').split('').reduce((acc, c) => acc * 31 + c.charCodeAt(0), 7)) % 9000 + 1000;
+  const gramNum = Math.min(99999, grams).toString().padStart(5, '0');
+  const base12 = `890${codeNum.toString().slice(-4)}${gramNum}`;
+  let sum = 0;
+  for (let i = 0; i < 12; i++) {
+    sum += parseInt(base12[i], 10) * (i % 2 === 0 ? 1 : 3);
+  }
+  const checkDigit = (10 - (sum % 10)) % 10;
+  return `${base12}${checkDigit}`;
+};
+
 export const ProductsView: React.FC<ProductsViewProps> = ({
   products,
   skus,
@@ -96,15 +126,25 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
   const [newSkuBarcode, setNewSkuBarcode] = useState('');
   const [newSkuShelfLife, setNewSkuShelfLife] = useState('');
 
-  const filteredSkus = skus.filter(sku => {
-    const prod = products.find(p => p.id === sku.productId);
-    const matchesProd = selectedProductFilter === 'all' || sku.productId === selectedProductFilter;
-    const matchesSearch = !search || 
-      sku.packSize.toLowerCase().includes(search.toLowerCase()) ||
-      prod?.name.toLowerCase().includes(search.toLowerCase()) ||
-      prod?.shortCode.toLowerCase().includes(search.toLowerCase());
-    return matchesProd && matchesSearch;
-  });
+  const filteredSkus = React.useMemo(() => {
+    return skus
+      .filter(sku => {
+        const prod = products.find(p => p.id === sku.productId);
+        const matchesProd = selectedProductFilter === 'all' || sku.productId === selectedProductFilter;
+        const matchesSearch = !search || 
+          sku.packSize.toLowerCase().includes(search.toLowerCase()) ||
+          prod?.name.toLowerCase().includes(search.toLowerCase()) ||
+          prod?.shortCode.toLowerCase().includes(search.toLowerCase());
+        return matchesProd && matchesSearch;
+      })
+      .sort((a, b) => {
+        const prodA = products.find(p => p.id === a.productId)?.name || '';
+        const prodB = products.find(p => p.id === b.productId)?.name || '';
+        const prodCompare = prodA.localeCompare(prodB);
+        if (prodCompare !== 0) return prodCompare;
+        return (a.netWeightGrams || 0) - (b.netWeightGrams || 0);
+      });
+  }, [skus, products, selectedProductFilter, search]);
 
   const selectedProductObj = products.find(p => p.id === selectedProductFilter);
 
@@ -156,7 +196,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
 
     const parsedSizes = newProdPackSizes
       .split(',')
-      .map(s => s.trim())
+      .map(s => normalizePackSizeLabel(s.trim()))
       .filter(Boolean);
 
     const newProd: Product = {
@@ -191,7 +231,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
 
     const parsedSizes = editProdPackSizes
       .split(',')
-      .map(s => s.trim())
+      .map(s => normalizePackSizeLabel(s.trim()))
       .filter(Boolean);
 
     const updated: Product = {
@@ -211,7 +251,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
 
   const handleStartEditSku = (sku: SKU) => {
     setEditingSku(sku);
-    setEditSkuPackSize(sku.packSize);
+    setEditSkuPackSize(normalizePackSizeLabel(sku.packSize));
     setEditSkuPackType(sku.packType || 'Stand-up Pouch');
     setEditSkuNetGrams(sku.netWeightGrams);
     setEditSkuUnit(sku.unit || 'g');
@@ -227,10 +267,11 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
 
     const mrpNum = parseFloat(editSkuMrp);
     const shelfNum = parseInt(editSkuShelfLife, 10);
+    const normalizedPackSize = normalizePackSizeLabel(editSkuPackSize);
 
     const updated: SKU = {
       ...editingSku,
-      packSize: editSkuPackSize.trim(),
+      packSize: normalizedPackSize,
       packType: editSkuPackType,
       netWeightGrams: editSkuNetGrams,
       unit: editSkuUnit,
@@ -255,16 +296,18 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
 
     const mrpNum = parseFloat(newSkuMrp);
     const shelfNum = parseInt(newSkuShelfLife, 10);
+    const normalizedPackSize = normalizePackSizeLabel(newSkuPackSize);
+    const barcodeVal = newSkuBarcode.trim() || generateSampleBarcode(prod.shortCode, newSkuNetGrams);
 
     const newSku: SKU = {
-      id: `sku_${prod.shortCode.toLowerCase()}_${newSkuPackSize.replace(/\s+/g, '_').toLowerCase()}_${Date.now()}`,
+      id: `sku_${prod.shortCode.toLowerCase()}_${normalizedPackSize.replace(/\s+/g, '_').toLowerCase()}_${Date.now()}`,
       productId: prod.id,
       packType: newSkuPackType,
-      packSize: newSkuPackSize.trim(),
+      packSize: normalizedPackSize,
       netWeightGrams: newSkuNetGrams,
       unit: newSkuUnit,
       mrp: !isNaN(mrpNum) && mrpNum > 0 ? mrpNum : undefined,
-      barcode: newSkuBarcode.trim() || undefined,
+      barcode: barcodeVal,
       shelfLifeOverrideMonths: !isNaN(shelfNum) && shelfNum > 0 ? shelfNum : undefined,
       enabled: true
     };
@@ -472,16 +515,16 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                       {prod?.shortCode}
                     </td>
                     <td className="p-3 font-mono font-medium text-amber-400">
-                      {sku.packSize}
+                      {normalizePackSizeLabel(sku.packSize)}
                     </td>
                     <td className="p-3 text-zinc-300 font-mono">
-                      {sku.netWeightGrams} {sku.unit || 'g'}
+                      {formatSkuNetWeight(sku.netWeightGrams, sku.unit)}
                     </td>
                     <td className="p-3 text-zinc-400">
-                      {sku.packType || 'Pouch'}
+                      {sku.packType || 'Stand-up Pouch'}
                     </td>
                     <td className="p-3 font-mono text-zinc-400 text-[11px]">
-                      {sku.barcode || '-'}
+                      {sku.barcode || generateSampleBarcode(prod?.shortCode || 'SKU', sku.netWeightGrams)}
                     </td>
                     <td className="p-3">
                       {editingSkuId === sku.id ? (

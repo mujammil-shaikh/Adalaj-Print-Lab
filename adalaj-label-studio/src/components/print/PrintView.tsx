@@ -311,6 +311,17 @@ export const PrintView: React.FC<PrintViewProps> = ({
   // Pass plan
   const passPlan = buildPassPlan(activeTemplate, machine, packProfile, currentBatch?.id || 'TP014');
 
+  // Derived filename identifiers with distinct pack size segregation
+  const currentPackSizeClean = (currentAlloc?.packSize || activeTemplate.packSizeScope || '100g')
+    .toUpperCase()
+    .replace(/\s+/g, '');
+  const currentBatchIdClean = (currentBatch?.id || 'TP014').toUpperCase();
+  const baseDownloadPrefix = `${currentBatchIdClean}_${currentPackSizeClean}`;
+  const bmpFileName = `${baseDownloadPrefix}.BMP`;
+  const raw1BitFileName = `${baseDownloadPrefix}_1BIT.BMP`;
+  const pngFileName = `${baseDownloadPrefix}.PNG`;
+  const zipFileName = `${baseDownloadPrefix}_PRINT_PACKAGE.ZIP`;
+
   // One-click repair
   const handleRepairAll = () => {
     const res = fitObjectsToBand(activeTemplate, machine, packProfile);
@@ -334,7 +345,7 @@ export const PrintView: React.FC<PrintViewProps> = ({
       fitEdgeToEdge: isFitEdgeToEdge
     });
     const bmpBlob = canvasToStandardBmp(canvas);
-    const fileName = `${(currentBatch?.id || 'TP014').toUpperCase()}A.BMP`;
+    const fileName = bmpFileName;
 
     const url = URL.createObjectURL(bmpBlob);
     const a = document.createElement('a');
@@ -362,7 +373,7 @@ export const PrintView: React.FC<PrintViewProps> = ({
       fitEdgeToEdge: isFitEdgeToEdge
     });
     const bmpBlob = canvasTo1BitBmp(canvas);
-    const fileName = `${(currentBatch?.id || 'TP014').toUpperCase()}A_1BIT.BMP`;
+    const fileName = raw1BitFileName;
 
     const url = URL.createObjectURL(bmpBlob);
     const a = document.createElement('a');
@@ -389,7 +400,7 @@ export const PrintView: React.FC<PrintViewProps> = ({
       contentScale: contentScale,
       fitEdgeToEdge: isFitEdgeToEdge
     });
-    const fileName = `${(currentBatch?.id || 'TP014').toUpperCase()}_${(currentAlloc?.packSize || '100g').replace(/\s+/g, '')}.PNG`;
+    const fileName = pngFileName;
     const url = canvas.toDataURL('image/png');
     const a = document.createElement('a');
     a.href = url;
@@ -436,8 +447,8 @@ export const PrintView: React.FC<PrintViewProps> = ({
       });
       const bmpBlob = canvasToStandardBmp(canvas);
       const raw1BitBlob = canvasTo1BitBmp(canvas);
-      const bmpName = `${(currentBatch?.id || 'TP014').toUpperCase()}A.BMP`;
-      const rawName = `${(currentBatch?.id || 'TP014').toUpperCase()}A_1BIT.BMP`;
+      const bmpName = bmpFileName;
+      const rawName = raw1BitFileName;
 
       const files = [
         {
@@ -464,7 +475,7 @@ export const PrintView: React.FC<PrintViewProps> = ({
       const url = URL.createObjectURL(zipBlob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${(currentBatch?.id || 'TP014').toUpperCase()}_PRINT_PACKAGE.ZIP`;
+      a.download = zipFileName;
       a.click();
       URL.revokeObjectURL(url);
 
@@ -1227,7 +1238,7 @@ export const PrintView: React.FC<PrintViewProps> = ({
                 </div>
                 <div>
                   <span className="text-zinc-500 block text-[9px] uppercase">Primary File:</span>
-                  {(currentBatch?.id || 'TP014').toUpperCase()}A.BMP
+                  {bmpFileName}
                 </div>
               </div>
             </div>
@@ -1521,7 +1532,7 @@ export const PrintView: React.FC<PrintViewProps> = ({
               <li>Format a dedicated USB flash drive as <strong>FAT32</strong>.</li>
               <li>Extract and copy all <code>.BMP</code> files and <code>INDEX.TXT</code> directly into the root folder.</li>
               <li>Safely eject the USB drive from your laptop and insert it into the handheld printer.</li>
-              <li>Open the printer file manager, select <code>{(currentBatch?.id || 'TP014').toUpperCase()}A.BMP</code>, and verify on-screen preview.</li>
+              <li>Open the printer file manager, select <code>{bmpFileName}</code>, and verify on-screen preview.</li>
               <li>Perform 1 test sweep on scrap material to confirm alignment before printing the production run.</li>
             </ol>
           </div>
