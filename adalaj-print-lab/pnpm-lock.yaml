@@ -14,9 +14,6 @@ importers:
       '@tailwindcss/vite':
         specifier: ^4.3.3
         version: 4.3.4(vite@8.3.5(@types/node@22.20.5)(esbuild@0.25.12)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15))
-      '@types/bwip-js':
-        specifier: ^4.0.0
-        version: 4.0.0
       '@vitejs/plugin-react':
         specifier: ^6.1.1
         version: 6.2.1(vite@8.3.5(@types/node@22.20.5)(esbuild@0.25.12)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.15))
@@ -1592,10 +1589,6 @@ packages:
 
   '@types/body-parser@1.19.6':
     resolution: {integrity: sha512-HLFeCYgz89uk22N5Qg3dvGvsv46B8GLvKKo1zKG4NybA8U2DiEO3w9lqGg29t/tfLRJpJ6iQxnVw4OnB7MoM9g==}
-
-  '@types/bwip-js@4.0.0':
-    resolution: {integrity: sha512-R69o++0By/0pk5OwC7J9JS0axmfWRiRFpCU3dX5BQqmmPCwY0cR6tswQvFusvxUbtUeySRaQTfwYmB4symJb3A==}
-    deprecated: This is a stub types definition. bwip-js provides its own type definitions, so you do not need this installed.
 
   '@types/chai@5.2.3':
     resolution: {integrity: sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==}
@@ -4731,10 +4724,6 @@ snapshots:
     dependencies:
       '@types/connect': 3.4.38
       '@types/node': 22.20.5
-
-  '@types/bwip-js@4.0.0':
-    dependencies:
-      bwip-js: 4.11.4
 
   '@types/chai@5.2.3':
     dependencies:

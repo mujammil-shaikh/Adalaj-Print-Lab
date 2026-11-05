@@ -1,6 +1,6 @@
 {
-  "buildCommand": "cd adalaj-label-studio && pnpm run build",
-  "outputDirectory": "adalaj-label-studio/dist",
+  "buildCommand": "cd adalaj-print-lab && pnpm run build",
+  "outputDirectory": "adalaj-print-lab/dist",
   "rewrites": [
     {
       "source": "/(.*)",
