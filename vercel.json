@@ -1,4 +1,5 @@
 {
+  "installCommand": "cd adalaj-print-lab && pnpm install --no-frozen-lockfile",
   "buildCommand": "cd adalaj-print-lab && pnpm run build",
   "outputDirectory": "adalaj-print-lab/dist",
   "rewrites": [
