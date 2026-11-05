@@ -874,197 +874,189 @@ export const PrintView: React.FC<PrintViewProps> = ({
         {/* Center: Real-Size Physical Preview */}
         <div className="lg:col-span-2 space-y-4">
           <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-5 space-y-4 shadow-xl">
-            {/* Preview Header & Zoom Controls */}
+            {/* Preview Header & Substrate Geometry Badges */}
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 pb-3">
-              <div>
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <span>2. Live Physical Preview</span>
-                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-800 text-amber-400 border border-zinc-700">
-                    Direct Canvas Preview (Crisp 300 DPI)
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Printer className="w-4 h-4 text-amber-400" />
+                    <span>2. Live Physical Preview</span>
+                  </h3>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-950/80 text-emerald-400 border border-emerald-500/40 font-semibold flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3" />
+                    Zero Edge Loss (Swath Safe)
                   </span>
-                </h3>
-                <p className="text-xs text-zinc-400 font-mono mt-0.5">
-                  {machine.name} ({machine.technology}) • {machine.printBandMm} mm usable band @ {machine.defaultDpi} DPI
+                </div>
+                <p className="text-xs text-zinc-400 font-mono">
+                  {machine.name} • {machine.technology} • {machine.printBandMm}mm swath ({Math.round(machine.printBandMm * (300 / 25.4))}px) @ {machine.defaultDpi} DPI
                 </p>
               </div>
 
-              {/* Zoom Controls & Refresh */}
+              {/* Substrate & Geometry Badges */}
               <div className="flex items-center gap-2">
-                {/* Zoom Controls */}
-                <div className="flex items-center gap-1 bg-zinc-950 border border-zinc-800 rounded-lg p-0.5 text-xs text-zinc-300">
-                  <button
-                    onClick={() => setZoomScale(Math.max(0.4, Math.round((zoomScale - 0.25) * 100) / 100))}
-                    className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white"
-                    title="Zoom Out (-)"
-                  >
-                    <ZoomOut className="w-3.5 h-3.5" />
-                  </button>
-                  <span className="font-mono text-[11px] px-1 text-amber-400 min-w-10 text-center font-bold">
-                    {Math.round(zoomScale * 100)}%
-                  </span>
-                  <button
-                    onClick={() => setZoomScale(Math.min(3.5, Math.round((zoomScale + 0.25) * 100) / 100))}
-                    className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white"
-                    title="Zoom In (+)"
-                  >
-                    <ZoomIn className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    onClick={() => setZoomScale(1.0)}
-                    className={`px-1.5 py-0.5 text-[10px] rounded font-semibold transition-colors ${
-                      zoomScale === 1.0 ? 'bg-amber-500 text-black font-bold' : 'text-zinc-400 hover:bg-zinc-800'
-                    }`}
-                    title="1:1 Physical Scale"
-                  >
-                    100%
-                  </button>
-                  <button
-                    onClick={() => setZoomScale(1.5)}
-                    className={`px-1.5 py-0.5 text-[10px] rounded font-semibold transition-colors ${
-                      zoomScale === 1.5 ? 'bg-amber-500 text-black font-bold' : 'text-zinc-400 hover:bg-zinc-800'
-                    }`}
-                    title="150% Scale"
-                  >
-                    150%
-                  </button>
-                  <button
-                    onClick={handleFitPreview}
-                    className="px-1.5 py-0.5 text-[10px] hover:bg-zinc-800 rounded font-semibold text-zinc-400 hover:text-white"
-                    title="Fit entire substrate within view"
-                  >
-                    Fit
-                  </button>
-                </div>
-
+                <span className="text-[11px] font-mono bg-zinc-950 px-2.5 py-1 rounded-lg border border-zinc-800 text-zinc-300">
+                  <span className="text-zinc-500">Buffer: </span>
+                  <strong className="text-amber-400">{scaledPreviewWidthPx}×{scaledPreviewHeightPx}px</strong>
+                </span>
                 <button
                   onClick={updatePreview}
-                  className="p-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700"
-                  title="Force Refresh Live Preview"
+                  className="h-8 w-8 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white border border-zinc-700 flex items-center justify-center transition-colors cursor-pointer"
+                  title="Force re-render preview"
+                  aria-label="Force re-render preview"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
                 </button>
               </div>
             </div>
 
-            {/* Dedicated Image Editor & Swath Adjustment Toolbar (Edge-to-Edge, Content Zoom, Rotation) */}
-            <div className="bg-zinc-950 rounded-xl p-3 border border-zinc-800 space-y-2">
-              <div className="flex flex-wrap items-center justify-between gap-2.5">
-                <div className="flex flex-wrap items-center gap-2">
-                  {/* Fit Edge-to-Edge Toggle */}
+            {/* OCD Professional Structured Command Toolbar */}
+            <div className="bg-zinc-950/90 rounded-xl p-2.5 border border-zinc-800 flex flex-wrap items-center justify-between gap-3 shadow-inner">
+              {/* Section 1: Viewport Zoom Controls */}
+              <div className="flex items-center gap-1 bg-zinc-900 border border-zinc-800 rounded-lg p-0.5 h-8">
+                <button
+                  type="button"
+                  onClick={() => setZoomScale(Math.max(0.4, Math.round((zoomScale - 0.25) * 100) / 100))}
+                  className="h-7 w-7 flex items-center justify-center hover:bg-zinc-800 rounded text-zinc-400 hover:text-white transition-colors cursor-pointer"
+                  title="Zoom Out (-)"
+                  aria-label="Zoom Out"
+                >
+                  <ZoomOut className="w-3.5 h-3.5" />
+                </button>
+                <span className="font-mono text-xs text-amber-400 px-2 font-bold min-w-12 text-center">
+                  {Math.round(zoomScale * 100)}%
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setZoomScale(Math.min(3.5, Math.round((zoomScale + 0.25) * 100) / 100))}
+                  className="h-7 w-7 flex items-center justify-center hover:bg-zinc-800 rounded text-zinc-400 hover:text-white transition-colors cursor-pointer"
+                  title="Zoom In (+)"
+                  aria-label="Zoom In"
+                >
+                  <ZoomIn className="w-3.5 h-3.5" />
+                </button>
+                <div className="h-4 w-px bg-zinc-800 mx-0.5" />
+                <button
+                  type="button"
+                  onClick={() => setZoomScale(1.0)}
+                  className={`h-7 px-2 text-[11px] rounded font-semibold transition-colors cursor-pointer ${
+                    zoomScale === 1.0 ? 'bg-amber-500 text-black font-bold shadow-xs' : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'
+                  }`}
+                  title="100% Actual Scale"
+                >
+                  100%
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setZoomScale(1.5)}
+                  className={`h-7 px-2 text-[11px] rounded font-semibold transition-colors cursor-pointer ${
+                    zoomScale === 1.5 ? 'bg-amber-500 text-black font-bold shadow-xs' : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'
+                  }`}
+                  title="150% Scale"
+                >
+                  150%
+                </button>
+                <button
+                  type="button"
+                  onClick={handleFitPreview}
+                  className="h-7 px-2 text-[11px] hover:bg-zinc-800 rounded font-semibold text-zinc-400 hover:text-white transition-colors cursor-pointer"
+                  title="Fit to window"
+                >
+                  Fit
+                </button>
+              </div>
+
+              {/* Section 2: Safe Margins & Swath Edge Alignment */}
+              <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1 bg-zinc-900 border border-zinc-800 rounded-lg p-0.5 h-8">
                   <button
                     type="button"
-                    onClick={() => setIsFitEdgeToEdge(!isFitEdgeToEdge)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm ${
-                      isFitEdgeToEdge
-                        ? 'bg-emerald-500 text-black ring-2 ring-emerald-400/50'
-                        : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-700'
+                    onClick={() => setIsFitEdgeToEdge(false)}
+                    className={`h-7 px-2.5 text-[11px] rounded font-semibold transition-colors flex items-center gap-1.5 cursor-pointer ${
+                      !isFitEdgeToEdge
+                        ? 'bg-amber-500 text-black font-bold shadow-xs'
+                        : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'
                     }`}
-                    title="Scale and fit elements edge-to-edge across the 148 px swath with 2% safety margins"
+                    title="1.0 mm Safe Margins (Standard Calibrated Spacing)"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    <span>Safe Margins (1mm)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsFitEdgeToEdge(true)}
+                    className={`h-7 px-2.5 text-[11px] rounded font-semibold transition-colors flex items-center gap-1.5 cursor-pointer ${
+                      isFitEdgeToEdge
+                        ? 'bg-emerald-500 text-black font-bold shadow-xs'
+                        : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'
+                    }`}
+                    title="Fit Edge-to-Edge across swath width"
                   >
                     <Maximize2 className="w-3.5 h-3.5" />
-                    <span>Fit Edge-to-Edge: {isFitEdgeToEdge ? 'ON' : 'OFF'}</span>
+                    <span>Fit Edge-to-Edge</span>
                   </button>
-
-                  {/* Artwork Zoom / Content Scale Stepper */}
-                  <div className="flex items-center gap-1.5 bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1">
-                    <span className="text-[10px] text-zinc-400 font-mono uppercase">Design Zoom:</span>
-                    <button
-                      type="button"
-                      onClick={() => setContentScale(prev => Math.max(0.70, Math.round((prev - 0.05) * 100) / 100))}
-                      className="w-5 h-5 flex items-center justify-center rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-mono text-xs font-bold"
-                      title="Scale down artwork (-5%)"
-                    >
-                      -
-                    </button>
-                    <span className="font-mono text-xs text-amber-400 font-bold px-1 min-w-[42px] text-center">
-                      {Math.round(contentScale * 100)}%
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setContentScale(prev => Math.min(1.30, Math.round((prev + 0.05) * 100) / 100))}
-                      className="w-5 h-5 flex items-center justify-center rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-mono text-xs font-bold"
-                      title="Scale up artwork (+5%)"
-                    >
-                      +
-                    </button>
-                    {contentScale !== 1.0 && (
-                      <button
-                        type="button"
-                        onClick={() => setContentScale(1.0)}
-                        className="text-[10px] text-zinc-400 hover:text-white underline ml-1"
-                        title="Reset design zoom to 100%"
-                      >
-                        Reset
-                      </button>
-                    )}
-                  </div>
                 </div>
 
-                {/* Instant Angle / Rotation Selector */}
-                <div className="flex items-center gap-1 bg-zinc-900 border border-zinc-700 rounded-lg p-1 text-xs">
-                  <span className="text-[10px] text-zinc-400 uppercase font-mono px-1 flex items-center gap-1">
-                    <RotateCw className="w-3 h-3 text-amber-400" />
-                    Angle:
+                {/* Artwork Scale Fine-Tune Stepper */}
+                <div className="flex items-center gap-1 bg-zinc-900 border border-zinc-800 rounded-lg p-0.5 h-8">
+                  <span className="text-[10px] text-zinc-500 uppercase font-mono px-1">Scale:</span>
+                  <button
+                    type="button"
+                    onClick={() => setContentScale(prev => Math.max(0.70, Math.round((prev - 0.05) * 100) / 100))}
+                    className="h-7 w-6 flex items-center justify-center rounded hover:bg-zinc-800 text-zinc-300 font-bold cursor-pointer"
+                    title="Scale down artwork (-5%)"
+                  >
+                    -
+                  </button>
+                  <span className="font-mono text-xs text-amber-400 font-bold px-1 min-w-[38px] text-center">
+                    {Math.round(contentScale * 100)}%
                   </span>
                   <button
                     type="button"
-                    onClick={() => setExportOrientation('1to1')}
-                    className={`px-2 py-0.5 rounded text-[11px] font-mono font-bold transition-colors ${
-                      exportOrientation === '1to1'
-                        ? 'bg-amber-500 text-black'
-                        : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'
-                    }`}
-                    title="0° Upright (Default 1:1)"
+                    onClick={() => setContentScale(prev => Math.min(1.30, Math.round((prev + 0.05) * 100) / 100))}
+                    className="h-7 w-6 flex items-center justify-center rounded hover:bg-zinc-800 text-zinc-300 font-bold cursor-pointer"
+                    title="Scale up artwork (+5%)"
                   >
-                    0° (1:1)
+                    +
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => setExportOrientation('rotate90')}
-                    className={`px-2 py-0.5 rounded text-[11px] font-mono font-bold transition-colors ${
-                      exportOrientation === 'rotate90'
-                        ? 'bg-amber-500 text-black'
-                        : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'
-                    }`}
-                    title="Rotate 90° Clockwise"
-                  >
-                    90°
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setExportOrientation('rotate180')}
-                    className={`px-2 py-0.5 rounded text-[11px] font-mono font-bold transition-colors ${
-                      exportOrientation === 'rotate180'
-                        ? 'bg-amber-500 text-black'
-                        : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'
-                    }`}
-                    title="Rotate 180° Inverted"
-                  >
-                    180°
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setExportOrientation('rotate270')}
-                    className={`px-2 py-0.5 rounded text-[11px] font-mono font-bold transition-colors ${
-                      exportOrientation === 'rotate270'
-                        ? 'bg-amber-500 text-black'
-                        : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'
-                    }`}
-                    title="Rotate 270° Counter-Clockwise"
-                  >
-                    270°
-                  </button>
+                  {contentScale !== 1.0 && (
+                    <button
+                      type="button"
+                      onClick={() => setContentScale(1.0)}
+                      className="text-[10px] text-zinc-400 hover:text-amber-400 px-1 font-mono underline cursor-pointer"
+                      title="Reset scale to 100%"
+                    >
+                      1.0
+                    </button>
+                  )}
                 </div>
               </div>
 
-              <div className="flex items-center justify-between text-[11px] text-zinc-400 font-mono pt-1 border-t border-zinc-900">
-                <span className="flex items-center gap-1 text-emerald-400">
-                  <CheckCircle2 className="w-3 h-3" />
-                  <span>Physical Printhead Sync: 148 px swath (12.5 mm @ 300 DPI) prevents edge cut-off</span>
+              {/* Section 3: Physical Head Rotation Segmented Pill */}
+              <div className="flex items-center gap-1 bg-zinc-900 border border-zinc-800 rounded-lg p-0.5 h-8">
+                <span className="text-[10px] text-zinc-500 uppercase font-mono px-1.5 flex items-center gap-1">
+                  <RotateCw className="w-3 h-3 text-amber-400" />
+                  Angle:
                 </span>
-                <span className="text-zinc-500">
-                  Preview & export update in real time
-                </span>
+                {[
+                  { val: '1to1', label: '0°' },
+                  { val: 'rotate90', label: '90°' },
+                  { val: 'rotate180', label: '180°' },
+                  { val: 'rotate270', label: '270°' }
+                ].map(rot => (
+                  <button
+                    key={rot.val}
+                    type="button"
+                    onClick={() => setExportOrientation(rot.val as any)}
+                    className={`h-7 px-2 text-[11px] rounded font-mono font-bold transition-colors cursor-pointer ${
+                      exportOrientation === rot.val
+                        ? 'bg-amber-500 text-black shadow-xs'
+                        : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200'
+                    }`}
+                    title={`Rotate preview ${rot.label}`}
+                  >
+                    {rot.label}
+                  </button>
+                ))}
               </div>
             </div>
 

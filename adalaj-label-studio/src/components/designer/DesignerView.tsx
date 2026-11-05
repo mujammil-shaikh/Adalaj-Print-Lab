@@ -1145,11 +1145,12 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       )}
 
       {/* Top Context Toolbar */}
-      <div className="bg-zinc-900 border-b border-zinc-800 px-4 py-2 flex flex-wrap items-center justify-between gap-3 text-xs">
-        {/* Left: Synchronized Product & SKU Selectors */}
-        <div className="flex items-center gap-2.5">
+      {/* Tier 1: Context, Printhead Geometry & Save Bar */}
+      <div className="bg-zinc-900 border-b border-zinc-800 px-4 py-2 flex flex-wrap items-center justify-between gap-3 text-xs shrink-0">
+        {/* Left: Synchronized Product & SKU Selectors + Inheritance Status */}
+        <div className="flex items-center gap-2">
           {allProducts && allProducts.length > 0 && (
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-0.5 h-8">
               <label htmlFor="designer-product-select" className="text-zinc-500 text-[11px] font-medium cursor-pointer">Product:</label>
               <select
                 id="designer-product-select"
@@ -1172,11 +1173,11 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                     }
                   }
                 }}
-                className="bg-zinc-950 border border-zinc-700 hover:border-amber-500/50 rounded px-2.5 py-1 text-xs font-bold text-zinc-100 focus:outline-hidden transition-colors cursor-pointer"
-                title="Select active product (synchronized across app)"
+                className="bg-transparent font-bold text-zinc-100 focus:outline-hidden cursor-pointer text-xs"
+                title="Select active product"
               >
                 {allProducts.map(p => (
-                  <option key={p.id} value={p.id}>
+                  <option key={p.id} value={p.id} className="bg-zinc-900 text-white">
                     {p.name} ({p.shortCode})
                   </option>
                 ))}
@@ -1184,7 +1185,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
             </div>
           )}
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-0.5 h-8">
             <label htmlFor="designer-sku-select" className="text-zinc-500 text-[11px] font-medium cursor-pointer">SKU:</label>
             <select
               id="designer-sku-select"
@@ -1203,149 +1204,58 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                   setRedoStack([]);
                 }
               }}
-              className="bg-zinc-950 border border-zinc-700 hover:border-amber-500/50 rounded px-2 py-1 text-xs font-mono font-bold text-amber-400 focus:outline-hidden transition-colors cursor-pointer"
+              className="bg-transparent font-mono font-bold text-amber-400 focus:outline-hidden cursor-pointer text-xs"
               title="Select active SKU pack size"
             >
               {productSkus.map(s => (
-                <option key={s.id} value={s.id}>
+                <option key={s.id} value={s.id} className="bg-zinc-900 text-amber-400">
                   {s.packSize} {s.mrp ? `(₹${s.mrp})` : ''}
                 </option>
               ))}
             </select>
           </div>
 
-          {/* UNDO / REDO CONTROLS (20+ STEPS) */}
-          <div className="flex items-center gap-1 bg-zinc-950 border border-zinc-800 rounded-lg p-0.5 text-xs text-zinc-300">
-            <button
-              onClick={handleUndo}
-              disabled={history.length === 0}
-              className={`flex items-center gap-1 px-2 py-1 rounded transition-colors ${
-                history.length > 0
-                  ? 'text-zinc-200 hover:bg-zinc-800 hover:text-white cursor-pointer active:scale-95'
-                  : 'text-zinc-600 cursor-not-allowed opacity-50'
-              }`}
-              title="Undo change (Ctrl+Z)"
-            >
-              <Undo2 className="w-3.5 h-3.5" />
-              <span className="text-[10px] font-semibold">Undo</span>
-              {history.length > 0 && (
-                <span className="text-[9px] font-mono text-amber-400 bg-zinc-900 px-1 rounded">
-                  {history.length}
-                </span>
-              )}
-            </button>
-
-            <button
-              onClick={handleRedo}
-              disabled={redoStack.length === 0}
-              className={`flex items-center gap-1 px-2 py-1 rounded transition-colors ${
-                redoStack.length > 0
-                  ? 'text-zinc-200 hover:bg-zinc-800 hover:text-white cursor-pointer active:scale-95'
-                  : 'text-zinc-600 cursor-not-allowed opacity-50'
-              }`}
-              title="Redo change (Ctrl+Y)"
-            >
-              <Redo2 className="w-3.5 h-3.5" />
-              <span className="text-[10px] font-semibold">Redo</span>
-              {redoStack.length > 0 && (
-                <span className="text-[9px] font-mono text-amber-400 bg-zinc-900 px-1 rounded">
-                  {redoStack.length}
-                </span>
-              )}
-            </button>
+          {/* Scope Inheritance Pill */}
+          <div className="hidden sm:flex items-center h-8">
+            {currentLayoutInfo.source === 'sku_override' ? (
+              <span className="flex items-center gap-1 text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 py-1 rounded-lg font-semibold" title={`Custom placement override for ${activeProduct.name} ${previewSku.packSize}`}>
+                <Star className="w-3 h-3 fill-amber-400" />
+                <span>Custom Override</span>
+              </span>
+            ) : (
+              <span className="flex items-center gap-1 text-[11px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2 py-1 rounded-lg font-semibold" title={`Global default layout for all ${previewSku.packSize} products`}>
+                <Globe className="w-3 h-3" />
+                <span>Global Default</span>
+              </span>
+            )}
           </div>
+        </div>
 
-          {/* DYNAMIC ZOOM CONTROLS (FIT, 100%, 200%, +, -) */}
-          <div className="flex items-center gap-1 bg-zinc-950 border border-zinc-800 rounded-lg p-0.5 text-xs text-zinc-300">
-            <button
-              onClick={handleZoomOut}
-              className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white"
-              title="Zoom Out (-)"
-            >
-              <ZoomOut className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={handleFitToWindow}
-              className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${
-                zoomMode === 'fit' ? 'bg-amber-500 text-black font-bold shadow-xs' : 'text-zinc-400 hover:text-white'
-              }`}
-              title="Fit entire substrate within window"
-            >
-              Fit
-            </button>
-            <button
-              onClick={handle100Percent}
-              className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${
-                zoomMode === '100' ? 'bg-amber-500 text-black font-bold shadow-xs' : 'text-zinc-400 hover:text-white'
-              }`}
-              title="100% Actual Physical Scale (1:1)"
-            >
-              100%
-            </button>
-            <button
-              onClick={handle200Percent}
-              className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-colors ${
-                zoomMode === '200' ? 'bg-amber-500 text-black font-bold shadow-xs' : 'text-zinc-400 hover:text-white'
-              }`}
-              title="200% Zoom"
-            >
-              200%
-            </button>
-            <button
-              onClick={handleZoomIn}
-              className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white"
-              title="Zoom In (+)"
-            >
-              <ZoomIn className="w-3.5 h-3.5" />
-            </button>
-            <span className="font-mono text-[10px] text-zinc-500 px-1 border-l border-zinc-800">
-              {Math.round((zoomLevel / 12.0) * 100)}%
-            </span>
-          </div>
-
-          {/* PRINTHEAD BAND SELECTOR (12.5 mm, 12.7 mm, 21.1 mm / 249px, 25.0 mm / 295px) */}
-          <div className="flex items-center gap-1 bg-zinc-950 border border-zinc-800 rounded-lg p-0.5 text-xs text-zinc-300">
+        {/* Center: Printhead Band Selector & Travel Length */}
+        <div className="hidden lg:flex items-center gap-2">
+          <div className="flex items-center gap-1 bg-zinc-950 border border-zinc-800 rounded-lg p-0.5 h-8">
             <span className="text-[10px] text-zinc-500 px-1 font-medium">Head:</span>
-            <button
-              onClick={() => handleSetBandMm(12.5)}
-              className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold transition-colors ${
-                currentBandMm === 12.5 ? 'bg-amber-500 text-black shadow-xs' : 'text-zinc-400 hover:text-white'
-              }`}
-              title="12.5 mm (148 px @ 300 DPI)"
-            >
-              12.5mm
-            </button>
-            <button
-              onClick={() => handleSetBandMm(12.7)}
-              className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold transition-colors ${
-                currentBandMm === 12.7 ? 'bg-amber-500 text-black shadow-xs' : 'text-zinc-400 hover:text-white'
-              }`}
-              title="12.7 mm (150 px @ 300 DPI, ½ inch standard)"
-            >
-              12.7mm (½")
-            </button>
-            <button
-              onClick={() => handleSetBandMm(21.08)}
-              className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold transition-colors ${
-                Math.abs(currentBandMm - 21.08) < 0.15 ? 'bg-amber-500 text-black shadow-xs' : 'text-zinc-400 hover:text-white'
-              }`}
-              title="21.1 mm (249 px @ 300 DPI - Injector Screen 1:1)"
-            >
-              21.1mm (249px)
-            </button>
-            <button
-              onClick={() => handleSetBandMm(25.0)}
-              className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold transition-colors ${
-                Math.abs(currentBandMm - 25.0) < 0.15 ? 'bg-amber-500 text-black shadow-xs' : 'text-zinc-400 hover:text-white'
-              }`}
-              title="25.0 mm (295 px @ 300 DPI - 1 inch head)"
-            >
-              25mm (295px)
-            </button>
+            {[
+              { mm: 12.5, label: '12.5mm' },
+              { mm: 12.7, label: '12.7mm (½")' },
+              { mm: 21.08, label: '21.1mm' },
+              { mm: 25.0, label: '25mm' }
+            ].map(b => (
+              <button
+                key={b.mm}
+                type="button"
+                onClick={() => handleSetBandMm(b.mm)}
+                className={`h-7 px-2 rounded text-[10px] font-mono font-bold transition-colors cursor-pointer ${
+                  Math.abs(currentBandMm - b.mm) < 0.15 ? 'bg-amber-500 text-black shadow-xs' : 'text-zinc-400 hover:text-white'
+                }`}
+                title={`Head swath width: ${b.label}`}
+              >
+                {b.label}
+              </button>
+            ))}
           </div>
 
-          {/* ENDLESS / UNRESTRICTED TRAVEL LENGTH CONTROL (35, 45, 80, 100mm / 1181px) */}
-          <div className="flex items-center gap-1 bg-zinc-950 border border-zinc-800 rounded-lg p-0.5 text-xs text-zinc-300">
+          <div className="flex items-center gap-1 bg-zinc-950 border border-zinc-800 rounded-lg p-0.5 h-8">
             <label htmlFor="designer-length-input" className="text-[10px] text-zinc-500 px-1 font-medium cursor-pointer">Length:</label>
             <input
               id="designer-length-input"
@@ -1357,111 +1267,81 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
               max="1000"
               value={currentLengthMm}
               onChange={e => handleSetLengthMm(parseFloat(e.target.value) || 35)}
-              className="w-14 bg-zinc-900 border border-zinc-700 rounded px-1.5 py-0.5 font-mono text-[11px] font-bold text-amber-400 text-center focus:outline-hidden"
-              title="Enter any travel length (e.g. 35, 45, 80, 100, 150 mm - unrestricted endless length)"
+              className="w-12 bg-zinc-900 border border-zinc-700 rounded h-7 px-1 font-mono text-[11px] font-bold text-amber-400 text-center focus:outline-hidden"
+              title="Travel length in mm"
             />
             <span className="text-[10px] text-zinc-500 font-mono pr-1">mm</span>
 
-            {/* Quick length presets */}
             <div className="flex items-center gap-0.5 pl-1 border-l border-zinc-800">
-              {[35, 45, 80, 100, 150].map(len => (
+              {[35, 45, 100].map(len => (
                 <button
                   key={len}
+                  type="button"
                   onClick={() => handleSetLengthMm(len)}
-                  className={`px-1.5 py-0.5 rounded text-[10px] font-mono transition-colors ${
+                  className={`h-7 px-1.5 rounded text-[10px] font-mono transition-colors cursor-pointer ${
                     currentLengthMm === len ? 'bg-amber-500/30 text-amber-300 font-bold border border-amber-500/50' : 'text-zinc-400 hover:text-white'
                   }`}
-                  title={`Quick preset: ${len} mm ${len === 100 ? '(1181 px @ 300 DPI)' : ''}`}
+                  title={`Preset: ${len}mm`}
                 >
-                  {len === 100 ? '100mm (1181px)' : `${len}mm`}
+                  {len}mm
                 </button>
               ))}
             </div>
 
-            {/* Live 1:1 Pixel Dimensions Badge */}
-            <span className="text-[10px] font-mono text-zinc-400 bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800" title="Live 1:1 Pixel Dimensions @ 300 DPI">
-              {Math.round(canvasWidthMm * (300 / 25.4))} × {Math.round(canvasHeightMm * (300 / 25.4))} px
+            <span className="text-[10px] font-mono text-zinc-400 bg-zinc-900 px-1.5 h-7 flex items-center rounded border border-zinc-800" title="1:1 Pixel Dimensions">
+              {Math.round(canvasWidthMm * (300 / 25.4))}×{Math.round(canvasHeightMm * (300 / 25.4))}px
             </span>
           </div>
         </div>
 
-        {/* Center: Fit & Spacing Controls */}
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleFitSelected}
-            className="flex items-center gap-1 px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold border border-zinc-700 transition-colors"
-            title="Fit Selected line into usable band (Shift+F)"
-          >
-            <span>Fit Selected</span>
-            <kbd className="text-[10px] font-mono text-amber-400">Shift+F</kbd>
-          </button>
-
-          <button
-            onClick={handleFitAllLines}
-            className="flex items-center gap-1 px-2.5 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-bold border border-amber-500/50 transition-colors"
-            title="Fit All Lines into usable band (Shift+A)"
-          >
-            <Crosshair className="w-3.5 h-3.5" />
-            <span>Fit All Lines</span>
-            <kbd className="text-[10px] font-mono text-amber-400">Shift+A</kbd>
-          </button>
-
-          {/* Line Gap Stepper */}
-          <div className="flex items-center gap-1 pl-2 border-l border-zinc-800">
-            <span className="text-zinc-400 text-[11px]">Gap:</span>
-            <button
-              onClick={() => handleLineGapChange(template.lineGapMm - 0.1)}
-              className="px-1.5 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono"
-              title="Decrease line gap by 0.1mm"
-            >
-              -
-            </button>
-            <span className="font-mono font-bold text-amber-400 w-12 text-center">
-              {template.lineGapMm.toFixed(1)} mm
-            </span>
-            <button
-              onClick={() => handleLineGapChange(template.lineGapMm + 0.1)}
-              className="px-1.5 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono"
-              title="Increase line gap by 0.1mm"
-            >
-              +
-            </button>
-          </div>
-        </div>
-
-        {/* Right: Clean, Symmetric Layout Actions */}
+        {/* Right: History, Reset, Split Save & Proceed Actions */}
         <div className="flex items-center gap-2 relative">
-          {/* Status Badge */}
-          <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-semibold select-none">
-            {currentLayoutInfo.source === 'sku_override' ? (
-              <span className="flex items-center gap-1 text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded">
-                <Star className="w-3.5 h-3.5 fill-amber-400" />
-                <span>Custom: {activeProduct.name} ({previewSku.packSize})</span>
-              </span>
-            ) : (
-              <span className="flex items-center gap-1 text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded">
-                <Globe className="w-3.5 h-3.5" />
-                <span>Global {previewSku.packSize} Default</span>
-              </span>
-            )}
+          {/* History Undo / Redo */}
+          <div className="flex items-center bg-zinc-950 border border-zinc-800 rounded-lg p-0.5 h-8">
+            <button
+              type="button"
+              onClick={handleUndo}
+              disabled={history.length === 0}
+              className={`h-7 px-2 rounded flex items-center gap-1 font-semibold transition-colors ${
+                history.length > 0 ? 'text-zinc-200 hover:text-white hover:bg-zinc-800 cursor-pointer' : 'text-zinc-600 cursor-not-allowed'
+              }`}
+              title="Undo change (Ctrl+Z)"
+            >
+              <Undo2 className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={handleRedo}
+              disabled={redoStack.length === 0}
+              className={`h-7 px-2 rounded flex items-center gap-1 font-semibold transition-colors border-l border-zinc-800 ${
+                redoStack.length > 0 ? 'text-zinc-200 hover:text-white hover:bg-zinc-800 cursor-pointer' : 'text-zinc-600 cursor-not-allowed'
+              }`}
+              title="Redo change (Ctrl+Y)"
+            >
+              <Redo2 className="w-3.5 h-3.5" />
+            </button>
           </div>
 
-          {/* Reset to Global Button */}
-          <button
-            onClick={handleResetToGlobal}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white border border-zinc-700 text-xs font-semibold transition-colors"
-            title={`Reset ${activeProduct.name} to the active Global ${previewSku.packSize} Default layout`}
-          >
-            <RotateCcw className="w-3.5 h-3.5 text-zinc-400" />
-            <span>Reset to Global {previewSku.packSize}</span>
-          </button>
+          {/* Reset to Global Button (Contextual) */}
+          {currentLayoutInfo.source === 'sku_override' && (
+            <button
+              type="button"
+              onClick={handleResetToGlobal}
+              className="flex items-center gap-1.5 px-2.5 h-8 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white border border-zinc-700 text-xs font-semibold transition-colors cursor-pointer"
+              title={`Reset ${activeProduct.name} to the active Global ${previewSku.packSize} Default layout`}
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-zinc-400" />
+              <span className="hidden sm:inline">Reset to Global</span>
+            </button>
+          )}
 
           {/* Split Save Action Button */}
-          <div className="flex items-center rounded-lg shadow-sm border border-amber-500/50 overflow-visible relative">
+          <div className="flex items-center rounded-lg shadow-xs border border-amber-500/50 overflow-visible relative h-8">
             <button
+              type="button"
               onClick={handlePrimarySaveClick}
               disabled={saveStatus === 'saving'}
-              className={`flex items-center gap-1.5 px-3 py-1.5 font-bold text-xs transition-all active:scale-95 ${
+              className={`flex items-center gap-1.5 px-3 h-full font-bold text-xs transition-all active:scale-95 rounded-l-md cursor-pointer ${
                 saveStatus === 'saved'
                   ? 'bg-emerald-500 hover:bg-emerald-400 text-black'
                   : saveStatus === 'saving'
@@ -1487,7 +1367,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
               ) : currentLayoutInfo.source === 'sku_override' ? (
                 <>
                   <Star className="w-3.5 h-3.5 fill-black text-black" />
-                  <span>Save for {activeProduct.name} only</span>
+                  <span>Save for {activeProduct.name}</span>
                 </>
               ) : (
                 <>
@@ -1499,8 +1379,9 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
 
             {/* Dropdown Options Toggle */}
             <button
+              type="button"
               onClick={() => setIsSaveMenuOpen(prev => !prev)}
-              className="px-1.5 py-1.5 bg-amber-600 hover:bg-amber-500 text-black border-l border-amber-600/60 font-bold transition-colors cursor-pointer"
+              className="px-1.5 h-full bg-amber-600 hover:bg-amber-500 text-black border-l border-amber-600/60 font-bold transition-colors cursor-pointer rounded-r-md flex items-center justify-center"
               title="Select save target (Global or Product only)..."
             >
               <ChevronDown className="w-3.5 h-3.5" />
@@ -1518,6 +1399,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
 
                 {/* Option 1: Set as Global Default */}
                 <button
+                  type="button"
                   onClick={handleSaveGeneralPackDefault}
                   className="w-full text-left p-2.5 rounded-lg hover:bg-zinc-800 transition-colors flex items-start gap-2.5 group cursor-pointer"
                 >
@@ -1532,13 +1414,14 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                       )}
                     </div>
                     <p className="text-[11px] text-zinc-400 leading-tight mt-0.5">
-                      Applies this layout to all {previewSku.packSize} products (Turmeric, Coriander, Garam Masala, Chilli, etc.) that use the global default.
+                      Applies this layout to all {previewSku.packSize} products that use the global default.
                     </p>
                   </div>
                 </button>
 
                 {/* Option 2: Save for Product only (Independent) */}
                 <button
+                  type="button"
                   onClick={handleSaveSkuCustomOverride}
                   className="w-full text-left p-2.5 rounded-lg hover:bg-zinc-800 transition-colors flex items-start gap-2.5 group cursor-pointer"
                 >
@@ -1553,7 +1436,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                       )}
                     </div>
                     <p className="text-[11px] text-zinc-400 leading-tight mt-0.5">
-                      Saves an independent custom layout specifically for {activeProduct.name} ({previewSku.packSize}). Does not affect any other product.
+                      Saves an independent custom layout specifically for {activeProduct.name} ({previewSku.packSize}).
                     </p>
                   </div>
                 </button>
@@ -1561,72 +1444,192 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
             )}
           </div>
 
+          {/* Proceed to Print Action */}
           <button
+            type="button"
             onClick={onNavigateToPrint}
-            className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-100 font-semibold text-xs border border-zinc-700 transition-colors"
+            className="flex items-center gap-1.5 px-3 h-8 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-100 font-semibold text-xs border border-zinc-700 transition-colors cursor-pointer"
+            title="Proceed to Print Production View"
           >
+            <Printer className="w-3.5 h-3.5 text-amber-400" />
             <span>Proceed to Print</span>
           </button>
         </div>
       </div>
 
-      {/* Clean, Non-Cluttered 1-Line State Info Strip */}
-      {currentLayoutInfo.source === 'sku_override' && (
-        <div className="bg-amber-950/30 border-b border-amber-900/40 px-4 py-1.5 flex flex-wrap items-center justify-between gap-3 text-xs">
-          <div className="flex items-center gap-2 text-amber-300">
-            <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400 shrink-0" />
-            <span className="font-semibold">Independent Layout:</span>
-            <span className="text-zinc-300">
-              Customized for <strong>{activeProduct.name} ({previewSku.packSize})</strong>. Other products follow the Global {previewSku.packSize} Default.
-            </span>
+      {/* Tier 2: Precision Canvas View & Smart Alignment Strip */}
+      <div className="bg-zinc-950 border-b border-zinc-800/80 px-4 py-1.5 flex flex-wrap items-center justify-between gap-3 text-xs shrink-0 select-none">
+        {/* Left: View Mode Segmented Pill + Raster Orientation Controls */}
+        <div className="flex items-center gap-2">
+          {/* View Mode Pill */}
+          <div className="flex items-center bg-zinc-900 border border-zinc-800 rounded-lg p-0.5 h-8">
+            <button
+              type="button"
+              onClick={() => setViewMode('pack')}
+              className={`h-7 px-2.5 rounded text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1.5 ${
+                viewMode === 'pack' ? 'bg-amber-500 text-black font-bold shadow-xs' : 'text-zinc-400 hover:text-white'
+              }`}
+              title="Interactive vector pack view"
+            >
+              <PenTool className="w-3.5 h-3.5" />
+              <span>Pack View</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('printer')}
+              className={`h-7 px-2.5 rounded text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1.5 ${
+                viewMode === 'printer' ? 'bg-amber-500 text-black font-bold shadow-xs' : 'text-zinc-400 hover:text-white'
+              }`}
+              title="1-Bit industrial machine raster buffer"
+            >
+              <Eye className="w-3.5 h-3.5" />
+              <span>1-Bit Machine Raster</span>
+            </button>
           </div>
-          <button
-            onClick={handleResetToGlobal}
-            className="text-[11px] text-amber-300 hover:text-white flex items-center gap-1 underline underline-offset-2 hover:no-underline transition-colors cursor-pointer"
-          >
-            <RotateCcw className="w-3 h-3" />
-            <span>Reset to Global {previewSku.packSize}</span>
-          </button>
-        </div>
-      )}
 
-      {currentLayoutInfo.source === 'pack_default' && (
-        <div className="bg-zinc-900/60 border-b border-zinc-800 px-4 py-1.5 flex flex-wrap items-center justify-between gap-3 text-xs">
-          <div className="flex items-center gap-2 text-zinc-300">
-            <Globe className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-            <span className="font-semibold text-emerald-400">Global {previewSku.packSize} Default:</span>
-            <span className="text-zinc-400">
-              Synchronized geometry for all <strong>{previewSku.packSize}</strong> products. Values (MRP, Batch, Net Wt) load dynamically.
-            </span>
+          {/* Raster Rotation & Flip */}
+          <div className="flex items-center bg-zinc-900 border border-zinc-800 rounded-lg p-0.5 h-8">
+            <span className="text-[10px] text-zinc-500 px-1 font-mono">Rotate:</span>
+            {([0, 90, 180, 270] as const).map(deg => (
+              <button
+                key={deg}
+                type="button"
+                onClick={() => setRasterRotation(deg)}
+                className={`h-7 px-1.5 rounded font-mono text-[10px] transition-colors cursor-pointer ${
+                  rasterRotation === deg ? 'bg-amber-500 text-black font-bold shadow-xs' : 'text-zinc-400 hover:text-white'
+                }`}
+                title={`Set raster rotation to ${deg}°`}
+              >
+                {deg}°
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => setRasterMirrorX(prev => !prev)}
+              className={`h-7 px-2 rounded text-[10px] font-mono transition-colors ml-0.5 cursor-pointer border-l border-zinc-800 ${
+                rasterMirrorX ? 'bg-amber-500/30 text-amber-300 font-bold border border-amber-500/50' : 'text-zinc-400 hover:text-white'
+              }`}
+              title="Mirror X (Horizontal Flip)"
+            >
+              Flip X
+            </button>
           </div>
-          <button
-            onClick={handleSaveSkuCustomOverride}
-            className="text-[11px] text-amber-400 hover:text-amber-300 flex items-center gap-1 underline underline-offset-2 hover:no-underline transition-colors cursor-pointer"
-          >
-            <Star className="w-3 h-3" />
-            <span>Save as Independent for {activeProduct.name}</span>
-          </button>
         </div>
-      )}
 
-      {currentLayoutInfo.source === 'scratch_new' && (
-        <div className="bg-cyan-950/30 border-b border-cyan-800/40 px-4 py-1.5 flex flex-wrap items-center justify-between gap-3 text-xs">
-          <div className="flex items-center gap-2 text-cyan-300">
-            <Sparkles className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-            <span className="font-semibold">New Pack Size:</span>
-            <span className="text-cyan-200/90">
-              Fresh starter layout for <strong>{previewSku.packSize}</strong>.
-            </span>
-          </div>
+        {/* Center: Precision Viewport Zoom Engine */}
+        <div className="flex items-center gap-1 bg-zinc-900 border border-zinc-800 rounded-lg p-0.5 h-8">
           <button
-            onClick={handleSaveGeneralPackDefault}
-            className="text-[11px] text-emerald-400 hover:text-emerald-300 flex items-center gap-1 underline underline-offset-2 hover:no-underline transition-colors cursor-pointer"
+            type="button"
+            onClick={handleZoomOut}
+            className="h-7 w-7 rounded flex items-center justify-center text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors cursor-pointer"
+            title="Zoom Out (-)"
           >
-            <Globe className="w-3 h-3" />
-            <span>Set as Global {previewSku.packSize}</span>
+            <ZoomOut className="w-3.5 h-3.5" />
           </button>
+
+          <button
+            type="button"
+            onClick={handleFitToWindow}
+            className={`h-7 px-2 rounded text-[11px] font-semibold transition-colors cursor-pointer ${
+              zoomMode === 'fit' ? 'bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40' : 'text-zinc-400 hover:text-white'
+            }`}
+            title="Fit Label to Window (F)"
+          >
+            Fit
+          </button>
+
+          <button
+            type="button"
+            onClick={handle100Percent}
+            className={`h-7 px-2 rounded text-[11px] font-semibold transition-colors cursor-pointer ${
+              zoomMode === '100' ? 'bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40' : 'text-zinc-400 hover:text-white'
+            }`}
+            title="100% Zoom (12 px/mm)"
+          >
+            100%
+          </button>
+
+          <button
+            type="button"
+            onClick={handle200Percent}
+            className={`h-7 px-2 rounded text-[11px] font-semibold transition-colors cursor-pointer ${
+              zoomMode === '200' ? 'bg-amber-500/20 text-amber-300 font-bold border border-amber-500/40' : 'text-zinc-400 hover:text-white'
+            }`}
+            title="200% Zoom (24 px/mm)"
+          >
+            200%
+          </button>
+
+          <button
+            type="button"
+            onClick={handleZoomIn}
+            className="h-7 w-7 rounded flex items-center justify-center text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors cursor-pointer"
+            title="Zoom In (+)"
+          >
+            <ZoomIn className="w-3.5 h-3.5" />
+          </button>
+
+          <span className="text-[10px] font-mono text-zinc-400 px-1 border-l border-zinc-800" title="Current zoom scale">
+            {zoomLevel.toFixed(1)} px/mm
+          </span>
         </div>
-      )}
+
+        {/* Right: Smart Alignment & Swath Safety Status */}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 bg-zinc-900 border border-zinc-800 rounded-lg p-0.5 h-8">
+            <button
+              type="button"
+              onClick={handleFitSelected}
+              className="h-7 px-2 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold transition-colors flex items-center gap-1 cursor-pointer"
+              title="Fit Selected line into usable band (Shift+F)"
+            >
+              <span>Fit Line</span>
+              <kbd className="text-[9px] font-mono text-amber-400">⇧F</kbd>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleFitAllLines}
+              className="h-7 px-2 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-bold border border-amber-500/40 transition-colors flex items-center gap-1 cursor-pointer"
+              title="Fit All Lines into usable band (Shift+A)"
+            >
+              <Crosshair className="w-3 h-3" />
+              <span>Fit All</span>
+              <kbd className="text-[9px] font-mono text-amber-400">⇧A</kbd>
+            </button>
+
+            {/* Line Gap Stepper */}
+            <div className="flex items-center gap-0.5 pl-1.5 border-l border-zinc-800">
+              <span className="text-zinc-500 text-[10px] font-mono">Gap:</span>
+              <button
+                type="button"
+                onClick={() => handleLineGapChange(template.lineGapMm - 0.1)}
+                className="w-5 h-7 rounded text-zinc-300 hover:text-white hover:bg-zinc-800 font-mono text-xs flex items-center justify-center cursor-pointer"
+                title="Decrease line gap by 0.1mm"
+              >
+                -
+              </button>
+              <span className="font-mono font-bold text-amber-400 px-1 text-[11px]">
+                {template.lineGapMm.toFixed(1)}mm
+              </span>
+              <button
+                type="button"
+                onClick={() => handleLineGapChange(template.lineGapMm + 0.1)}
+                className="w-5 h-7 rounded text-zinc-300 hover:text-white hover:bg-zinc-800 font-mono text-xs flex items-center justify-center cursor-pointer"
+                title="Increase line gap by 0.1mm"
+              >
+                +
+              </button>
+            </div>
+          </div>
+
+          {/* Swath Safe Badge */}
+          <div className="flex items-center gap-1.5 px-2.5 h-8 rounded-lg bg-emerald-950/40 border border-emerald-500/30 text-emerald-400 font-mono text-[11px] font-semibold" title="Calibrated physical margins enforced: minimum 1.0mm (12px) white border prevents physical clipping">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Swath Safe (1mm)</span>
+          </div>
+        </div>
+      </div>
 
       {/* Main Designer Workspace */}
       <div className="flex-1 flex overflow-hidden">

@@ -313,7 +313,7 @@ export function renderTemplateToCanvas(
 
   // Render objects into canvas
   template.objects.forEach(obj => {
-    renderSingleObject(ctx, obj, values, effDpmm, template.travel, template.layout);
+    renderSingleObject(ctx, obj, values, effDpmm, template.travel, template.layout, widthPx, heightPx);
   });
   ctx.restore();
 
@@ -410,15 +410,30 @@ function renderSingleObject(
   values: Record<string, string>,
   dpmm: number,
   travel: TravelDirection,
-  layout: LayoutMode
+  layout: LayoutMode,
+  canvasWidthPx?: number,
+  canvasHeightPx?: number
 ) {
-  const x = obj.x * dpmm;
-  const y = obj.y * dpmm;
-  const w = obj.width * dpmm;
+  const dpmmSafe = Math.max(1, dpmm);
+  // Guarantee physical margin from canvas edges: 1.0mm (~12px @ 300 DPI)
+  const safetyMarginX = Math.max(8, Math.round(1.0 * dpmmSafe));
+
+  const rawX = obj.x * dpmm;
+  const rawY = obj.y * dpmm;
+  const rawW = obj.width * dpmm;
   const h = obj.height * dpmm;
 
+  // Enforce left safe coordinate so characters never touch or cut off on the left
+  const x = Math.max(safetyMarginX, rawX);
+  
+  // Calculate maximum allowed width to guarantee ink never reaches right safety margin
+  const maxSafeWidthPx = canvasWidthPx 
+    ? Math.max(20, canvasWidthPx - x - safetyMarginX) 
+    : rawW;
+  const w = Math.min(rawW, maxSafeWidthPx);
+
   ctx.save();
-  ctx.translate(x + w / 2, y + h / 2);
+  ctx.translate(x + w / 2, rawY + h / 2);
 
   if (obj.rotation !== 0) {
     ctx.rotate((obj.rotation * Math.PI) / 180);
@@ -444,7 +459,7 @@ function renderSingleObject(
     }
 
     // Font calculation with robust system fallbacks matching Pack View mm scale exactly
-    const fontSizePx = Math.max(6, Math.round(obj.fontSizeMm * dpmm));
+    let fontSizePx = Math.max(6, Math.round(obj.fontSizeMm * dpmm));
     const fontStyle = obj.fontStyle === 'italic' ? 'italic ' : '';
     const fontWeight = obj.fontWeight === 'bold' ? 'bold ' : '';
     ctx.font = `${fontStyle}${fontWeight}${fontSizePx}px ${obj.fontFamily}, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
@@ -472,10 +487,27 @@ function renderSingleObject(
       textX = 0;
     }
 
+    // Ink measurement including advance width and right glyph overhang
+    const metrics = ctx.measureText(text);
+    const measuredAdvance = metrics.width;
+    const inkRightOverhang = Math.max(0, (metrics.actualBoundingBoxRight ?? measuredAdvance) - measuredAdvance);
+    const totalInkWidth = measuredAdvance + inkRightOverhang;
+
     // Auto-fit text if it exceeds width so it NEVER cuts off
-    const measuredWidth = ctx.measureText(text).width;
-    if (measuredWidth > w && w > 0) {
-      const scaleX = w / measuredWidth;
+    if (totalInkWidth > w && w > 0) {
+      // If overflow is significant (>10%), proportionally reduce font size first to maintain natural typography
+      const overflowRatio = w / totalInkWidth;
+      if (overflowRatio < 0.90) {
+        fontSizePx = Math.max(6, Math.round(fontSizePx * Math.max(0.75, overflowRatio)));
+        ctx.font = `${fontStyle}${fontWeight}${fontSizePx}px ${obj.fontFamily}, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+      }
+
+      const remeasured = ctx.measureText(text);
+      const remeasuredAdvance = remeasured.width;
+      const remeasuredOverhang = Math.max(0, (remeasured.actualBoundingBoxRight ?? remeasuredAdvance) - remeasuredAdvance);
+      const remeasuredTotal = remeasuredAdvance + remeasuredOverhang;
+      const scaleX = remeasuredTotal > w ? (w / remeasuredTotal) : 1.0;
+
       ctx.save();
       if (obj.alignment === 'center') {
         ctx.translate(w / 2, 0);

@@ -132,6 +132,41 @@ export default function App() {
       await db.templates.bulkPut(templatesToEnsure);
     }
 
+    // Seamlessly calibrate existing templates in IndexedDB to 1.0mm safe margin and non-clipped font bounds
+    let tmplsCalibrated = false;
+    const calibratedTmpls = currentTmpls.map(t => {
+      let changed = false;
+      const updatedObjs = t.objects.map(obj => {
+        if (t.travel === 'Vertical' && t.layout === 'Stack') {
+          let newX = obj.x;
+          let newW = obj.width;
+          let newFont = obj.fontSizeMm;
+          if (obj.x === 0.5) { newX = 1.0; changed = true; }
+          if (obj.width === 11.5) { newW = 10.5; changed = true; }
+          if (obj.fieldKey === 'mrp' && obj.fontSizeMm > 3.0) { newFont = 3.0; changed = true; }
+          if (obj.fieldKey === 'batch' && obj.fontSizeMm > 2.6) { newFont = 2.6; changed = true; }
+          if (obj.fieldKey === 'net_wt' && obj.fontSizeMm > 2.6) { newFont = 2.6; changed = true; }
+          if (obj.fieldKey === 'mfd' && obj.fontSizeMm > 2.4) { newFont = 2.4; changed = true; }
+          if (obj.fieldKey === 'best_before' && obj.fontSizeMm > 2.4) { newFont = 2.4; changed = true; }
+          if (obj.fieldKey === 'rate_per_gm' && obj.fontSizeMm > 2.2) { newFont = 2.2; changed = true; }
+          if (changed) {
+            return { ...obj, x: newX, width: newW, fontSizeMm: newFont };
+          }
+        }
+        return obj;
+      });
+      if (changed) {
+        tmplsCalibrated = true;
+        return { ...t, objects: updatedObjs };
+      }
+      return t;
+    });
+
+    if (tmplsCalibrated) {
+      await db.templates.bulkPut(calibratedTmpls);
+      currentTmpls.splice(0, currentTmpls.length, ...calibratedTmpls);
+    }
+
     // Ensure realistic MRPs on seed SKUs so dynamic tags display correctly
     let skusUpdated = false;
     const verifiedSkus = skuList.map(s => {
