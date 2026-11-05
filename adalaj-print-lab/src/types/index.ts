@@ -182,6 +182,11 @@ export interface DesignObject {
   lineIndex?: number;    // for stacked 6-line items
   imageDataUrl?: string; // for raster images or SVG data
   barcodeFormat?: 'CODE128' | 'EAN13' | 'QR';
+  semanticTag?: string;  // e.g. 'mrp' | 'batch' | 'mfd' | 'best_before' | 'net_wt' | 'rate_per_gm' | 'barcode' | 'qr'
+  strokeWidthMm?: number;
+  cornerRadiusMm?: number;
+  fillMode?: 'hollow' | 'solid';
+  borderStyle?: 'solid' | 'dashed' | 'dotted';
 }
 
 export interface Template {

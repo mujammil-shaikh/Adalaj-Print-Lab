@@ -63,7 +63,7 @@ import type {
 } from '../../types';
 import { fitObjectsToBand, validateTemplateQuality, type QualityIssue } from '../../services/fitEngine';
 import { getLayoutAdvice, buildPassPlan } from '../../services/passPlanner';
-import { renderTemplateToCanvas, canvasTo1BitBmp, canvasToStandardBmp } from '../../services/printTransform';
+import { renderTemplateToCanvas, canvasTo1BitBmp, canvasToStandardBmp, renderBarcodeSvgString } from '../../services/printTransform';
 import { 
   resolveLayout, 
   buildPackDefaultTemplate, 
@@ -565,7 +565,17 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
     setZoomMode('custom');
   };
 
-  // TOOL RAIL CREATION HANDLERS
+  // Helper: Find next available empty vertical space on canvas to prevent collision
+  const getNextAvailableY = (objHeight: number = 3.5): number => {
+    if (template.objects.length === 0) return 0.5;
+    const lowest = Math.max(...template.objects.map(o => o.y + o.height)) + (template.lineGapMm || 0.8);
+    if (lowest + objHeight <= canvasHeightMm) {
+      return Math.round(lowest * 10) / 10;
+    }
+    return Math.max(0.5, Math.round((canvasHeightMm - objHeight - 0.5) * 10) / 10);
+  };
+
+  // TOOL RAIL CREATION HANDLERS (Collision-Safe)
   const handleAddTextObject = () => {
     const newId = `obj_text_${Date.now()}`;
     const newObj: DesignObject = {
@@ -573,8 +583,8 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       type: 'text',
       content: 'CUSTOM TEXT',
       x: 0.5,
-      y: Math.min(canvasHeightMm - 4.0, (template.objects.length * 4.2) % (canvasHeightMm - 4.0)),
-      width: Math.min(canvasWidthMm - 1.0, 15.0),
+      y: getNextAvailableY(3.2),
+      width: Math.min(canvasWidthMm - 1.0, 11.5),
       height: 3.2,
       rotation: 0,
       fontFamily: 'Barlow Condensed',
@@ -606,8 +616,8 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       fieldKey: key,
       content: `{${key}}`,
       x: 0.5,
-      y: Math.min(canvasHeightMm - 4.0, (template.objects.length * 4.2) % (canvasHeightMm - 4.0)),
-      width: Math.min(canvasWidthMm - 1.0, 15.0),
+      y: getNextAvailableY(3.2),
+      width: Math.min(canvasWidthMm - 1.0, 11.5),
       height: 3.2,
       rotation: 0,
       fontFamily: 'Barlow Condensed',
@@ -638,9 +648,10 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       type: 'line',
       content: '',
       x: 0.5,
-      y: Math.min(canvasHeightMm - 1.0, 12.0),
+      y: getNextAvailableY(0.4),
       width: canvasWidthMm - 1.0,
       height: 0.4,
+      strokeWidthMm: 0.4,
       rotation: 0,
       fontFamily: 'Barlow Condensed',
       fontSizePt: 8,
@@ -673,6 +684,10 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       y: 0.5,
       width: canvasWidthMm - 1.0,
       height: canvasHeightMm - 1.0,
+      strokeWidthMm: 0.4,
+      cornerRadiusMm: 0,
+      fillMode: 'hollow',
+      borderStyle: 'solid',
       rotation: 0,
       fontFamily: 'Barlow Condensed',
       fontSizePt: 8,
@@ -702,8 +717,8 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       type: 'barcode',
       content: 'ADTP014',
       x: 0.5,
-      y: 2.0,
-      width: Math.min(canvasWidthMm - 1.0, 24.0),
+      y: getNextAvailableY(6.0),
+      width: Math.min(canvasWidthMm - 1.0, 11.5),
       height: 6.0,
       rotation: 0,
       fontFamily: 'Roboto Mono',
@@ -730,18 +745,19 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
 
   const handleAddQrObject = () => {
     const newId = `obj_qr_${Date.now()}`;
+    const qrDim = Math.min(canvasWidthMm - 1.0, 9.0);
     const newObj: DesignObject = {
       id: newId,
       type: 'qr',
       content: 'https://adalaj.in/b/ADTP014',
       x: 0.5,
-      y: 1.0,
-      width: 8.0,
-      height: 8.0,
+      y: getNextAvailableY(qrDim),
+      width: qrDim,
+      height: qrDim,
       rotation: 0,
       fontFamily: 'Roboto Mono',
       fontSizePt: 8,
-      fontSizeMm: 8.0,
+      fontSizeMm: qrDim,
       fontWeight: 'normal',
       fontStyle: 'normal',
       letterSpacingMm: 0,
@@ -1857,18 +1873,38 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                             }}
                           >
                             {obj.type === 'line' ? (
-                              <div className="w-full bg-black" style={{ height: `${Math.max(1, obj.height * zoomLevel)}px` }} />
+                              <div 
+                                className="w-full bg-black select-none pointer-events-none" 
+                                style={{ 
+                                  height: `${Math.max(1, (obj.strokeWidthMm || obj.height || 0.4) * zoomLevel)}px` 
+                                }} 
+                              />
                             ) : obj.type === 'rectangle' ? (
-                              <div className="w-full h-full border border-black" />
+                              <div 
+                                className="w-full h-full select-none pointer-events-none" 
+                                style={{
+                                  borderWidth: `${Math.max(1, (obj.strokeWidthMm || 0.4) * zoomLevel)}px`,
+                                  borderColor: '#000000',
+                                  borderStyle: obj.borderStyle || 'solid',
+                                  borderRadius: `${Math.round((obj.cornerRadiusMm || 0) * zoomLevel)}px`,
+                                  backgroundColor: obj.fillMode === 'solid' ? '#000000' : 'transparent',
+                                  boxSizing: 'border-box'
+                                }}
+                              />
                             ) : obj.type === 'barcode' ? (
-                              <div className="w-full h-full flex flex-col items-center justify-center bg-zinc-100 border border-zinc-400 p-0.5">
-                                <Barcode className="w-full h-4/5 text-black" />
-                                <span className="text-[7px] font-mono leading-none">{displayText}</span>
-                              </div>
+                              <div 
+                                className="w-full h-full flex flex-col items-center justify-center bg-white p-0.5 select-none overflow-hidden"
+                                dangerouslySetInnerHTML={{ 
+                                  __html: renderBarcodeSvgString('barcode', displayText, obj.barcodeFormat === 'EAN13' ? 'EAN13' : 'CODE128') 
+                                }}
+                              />
                             ) : obj.type === 'qr' ? (
-                              <div className="w-full h-full flex items-center justify-center bg-white border border-zinc-400 p-0.5">
-                                <QrCode className="w-full h-full text-black" />
-                              </div>
+                              <div 
+                                className="w-full h-full flex items-center justify-center bg-white p-0.5 select-none overflow-hidden"
+                                dangerouslySetInnerHTML={{ 
+                                  __html: renderBarcodeSvgString('qr', displayText) 
+                                }}
+                              />
                             ) : (
                               <span className="leading-none whitespace-nowrap overflow-visible">
                                 {displayText}
@@ -2196,124 +2232,676 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                 </div>
               </div>
 
-              {/* OBJECT CONTENT & DATA EDITOR */}
-              {selectedObject.type !== 'line' && selectedObject.type !== 'rectangle' && (
-                <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400">
-                      Object Content & Data
-                    </span>
-                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-400 uppercase">
-                      {selectedObject.type}
-                    </span>
-                  </div>
+              {/* OBJECT CONTENT & DATA EDITOR (Category Tailored) */}
+              {selectedObject.type !== 'line' && selectedObject.type !== 'rectangle' && (() => {
+                const isBarcode = selectedObject.type === 'barcode';
+                const isQr = selectedObject.type === 'qr';
+                const fKey = selectedObject.fieldKey || '';
+                const semTag = selectedObject.semanticTag || '';
+                const contentStr = (selectedObject.content || '').toUpperCase();
 
-                  {/* If dynamic field: selector for key */}
-                  {selectedObject.type === 'field' && (
-                    <div>
-                      <label className="text-[10px] text-zinc-400 block mb-0.5">Linked Dynamic Field</label>
-                      <select
-                        value={selectedObject.fieldKey || 'batch'}
-                        onChange={e => {
-                          const newKey = e.target.value;
-                          commitPendingSession();
-                          updateTemplateWithHistory(prev => ({
-                            ...prev,
-                            objects: prev.objects.map(o => o.id === selectedObject.id ? { 
-                              ...o, 
-                              fieldKey: newKey,
-                              content: `{${newKey}}`
-                            } : o)
-                          }));
-                        }}
-                        className="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs text-amber-300 font-mono focus:outline-hidden"
-                      >
-                        <option value="batch">Batch ID ({previewValues.batch || 'ADTP013'})</option>
-                        <option value="mrp">MRP ({previewValues.mrp || '₹50'})</option>
-                        <option value="net_wt">Net Weight ({previewValues.net_wt || '100 G'})</option>
-                        <option value="mfd">Mfg Date ({previewValues.mfd || '01/03/26'})</option>
-                        <option value="best_before">Best Before ({previewValues.best_before || '28/02/27'})</option>
-                        <option value="rate_per_gm">Rate / gm ({previewValues.rate_per_gm || '₹0.50'})</option>
-                        <option value="product">Product Name ({activeProduct.name})</option>
-                        <option value="custom">Custom Dynamic Field</option>
-                      </select>
+                const category: 'mrp' | 'batch' | 'mfd' | 'best_before' | 'net_wt' | 'rate_per_gm' | 'barcode' | 'qr' | 'general' =
+                  isBarcode ? 'barcode'
+                  : isQr ? 'qr'
+                  : (semTag === 'mrp' || fKey === 'mrp' || contentStr.includes('{MRP}') || contentStr.includes('MRP')) ? 'mrp'
+                  : (semTag === 'batch' || fKey === 'batch' || contentStr.includes('{BATCH}') || contentStr.includes('B.NO') || contentStr.includes('LOT')) ? 'batch'
+                  : (semTag === 'mfd' || fKey === 'mfd' || contentStr.includes('{MFD}') || contentStr.includes('MFD') || contentStr.includes('PKD') || contentStr.includes('MFG')) ? 'mfd'
+                  : (semTag === 'best_before' || fKey === 'best_before' || contentStr.includes('{BEST_BEFORE}') || contentStr.includes('BEST BEFORE') || contentStr.includes('EXP')) ? 'best_before'
+                  : (semTag === 'net_wt' || fKey === 'net_wt' || contentStr.includes('{NET_WT}') || contentStr.includes('NET WT') || contentStr.includes('WEIGHT')) ? 'net_wt'
+                  : (semTag === 'rate_per_gm' || fKey === 'rate_per_gm' || contentStr.includes('{RATE_PER_GM}')) ? 'rate_per_gm'
+                  : 'general';
+
+                return (
+                  <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 space-y-2.5">
+                    {/* Header with active category badge */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400">
+                          {category === 'mrp' ? 'MRP & Unit Pricing'
+                            : category === 'batch' ? 'Batch / Lot Number'
+                            : category === 'mfd' ? 'Mfg Date (MFD)'
+                            : category === 'best_before' ? 'Best Before / Shelf Life'
+                            : category === 'net_wt' ? 'Net Weight / Quantity'
+                            : category === 'barcode' ? 'Barcode Symbology'
+                            : category === 'qr' ? '2D QR Code Matrix'
+                            : 'Text & Content'}
+                        </span>
+                      </div>
+                      <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-400 uppercase">
+                        {category}
+                      </span>
                     </div>
-                  )}
 
-                  {/* If barcode: format selector */}
-                  {selectedObject.type === 'barcode' && (
-                    <div>
-                      <label className="text-[10px] text-zinc-400 block mb-0.5">Barcode Symbology</label>
-                      <select
-                        value={selectedObject.barcodeFormat || 'CODE128'}
-                        onChange={e => {
-                          const fmt = e.target.value as 'CODE128' | 'EAN13';
-                          commitPendingSession();
-                          updateTemplateWithHistory(prev => ({
-                            ...prev,
-                            objects: prev.objects.map(o => o.id === selectedObject.id ? { ...o, barcodeFormat: fmt } : o)
-                          }));
-                        }}
-                        className="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-200 font-mono focus:outline-hidden"
-                      >
-                        <option value="CODE128">Code 128 (Alphanumeric - Batch / SKU)</option>
-                        <option value="EAN13">EAN-13 (Standard Retail GTIN)</option>
-                      </select>
-                    </div>
-                  )}
-
-                  {/* Content / Data Text Input */}
-                  <div>
-                    <div className="flex items-center justify-between mb-0.5">
-                      <label className="text-[10px] text-zinc-400">
-                        {selectedObject.type === 'qr' ? 'QR Code URL / Content' : selectedObject.type === 'barcode' ? 'Barcode Value' : 'Text / Template Value'}
-                      </label>
-                      <span className="text-[9px] text-zinc-500 font-mono">{(selectedObject.content || '').length} chars</span>
-                    </div>
-                    <input
-                      ref={contentInputRef}
-                      type="text"
-                      value={selectedObject.content || ''}
-                      onChange={e => {
-                        const val = e.target.value;
-                        updateObjectCoalesced(selectedObject.id, { content: val }, 'property_tweak');
-                      }}
-                      onBlur={commitPendingSession}
-                      placeholder={selectedObject.type === 'qr' ? 'https://adalaj.in/b/{batch}' : selectedObject.type === 'barcode' ? 'ADTP014' : 'Enter text...'}
-                      className="w-full bg-zinc-900 border border-zinc-700 focus:border-amber-500 rounded px-2.5 py-1.5 text-xs text-zinc-100 font-mono focus:outline-hidden"
-                    />
-                  </div>
-
-                  {/* Dynamic Token Chips */}
-                  <div>
-                    <span className="text-[9px] text-zinc-500 block mb-1">Insert Dynamic Tokens:</span>
-                    <div className="flex flex-wrap gap-1">
+                    {/* Category Selector Pills */}
+                    <div className="flex flex-wrap gap-1 pb-1 border-b border-zinc-800/80">
                       {[
-                        { token: '{mrp}', label: 'MRP' },
-                        { token: '{batch}', label: 'Batch' },
-                        { token: '{net_wt}', label: 'Net Wt' },
-                        { token: '{mfd}', label: 'MFD' },
-                        { token: '{best_before}', label: 'Exp' },
-                        { token: '{rate_per_gm}', label: 'Rate/g' },
-                        { token: '{product}', label: 'Product' }
-                      ].map(chip => (
+                        { id: 'mrp', label: 'MRP' },
+                        { id: 'batch', label: 'Batch' },
+                        { id: 'mfd', label: 'MFD' },
+                        { id: 'best_before', label: 'Best Before' },
+                        { id: 'net_wt', label: 'Net Wt' },
+                        { id: 'barcode', label: 'Barcode' },
+                        { id: 'qr', label: 'QR' }
+                      ].map(pill => (
                         <button
-                          key={chip.token}
+                          key={pill.id}
                           type="button"
                           onClick={() => {
-                            const current = selectedObject.content || '';
-                            const updated = current ? `${current} ${chip.token}` : chip.token;
-                            updateObjectCoalesced(selectedObject.id, { content: updated }, 'property_tweak');
+                            if (pill.id === 'barcode') {
+                              updateObjectCoalesced(selectedObject.id, { 
+                                type: 'barcode',
+                                semanticTag: 'barcode',
+                                barcodeFormat: 'CODE128',
+                                width: Math.min(canvasWidthMm - 1.0, 11.5),
+                                height: 7.0,
+                                content: selectedObject.content && !selectedObject.content.startsWith('http') ? selectedObject.content : 'ADTP014'
+                              }, 'property_tweak');
+                            } else if (pill.id === 'qr') {
+                              updateObjectCoalesced(selectedObject.id, { 
+                                type: 'qr',
+                                semanticTag: 'qr',
+                                width: 8.5,
+                                height: 8.5,
+                                content: 'https://adalaj.in/b/ADTP014' 
+                              }, 'property_tweak');
+                            } else {
+                              updateObjectCoalesced(selectedObject.id, { 
+                                type: 'field',
+                                fieldKey: pill.id,
+                                semanticTag: pill.id,
+                                content: `{${pill.id}}`
+                              }, 'property_tweak');
+                            }
                             commitPendingSession();
                           }}
-                          className="px-1.5 py-0.5 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 hover:border-amber-500/50 text-[10px] font-mono text-amber-300 transition-colors cursor-pointer"
-                          title={`Insert dynamic token: ${chip.token}`}
+                          className={`px-1.5 py-0.5 rounded text-[9px] font-mono transition-colors cursor-pointer border ${
+                            category === pill.id
+                              ? 'bg-amber-500 text-black border-amber-400 font-bold'
+                              : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white'
+                          }`}
                         >
-                          + {chip.label}
+                          {pill.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* MRP Specific Micro-Inspector */}
+                    {category === 'mrp' && (
+                      <div className="p-2 rounded bg-zinc-900/80 border border-zinc-800 space-y-1.5 text-xs">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-zinc-400">Current MRP: <strong className="text-white">{previewValues.mrp}</strong></span>
+                          <span className="text-amber-400 font-mono">Rate: <strong>{previewValues.rate_per_gm}/g</strong></span>
+                        </div>
+                        <span className="text-[9px] text-zinc-500 block">Regulatory Format Presets (Click to apply):</span>
+                        <div className="grid grid-cols-1 gap-1">
+                          {[
+                            { label: `₹{mrp}`, desc: 'Price only' },
+                            { label: `MRP ₹{mrp}`, desc: 'Standard label' },
+                            { label: `MRP ₹{mrp} (INCL. OF ALL TAXES)`, desc: 'Statutory compliance' },
+                            { label: `MRP ₹{mrp} (₹{rate_per_gm}/g)`, desc: 'Price + unit rate' },
+                            { label: `₹{mrp} (USP ₹{rate_per_gm}/g)`, desc: 'Short USP tag' }
+                          ].map(preset => (
+                            <button
+                              key={preset.label}
+                              type="button"
+                              onClick={() => {
+                                updateObjectCoalesced(selectedObject.id, { content: preset.label }, 'property_tweak');
+                                commitPendingSession();
+                              }}
+                              className="w-full text-left px-2 py-1 rounded bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 hover:border-amber-500/50 flex items-center justify-between text-[10px] font-mono text-zinc-200 transition-colors cursor-pointer"
+                            >
+                              <span className="text-amber-300 font-semibold">{preset.label}</span>
+                              <span className="text-zinc-500 text-[9px]">{preset.desc}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Batch Specific Micro-Inspector */}
+                    {category === 'batch' && (
+                      <div className="p-2 rounded bg-zinc-900/80 border border-zinc-800 space-y-1.5 text-xs">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-zinc-400">Active Batch: <strong className="text-amber-400 font-mono">{previewValues.batch}</strong></span>
+                          <span className="text-zinc-500 font-mono text-[10px]">{activeProduct.name}</span>
+                        </div>
+                        <span className="text-[9px] text-zinc-500 block">Batch Format Presets:</span>
+                        <div className="grid grid-cols-2 gap-1">
+                          {[
+                            'B.No: {batch}',
+                            'BATCH: {batch}',
+                            'LOT NO: {batch}',
+                            'B.No. {batch}',
+                            'BATCH NO: {batch}',
+                            '{batch}'
+                          ].map(preset => (
+                            <button
+                              key={preset}
+                              type="button"
+                              onClick={() => {
+                                updateObjectCoalesced(selectedObject.id, { content: preset }, 'property_tweak');
+                                commitPendingSession();
+                              }}
+                              className="text-left px-2 py-1 rounded bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 hover:border-amber-500/50 text-[10px] font-mono text-amber-300 transition-colors cursor-pointer truncate"
+                            >
+                              {preset}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* MFD Specific Micro-Inspector */}
+                    {category === 'mfd' && (
+                      <div className="p-2 rounded bg-zinc-900/80 border border-zinc-800 space-y-1.5 text-xs">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-zinc-400">MFD Value: <strong className="text-white font-mono">{previewValues.mfd}</strong></span>
+                          <span className="text-zinc-500 font-mono text-[9px]">DD/MM/YY</span>
+                        </div>
+                        <span className="text-[9px] text-zinc-500 block">Manufacturing Date Presets:</span>
+                        <div className="grid grid-cols-2 gap-1">
+                          {[
+                            'MFD: {mfd}',
+                            'PKD: {mfd}',
+                            'MFG: {mfd}',
+                            'DATE OF MFG: {mfd}',
+                            'MFD. {mfd}',
+                            '{mfd}'
+                          ].map(preset => (
+                            <button
+                              key={preset}
+                              type="button"
+                              onClick={() => {
+                                updateObjectCoalesced(selectedObject.id, { content: preset }, 'property_tweak');
+                                commitPendingSession();
+                              }}
+                              className="text-left px-2 py-1 rounded bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 hover:border-amber-500/50 text-[10px] font-mono text-amber-300 transition-colors cursor-pointer truncate"
+                            >
+                              {preset}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Best Before Specific Micro-Inspector */}
+                    {category === 'best_before' && (
+                      <div className="p-2 rounded bg-zinc-900/80 border border-zinc-800 space-y-1.5 text-xs">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-zinc-400">Expiry Value: <strong className="text-white font-mono">{previewValues.best_before}</strong></span>
+                          <span className="text-zinc-500 font-mono text-[9px]">Shelf Life</span>
+                        </div>
+                        <span className="text-[9px] text-zinc-500 block">Best Before & Expiry Presets:</span>
+                        <div className="grid grid-cols-2 gap-1">
+                          {[
+                            'BEST BEFORE: {best_before}',
+                            'EXP: {best_before}',
+                            'USE BY: {best_before}',
+                            'EXPIRY: {best_before}',
+                            'BEST BEFORE 12 MONTHS',
+                            '{best_before}'
+                          ].map(preset => (
+                            <button
+                              key={preset}
+                              type="button"
+                              onClick={() => {
+                                updateObjectCoalesced(selectedObject.id, { content: preset }, 'property_tweak');
+                                commitPendingSession();
+                              }}
+                              className="text-left px-2 py-1 rounded bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 hover:border-amber-500/50 text-[10px] font-mono text-amber-300 transition-colors cursor-pointer truncate"
+                            >
+                              {preset}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Net Weight Specific Micro-Inspector */}
+                    {category === 'net_wt' && (
+                      <div className="p-2 rounded bg-zinc-900/80 border border-zinc-800 space-y-1.5 text-xs">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-zinc-400">Net Quantity: <strong className="text-white font-mono">{previewValues.net_wt}</strong></span>
+                          <span className="text-zinc-500 font-mono text-[9px]">{previewSku.packSize}</span>
+                        </div>
+                        <span className="text-[9px] text-zinc-500 block">Net Weight Presets:</span>
+                        <div className="grid grid-cols-2 gap-1">
+                          {[
+                            'Net Wt: {net_wt}',
+                            'NET WT. {net_wt}',
+                            'Net Qty: {net_wt}',
+                            'NET WEIGHT: {net_wt}',
+                            'WEIGHT: {net_wt}',
+                            '{net_wt}'
+                          ].map(preset => (
+                            <button
+                              key={preset}
+                              type="button"
+                              onClick={() => {
+                                updateObjectCoalesced(selectedObject.id, { content: preset }, 'property_tweak');
+                                commitPendingSession();
+                              }}
+                              className="text-left px-2 py-1 rounded bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 hover:border-amber-500/50 text-[10px] font-mono text-amber-300 transition-colors cursor-pointer truncate"
+                            >
+                              {preset}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Barcode Symbology Editor & Live Vector Preview */}
+                    {isBarcode && (
+                      <div className="space-y-2 pt-1 border-t border-zinc-800">
+                        <div>
+                          <label className="text-[10px] text-zinc-400 block mb-0.5">Symbology standard:</label>
+                          <div className="grid grid-cols-2 gap-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                updateObjectCoalesced(selectedObject.id, { 
+                                  barcodeFormat: 'CODE128',
+                                  width: Math.min(canvasWidthMm - 1.0, 11.5)
+                                }, 'property_tweak');
+                                commitPendingSession();
+                              }}
+                              className={`py-1 rounded text-[10px] font-mono border transition-colors cursor-pointer ${
+                                (selectedObject.barcodeFormat || 'CODE128') === 'CODE128'
+                                  ? 'bg-amber-500 text-black border-amber-400 font-bold'
+                                  : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white'
+                              }`}
+                            >
+                              Code 128 (Batch)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const digits = (selectedObject.content || '').replace(/\D/g, '');
+                                const eanFormatted = digits.length >= 12 ? digits.slice(0, 12) : (digits ? digits.padEnd(12, '0') : '890103099999');
+                                updateObjectCoalesced(selectedObject.id, { 
+                                  barcodeFormat: 'EAN13',
+                                  content: eanFormatted,
+                                  width: Math.min(canvasWidthMm - 1.0, 11.5)
+                                }, 'property_tweak');
+                                commitPendingSession();
+                              }}
+                              className={`py-1 rounded text-[10px] font-mono border transition-colors cursor-pointer ${
+                                selectedObject.barcodeFormat === 'EAN13'
+                                  ? 'bg-amber-500 text-black border-amber-400 font-bold'
+                                  : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white'
+                              }`}
+                            >
+                              EAN-13 (Retail GTIN)
+                            </button>
+                          </div>
+                          <span className="text-[9px] text-zinc-400 block mt-1">
+                            {selectedObject.barcodeFormat === 'EAN13'
+                              ? 'EAN-13: Standard 12 data digits + auto-calculated 13th checksum digit'
+                              : 'Code 128: Alphanumeric barcode for Batch IDs and alphanumeric SKU codes'}
+                          </span>
+                        </div>
+
+                        {/* Barcode Height Presets */}
+                        <div>
+                          <span className="text-[10px] text-zinc-400 block mb-1">Barcode Height:</span>
+                          <div className="grid grid-cols-3 gap-1">
+                            {[
+                              { mm: 5.0, label: '5 mm (Compact)' },
+                              { mm: 7.0, label: '7 mm (Standard)' },
+                              { mm: 10.0, label: '10 mm (Tall)' }
+                            ].map(h => (
+                              <button
+                                key={h.mm}
+                                type="button"
+                                onClick={() => {
+                                  updateObjectCoalesced(selectedObject.id, { height: h.mm }, 'property_tweak');
+                                  commitPendingSession();
+                                }}
+                                className={`py-1 rounded text-[10px] font-mono transition-colors cursor-pointer border ${
+                                  Math.abs(selectedObject.height - h.mm) < 0.2
+                                    ? 'bg-amber-500 text-black border-amber-400 font-bold shadow-xs'
+                                    : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white'
+                                }`}
+                              >
+                                {h.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Live Vector Mini Preview */}
+                        <div className="p-2 rounded bg-white border border-zinc-700 flex items-center justify-center h-12 overflow-hidden">
+                          <div
+                            className="w-full h-full flex items-center justify-center"
+                            dangerouslySetInnerHTML={{
+                              __html: renderBarcodeSvgString('barcode', selectedObject.content || 'ADTP014', selectedObject.barcodeFormat === 'EAN13' ? 'EAN13' : 'CODE128')
+                            }}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* QR Code Editor & Live Vector Preview */}
+                    {isQr && (
+                      <div className="space-y-2 pt-1 border-t border-zinc-800">
+                        <div>
+                          <span className="text-[10px] text-zinc-400 block mb-1">QR Code Size (Square):</span>
+                          <div className="grid grid-cols-3 gap-1">
+                            {[
+                              { mm: 6.0, label: '6 mm' },
+                              { mm: 8.5, label: '8.5 mm' },
+                              { mm: 11.0, label: '11 mm' }
+                            ].map(s => (
+                              <button
+                                key={s.mm}
+                                type="button"
+                                onClick={() => {
+                                  updateObjectCoalesced(selectedObject.id, { width: s.mm, height: s.mm }, 'property_tweak');
+                                  commitPendingSession();
+                                }}
+                                className={`py-1 rounded text-[10px] font-mono transition-colors cursor-pointer border ${
+                                  Math.abs(selectedObject.width - s.mm) < 0.2
+                                    ? 'bg-amber-500 text-black border-amber-400 font-bold shadow-xs'
+                                    : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white'
+                                }`}
+                              >
+                                {s.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Live Vector Mini Preview */}
+                        <div className="p-2 rounded bg-white border border-zinc-700 flex items-center justify-center h-16 overflow-hidden">
+                          <div
+                            className="w-14 h-14"
+                            dangerouslySetInnerHTML={{
+                              __html: renderBarcodeSvgString('qr', selectedObject.content || 'https://adalaj.in')
+                            }}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Direct Text / Data Input */}
+                    <div>
+                      <div className="flex items-center justify-between mb-0.5">
+                        <label className="text-[10px] text-zinc-400">
+                          {isQr ? 'QR Code URL / Payload' : isBarcode ? 'Barcode Value / Encoded Data' : 'Exact Label Text Value'}
+                        </label>
+                        <span className="text-[9px] text-zinc-500 font-mono">{(selectedObject.content || '').length} chars</span>
+                      </div>
+                      <input
+                        ref={contentInputRef}
+                        type="text"
+                        value={selectedObject.content || ''}
+                        onChange={e => {
+                          const val = e.target.value;
+                          updateObjectCoalesced(selectedObject.id, { content: val }, 'property_tweak');
+                        }}
+                        onBlur={commitPendingSession}
+                        placeholder={isQr ? 'https://adalaj.in/b/{batch}' : isBarcode ? 'ADTP014' : 'Enter text...'}
+                        className="w-full bg-zinc-900 border border-zinc-700 focus:border-amber-500 rounded px-2.5 py-1.5 text-xs text-zinc-100 font-mono focus:outline-hidden"
+                      />
+                    </div>
+
+                    {/* Dynamic Token Chips */}
+                    {!isBarcode && !isQr && (
+                      <div>
+                        <span className="text-[9px] text-zinc-500 block mb-1">Insert Dynamic Tokens:</span>
+                        <div className="flex flex-wrap gap-1">
+                          {[
+                            { token: '{mrp}', label: 'MRP' },
+                            { token: '{batch}', label: 'Batch' },
+                            { token: '{net_wt}', label: 'Net Wt' },
+                            { token: '{mfd}', label: 'MFD' },
+                            { token: '{best_before}', label: 'Exp' },
+                            { token: '{rate_per_gm}', label: 'Rate/g' },
+                            { token: '{product}', label: 'Product' }
+                          ].map(chip => (
+                            <button
+                              key={chip.token}
+                              type="button"
+                              onClick={() => {
+                                const current = selectedObject.content || '';
+                                const updated = current ? `${current} ${chip.token}` : chip.token;
+                                updateObjectCoalesced(selectedObject.id, { content: updated }, 'property_tweak');
+                                commitPendingSession();
+                              }}
+                              className="px-1.5 py-0.5 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 hover:border-amber-500/50 text-[10px] font-mono text-amber-300 transition-colors cursor-pointer"
+                              title={`Insert dynamic token: ${chip.token}`}
+                            >
+                              + {chip.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {/* Box / Rectangle Properties */}
+              {selectedObject.type === 'rectangle' && (
+                <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400">
+                      Box & Border Styling
+                    </span>
+                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-400 uppercase">
+                      BOX
+                    </span>
+                  </div>
+
+                  {/* Fill Mode: Hollow vs Solid */}
+                  <div>
+                    <span className="text-[10px] text-zinc-400 block mb-1">Fill Mode:</span>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          updateObjectCoalesced(selectedObject.id, { fillMode: 'hollow' }, 'property_tweak');
+                          commitPendingSession();
+                        }}
+                        className={`py-1.5 px-2 rounded text-[11px] font-semibold transition-colors cursor-pointer border ${
+                          (selectedObject.fillMode || 'hollow') === 'hollow'
+                            ? 'bg-amber-500 text-black border-amber-400 font-bold shadow-xs'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white'
+                        }`}
+                      >
+                        Hollow (Border Only)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          updateObjectCoalesced(selectedObject.id, { fillMode: 'solid' }, 'property_tweak');
+                          commitPendingSession();
+                        }}
+                        className={`py-1.5 px-2 rounded text-[11px] font-semibold transition-colors cursor-pointer border ${
+                          selectedObject.fillMode === 'solid'
+                            ? 'bg-amber-500 text-black border-amber-400 font-bold shadow-xs'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white'
+                        }`}
+                      >
+                        Solid Black Fill
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Border Style: Solid vs Dashed */}
+                  <div>
+                    <span className="text-[10px] text-zinc-400 block mb-1">Border Line Style:</span>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          updateObjectCoalesced(selectedObject.id, { borderStyle: 'solid' }, 'property_tweak');
+                          commitPendingSession();
+                        }}
+                        className={`py-1 rounded text-[10px] font-mono transition-colors cursor-pointer border ${
+                          (selectedObject.borderStyle || 'solid') === 'solid'
+                            ? 'bg-amber-500 text-black border-amber-400 font-bold shadow-xs'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white'
+                        }`}
+                      >
+                        Solid
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          updateObjectCoalesced(selectedObject.id, { borderStyle: 'dashed' }, 'property_tweak');
+                          commitPendingSession();
+                        }}
+                        className={`py-1 rounded text-[10px] font-mono transition-colors cursor-pointer border ${
+                          selectedObject.borderStyle === 'dashed'
+                            ? 'bg-amber-500 text-black border-amber-400 font-bold shadow-xs'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white'
+                        }`}
+                      >
+                        Dashed
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Border Thickness */}
+                  <div>
+                    <span className="text-[10px] text-zinc-400 block mb-1">Border Thickness (mm):</span>
+                    <div className="grid grid-cols-4 gap-1">
+                      {[
+                        { mm: 0.2, label: '0.2 mm' },
+                        { mm: 0.4, label: '0.4 mm' },
+                        { mm: 0.8, label: '0.8 mm' },
+                        { mm: 1.2, label: '1.2 mm' }
+                      ].map(t => (
+                        <button
+                          key={t.mm}
+                          type="button"
+                          onClick={() => {
+                            updateObjectCoalesced(selectedObject.id, { strokeWidthMm: t.mm }, 'property_tweak');
+                            commitPendingSession();
+                          }}
+                          className={`py-1 rounded text-[10px] font-mono transition-colors cursor-pointer border ${
+                            Math.abs((selectedObject.strokeWidthMm || 0.4) - t.mm) < 0.05
+                              ? 'bg-amber-500 text-black border-amber-400 font-bold shadow-xs'
+                              : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white'
+                          }`}
+                        >
+                          {t.label}
                         </button>
                       ))}
                     </div>
                   </div>
+
+                  {/* Corner Radius */}
+                  <div>
+                    <span className="text-[10px] text-zinc-400 block mb-1">Corner Radius (mm):</span>
+                    <div className="grid grid-cols-4 gap-1">
+                      {[
+                        { mm: 0, label: 'Square' },
+                        { mm: 1.0, label: '1.0 mm' },
+                        { mm: 2.0, label: '2.0 mm' },
+                        { mm: 3.0, label: '3.0 mm' }
+                      ].map(r => (
+                        <button
+                          key={r.mm}
+                          type="button"
+                          onClick={() => {
+                            updateObjectCoalesced(selectedObject.id, { cornerRadiusMm: r.mm }, 'property_tweak');
+                            commitPendingSession();
+                          }}
+                          className={`py-1 rounded text-[10px] font-mono transition-colors cursor-pointer border ${
+                            Math.abs((selectedObject.cornerRadiusMm || 0) - r.mm) < 0.05
+                              ? 'bg-amber-500 text-black border-amber-400 font-bold shadow-xs'
+                              : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white'
+                          }`}
+                        >
+                          {r.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Line Properties */}
+              {selectedObject.type === 'line' && (
+                <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400">
+                      Dividing Line Style
+                    </span>
+                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-400 uppercase">
+                      LINE
+                    </span>
+                  </div>
+
+                  <div>
+                    <span className="text-[10px] text-zinc-400 block mb-1">Thickness (mm):</span>
+                    <div className="grid grid-cols-4 gap-1">
+                      {[
+                        { mm: 0.2, label: '0.2 mm' },
+                        { mm: 0.4, label: '0.4 mm' },
+                        { mm: 0.8, label: '0.8 mm' },
+                        { mm: 1.2, label: '1.2 mm' }
+                      ].map(t => (
+                        <button
+                          key={t.mm}
+                          type="button"
+                          onClick={() => {
+                            updateObjectCoalesced(selectedObject.id, { height: t.mm, strokeWidthMm: t.mm }, 'property_tweak');
+                            commitPendingSession();
+                          }}
+                          className={`py-1 rounded text-[10px] font-mono transition-colors cursor-pointer ${
+                            Math.abs((selectedObject.strokeWidthMm || selectedObject.height) - t.mm) < 0.05
+                              ? 'bg-amber-500 text-black font-bold shadow-xs'
+                              : 'bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white'
+                          }`}
+                        >
+                          {t.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Orientation Presets for Line */}
+                  <div>
+                    <span className="text-[10px] text-zinc-400 block mb-1">Line Orientation:</span>
+                    <div className="grid grid-cols-3 gap-1">
+                      {[
+                        { deg: 0, label: '0° Horiz' },
+                        { deg: 90, label: '90° Vert' },
+                        { deg: 45, label: '45° Diag' }
+                      ].map(p => (
+                        <button
+                          key={p.deg}
+                          type="button"
+                          onClick={() => {
+                            updateObjectCoalesced(selectedObject.id, { rotation: p.deg }, 'property_tweak');
+                            commitPendingSession();
+                          }}
+                          className={`py-1 rounded text-[10px] font-mono transition-colors cursor-pointer border ${
+                            (selectedObject.rotation || 0) === p.deg
+                              ? 'bg-amber-500 text-black border-amber-400 font-bold shadow-xs'
+                              : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white'
+                          }`}
+                        >
+                          {p.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      updateObjectCoalesced(selectedObject.id, { x: 0.5, width: canvasWidthMm - 1.0, rotation: 0 }, 'property_tweak');
+                      commitPendingSession();
+                    }}
+                    className="w-full flex items-center justify-center gap-1.5 py-1.5 px-2 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 hover:border-amber-500/50 text-[11px] font-semibold text-zinc-200 transition-colors cursor-pointer"
+                  >
+                    <Minus className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Span Full Band Width ({canvasWidthMm - 1.0} mm)</span>
+                  </button>
                 </div>
               )}
 
@@ -2547,37 +3135,116 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
 
               {/* Object Rotation, Mirroring & Invert Controls */}
               <div className="space-y-2 pt-3 border-t border-zinc-800">
-                <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider block">
-                  Rotate & Mirror Object
-                </span>
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider block">
+                    Rotate & Mirror Object
+                  </span>
+                  <div className="flex items-center gap-1 font-mono text-[10px] text-amber-400 bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800">
+                    <span>{selectedObject.rotation || 0}°</span>
+                  </div>
+                </div>
 
-                {/* 4-way Rotation */}
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-[10px] text-zinc-500">Angle</label>
+                {/* Arbitrary Angle Slider & Numeric Degree Input */}
+                <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="range"
+                      min="0"
+                      max="360"
+                      step="1"
+                      value={selectedObject.rotation || 0}
+                      onChange={e => {
+                        const rot = parseInt(e.target.value) || 0;
+                        updateObjectCoalesced(selectedObject.id, { rotation: rot }, 'property_tweak');
+                      }}
+                      onMouseUp={commitPendingSession}
+                      onTouchEnd={commitPendingSession}
+                      className="w-full accent-amber-500 cursor-pointer h-1.5 bg-zinc-800 rounded-lg"
+                    />
+                    <div className="flex items-center shrink-0">
+                      <input
+                        type="number"
+                        min="0"
+                        max="360"
+                        value={selectedObject.rotation || 0}
+                        onChange={e => {
+                          const rot = (parseInt(e.target.value) || 0) % 360;
+                          updateObjectCoalesced(selectedObject.id, { rotation: rot >= 0 ? rot : rot + 360 }, 'property_tweak');
+                        }}
+                        onBlur={commitPendingSession}
+                        className="w-14 bg-zinc-900 border border-zinc-700 rounded px-1.5 py-1 text-center font-mono text-xs text-amber-400 focus:outline-hidden"
+                      />
+                      <span className="text-[10px] text-zinc-500 font-mono ml-1">deg</span>
+                    </div>
+                  </div>
+
+                  {/* Quick Angle Presets */}
+                  <div className="grid grid-cols-6 gap-1">
+                    {[
+                      { deg: 0, label: '0°' },
+                      { deg: 45, label: '45°' },
+                      { deg: 90, label: '90°' },
+                      { deg: 135, label: '135°' },
+                      { deg: 180, label: '180°' },
+                      { deg: 270, label: '270°' }
+                    ].map(p => (
+                      <button
+                        key={p.deg}
+                        type="button"
+                        onClick={() => {
+                          updateObjectCoalesced(selectedObject.id, { rotation: p.deg }, 'property_tweak');
+                          commitPendingSession();
+                        }}
+                        className={`py-1 rounded font-mono text-[10px] transition-colors cursor-pointer border ${
+                          (selectedObject.rotation || 0) === p.deg
+                            ? 'bg-amber-500 text-black border-amber-400 font-bold shadow-xs'
+                            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white'
+                        }`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Fine Nudge Buttons */}
+                  <div className="flex items-center justify-between pt-1">
                     <button
-                      onClick={() => handleUpdateSelectedObject({ rotation: ((selectedObject.rotation || 0) + 90) % 360 })}
-                      className="text-[10px] text-amber-400 hover:text-amber-300 flex items-center gap-1 font-mono"
-                      title="Quick Rotate 90° Clockwise"
+                      type="button"
+                      onClick={() => {
+                        const curr = selectedObject.rotation || 0;
+                        const next = (curr - 15 + 360) % 360;
+                        updateObjectCoalesced(selectedObject.id, { rotation: next }, 'property_tweak');
+                        commitPendingSession();
+                      }}
+                      className="px-2 py-1 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-[10px] font-mono text-zinc-300 transition-colors cursor-pointer"
+                    >
+                      -15° Nudge
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const curr = selectedObject.rotation || 0;
+                        const next = (curr + 15) % 360;
+                        updateObjectCoalesced(selectedObject.id, { rotation: next }, 'property_tweak');
+                        commitPendingSession();
+                      }}
+                      className="px-2 py-1 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-[10px] font-mono text-zinc-300 transition-colors cursor-pointer"
+                    >
+                      +15° Nudge
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const curr = selectedObject.rotation || 0;
+                        const next = (curr + 90) % 360;
+                        updateObjectCoalesced(selectedObject.id, { rotation: next }, 'property_tweak');
+                        commitPendingSession();
+                      }}
+                      className="px-2 py-1 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-[10px] font-mono text-amber-400 flex items-center gap-1 transition-colors cursor-pointer"
                     >
                       <RotateCw className="w-3 h-3" />
                       <span>+90°</span>
                     </button>
-                  </div>
-                  <div className="grid grid-cols-4 gap-1">
-                    {[0, 90, 180, 270].map(deg => (
-                      <button
-                        key={deg}
-                        onClick={() => handleUpdateSelectedObject({ rotation: deg })}
-                        className={`py-1 rounded font-mono text-[11px] transition-colors ${
-                          (selectedObject.rotation || 0) === deg
-                            ? 'bg-amber-500 text-black font-bold shadow-xs'
-                            : 'bg-zinc-950 border border-zinc-800 text-zinc-400 hover:text-white'
-                        }`}
-                      >
-                        {deg}°
-                      </button>
-                    ))}
                   </div>
                 </div>
 
@@ -2736,13 +3403,24 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                 ✓ All objects within printable 12.5mm band. Safe for direct printing.
               </div>
             ) : (
-              <div className="space-y-1.5">
-                {issues.map(iss => (
-                  <div key={iss.id} className="p-2 rounded bg-zinc-950 border border-zinc-800 text-[11px] space-y-0.5">
-                    <span className="font-bold text-amber-400">{iss.title}</span>
-                    <p className="text-zinc-400">{iss.message}</p>
-                  </div>
-                ))}
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={handleFitAllLines}
+                  className="w-full flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs shadow-xs transition-colors cursor-pointer"
+                  title="Auto-reflow all objects into a collision-free stacked layout"
+                >
+                  <Sparkles className="w-3.5 h-3.5 fill-black" />
+                  <span>Auto-Fix & Reflow All Lines</span>
+                </button>
+                <div className="space-y-1.5 max-h-48 overflow-y-auto industrial-scrollbar pr-1">
+                  {issues.map(iss => (
+                    <div key={iss.id} className="p-2 rounded bg-zinc-950 border border-zinc-800 text-[11px] space-y-0.5">
+                      <span className="font-bold text-amber-400">{iss.title}</span>
+                      <p className="text-zinc-400">{iss.message}</p>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>

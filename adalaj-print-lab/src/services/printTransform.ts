@@ -527,15 +527,38 @@ function renderSingleObject(
     }
   } else if (obj.type === 'line') {
     ctx.strokeStyle = '#000000';
-    ctx.lineWidth = Math.max(1, 0.2 * dpmm);
+    ctx.lineWidth = Math.max(1, (obj.strokeWidthMm || obj.height || 0.4) * dpmm);
     ctx.beginPath();
     ctx.moveTo(0, h / 2);
     ctx.lineTo(w, h / 2);
     ctx.stroke();
   } else if (obj.type === 'rectangle') {
     ctx.strokeStyle = '#000000';
-    ctx.lineWidth = Math.max(1, 0.2 * dpmm);
-    ctx.strokeRect(0, 0, w, h);
+    ctx.lineWidth = Math.max(1, (obj.strokeWidthMm || 0.4) * dpmm);
+    if (obj.borderStyle === 'dashed') {
+      ctx.setLineDash([4, 2]);
+    } else {
+      ctx.setLineDash([]);
+    }
+    const r = (obj.cornerRadiusMm || 0) * dpmm;
+    if (r > 0 && typeof ctx.roundRect === 'function') {
+      ctx.beginPath();
+      ctx.roundRect(0, 0, w, h, r);
+      if (obj.fillMode === 'solid') {
+        ctx.fillStyle = '#000000';
+        ctx.fill();
+      } else {
+        ctx.stroke();
+      }
+    } else {
+      if (obj.fillMode === 'solid') {
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(0, 0, w, h);
+      } else {
+        ctx.strokeRect(0, 0, w, h);
+      }
+    }
+    ctx.setLineDash([]);
   } else if (obj.type === 'rounded_rect') {
     ctx.strokeStyle = '#000000';
     ctx.lineWidth = Math.max(1, 0.2 * dpmm);
@@ -647,3 +670,86 @@ export async function createExportZip(
 
   return await zip.generateAsync({ type: 'blob' });
 }
+
+/**
+ * Generates an interactive, responsive vector SVG string for real Barcode (Code 128 / EAN-13)
+ * and real 2D QR Code rendering directly inside the interactive canvas pack view.
+ */
+export function renderBarcodeSvgString(
+  type: 'barcode' | 'qr',
+  text: string,
+  format: 'CODE128' | 'EAN13' = 'CODE128'
+): string {
+  const payload = (text || (type === 'barcode' ? 'ADTP014' : 'https://adalaj.in')).trim();
+
+  try {
+    let bcid: string;
+    let encodeText = payload;
+
+    if (type === 'qr') {
+      bcid = 'qrcode';
+    } else if (format === 'EAN13') {
+      bcid = 'ean13';
+      // EAN-13 strictly requires 12 digits (bwip-js auto-calculates 13th checksum) or 13 digits
+      const digits = payload.replace(/\D/g, '');
+      if (digits.length === 13) {
+        encodeText = digits;
+      } else if (digits.length >= 12) {
+        encodeText = digits.slice(0, 12);
+      } else if (digits.length > 0) {
+        encodeText = digits.padEnd(12, '0');
+      } else {
+        encodeText = '890103099999';
+      }
+    } else {
+      bcid = 'code128';
+    }
+
+    const opts: Record<string, unknown> = {
+      bcid,
+      text: encodeText,
+      scale: 2,
+    };
+    if (type === 'barcode') {
+      opts.height = 10;
+      opts.includetext = true;
+      opts.textxalign = 'center';
+    }
+
+    const svg = bwipjs.toSVG(opts as any);
+
+    // Make SVG responsive so it fits nicely inside canvas containers
+    return svg
+      .replace(/<svg\s+/, '<svg width="100%" height="100%" preserveAspectRatio="xMidYMid meet" ')
+      .replace(/width="[\d.]+"/, '')
+      .replace(/height="[\d.]+"/, '');
+  } catch (err) {
+    console.warn("BWIP-JS primary generation warning:", err);
+    // If EAN-13 or specific format fails, fall back to Code 128 so we ALWAYS render genuine vector lines
+    try {
+      if (type === 'barcode') {
+        const fallbackSvg = bwipjs.toSVG({
+          bcid: 'code128',
+          text: payload.slice(0, 24) || 'ADTP014',
+          scale: 2,
+          height: 10,
+          includetext: true,
+          textxalign: 'center'
+        });
+        return fallbackSvg
+          .replace(/<svg\s+/, '<svg width="100%" height="100%" preserveAspectRatio="xMidYMid meet" ')
+          .replace(/width="[\d.]+"/, '')
+          .replace(/height="[\d.]+"/, '');
+      }
+    } catch {
+      // ignore
+    }
+
+    // Ultimate fallback if characters are completely unencodable
+    return `<svg width="100%" height="100%" viewBox="0 0 100 30" xmlns="http://www.w3.org/2000/svg">
+      <rect width="100" height="30" fill="#f4f4f5" stroke="#a1a1aa" stroke-width="0.5" />
+      <text x="50" y="18" font-family="monospace" font-size="7" text-anchor="middle" fill="#71717a">${text || 'INVALID CODE'}</text>
+    </svg>`;
+  }
+}
+

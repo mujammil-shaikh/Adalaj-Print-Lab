@@ -35,18 +35,103 @@ export function fitObjectsToBand(
   const changesMade: string[] = [];
 
   const printBand = template.customBandMm || machine.printBandMm || 12.7;
+  const frameWidth = newTemplate.travel === 'Vertical' ? printBand : (newTemplate.customLengthMm || 35.0);
+  const frameHeight = newTemplate.travel === 'Vertical' ? (newTemplate.customLengthMm || 35.0) : printBand;
   const usableBandWidthMm = printBand - (machine.contentPaddingLeftMm + machine.contentPaddingRightMm);
   const usableBandHeightMm = printBand - (machine.contentPaddingTopMm + machine.contentPaddingBottomMm);
 
-  const objectsToFit = targetObjectId 
-    ? newTemplate.objects.filter(o => o.id === targetObjectId)
-    : newTemplate.objects;
+  if (targetObjectId) {
+    // Single object targeted fit (Fit Line / Fit Object)
+    const obj = newTemplate.objects.find(o => o.id === targetObjectId);
+    if (obj && !obj.locked) {
+      if (obj.type === 'line') {
+        obj.x = 0.5;
+        obj.width = frameWidth - 1.0;
+        obj.height = Math.min(Math.max(0.2, obj.height || 0.4), 2.0);
+        obj.y = Math.max(0.5, Math.min(frameHeight - obj.height - 0.5, obj.y));
+        changesMade.push(`Fit line to band width (${obj.width}mm)`);
+      } else if (obj.type === 'rectangle') {
+        obj.width = Math.min(frameWidth - 1.0, Math.max(4.0, obj.width));
+        obj.height = Math.min(frameHeight - 1.0, Math.max(2.0, obj.height));
+        obj.x = Math.max(0.5, Math.min(frameWidth - obj.width - 0.5, obj.x));
+        obj.y = Math.max(0.5, Math.min(frameHeight - obj.height - 0.5, obj.y));
+        changesMade.push(`Fit box dimensions within print frame`);
+      } else if (obj.type === 'barcode') {
+        obj.width = Math.min(frameWidth - 1.0, Math.max(8.0, obj.width));
+        obj.height = Math.min(frameHeight - 1.0, Math.max(4.0, obj.height));
+        obj.x = Math.max(0.5, Math.min(frameWidth - obj.width - 0.5, obj.x));
+        obj.y = Math.max(0.5, Math.min(frameHeight - obj.height - 0.5, obj.y));
+        changesMade.push(`Fit barcode dimensions within print frame`);
+      } else if (obj.type === 'qr') {
+        const qrSize = Math.min(frameWidth - 1.0, frameHeight - 1.0, Math.max(obj.width, obj.height));
+        obj.width = qrSize;
+        obj.height = qrSize;
+        obj.x = Math.max(0.5, Math.min(frameWidth - obj.width - 0.5, obj.x));
+        obj.y = Math.max(0.5, Math.min(frameHeight - obj.height - 0.5, obj.y));
+        changesMade.push(`Fit QR code dimensions (${qrSize}x${qrSize}mm)`);
+      } else {
+        // Text / Field
+        const charCount = (obj.content || '').length || 8;
+        const maxAllowedW = frameWidth - 1.0;
+        let textWidthMm = charCount * obj.fontSizeMm * 0.55;
 
-  if (newTemplate.travel === 'Vertical' && newTemplate.layout === 'Stack') {
+        if (textWidthMm > maxAllowedW) {
+          const reqStretch = Math.max(75, Math.floor((maxAllowedW / textWidthMm) * 100));
+          if (reqStretch < 100) {
+            obj.horizontalStretchPercent = reqStretch;
+            textWidthMm = textWidthMm * (reqStretch / 100);
+            changesMade.push(`Condensed "${obj.content || obj.fieldKey}" to ${reqStretch}%`);
+          }
+        }
+        if (textWidthMm > maxAllowedW) {
+          const scaleFactor = maxAllowedW / textWidthMm;
+          const newFontSizeMm = Math.max(machine.minimumLegibleTextHeightMm, Math.round(obj.fontSizeMm * scaleFactor * 10) / 10);
+          if (newFontSizeMm < obj.fontSizeMm) {
+            changesMade.push(`Reduced font size from ${obj.fontSizeMm}mm to ${newFontSizeMm}mm`);
+            obj.fontSizeMm = newFontSizeMm;
+            obj.height = newFontSizeMm;
+            obj.fontSizePt = Math.round(newFontSizeMm * 2.83);
+          }
+        }
+        obj.width = Math.min(maxAllowedW, Math.max(4.0, textWidthMm));
+        obj.x = Math.max(0.5, Math.min(frameWidth - obj.width - 0.5, obj.x));
+        obj.y = Math.max(0.5, Math.min(frameHeight - obj.height - 0.5, obj.y));
+      }
+    }
+  } else if (newTemplate.travel === 'Vertical' && newTemplate.layout === 'Stack') {
     // Vertical + Stack: Locked axis is Width (usableBandWidthMm, ~12.1 mm)
-    objectsToFit.forEach(obj => {
+    newTemplate.objects.forEach(obj => {
       if (obj.locked) return;
 
+      if (obj.type === 'line') {
+        obj.width = usableBandWidthMm;
+        obj.x = machine.contentPaddingLeftMm;
+        obj.height = Math.min(Math.max(0.2, obj.height || 0.4), 1.2);
+        return;
+      }
+
+      if (obj.type === 'rectangle') {
+        obj.width = Math.min(usableBandWidthMm, obj.width);
+        obj.x = machine.contentPaddingLeftMm;
+        return;
+      }
+
+      if (obj.type === 'barcode') {
+        obj.width = Math.min(usableBandWidthMm, Math.max(8.0, obj.width));
+        obj.x = machine.contentPaddingLeftMm;
+        obj.height = Math.min(obj.height, 7.0);
+        return;
+      }
+
+      if (obj.type === 'qr') {
+        const qrSize = Math.min(usableBandWidthMm, obj.width, obj.height);
+        obj.width = qrSize;
+        obj.height = qrSize;
+        obj.x = machine.contentPaddingLeftMm;
+        return;
+      }
+
+      // Text and Field objects:
       const charCount = (obj.content || '').length || 8;
       let textWidthMm = charCount * obj.fontSizeMm * 0.55;
 
@@ -83,31 +168,48 @@ export function fitObjectsToBand(
     reflowStackedLines(newTemplate, machine);
     changesMade.push(`Reflowed lines with spacing ${newTemplate.lineGapMm} mm`);
   } else if (newTemplate.travel === 'Horizontal' && newTemplate.layout === 'Stack') {
-    // Horizontal + Stack: Head height is 12.5mm; arrange in 2 columns (e.g. 3 lines left, 3 lines right)
-    const col1X = machine.contentPaddingLeftMm;
-    const col2X = machine.contentPaddingLeftMm + 20.0;
-    const colWidth = 19.0;
+    // Horizontal + Stack: 2-column layout (fitting cleanly within travel length x print band)
+    const canvasLen = newTemplate.customLengthMm || 35.0;
+    const colWidth = Math.max(10.0, Math.floor((canvasLen - 4.0) / 2));
+    const col1X = 1.0;
+    const col2X = col1X + colWidth + 1.5;
+
+    const itemsPerCol = Math.max(1, Math.ceil(newTemplate.objects.length / 2));
+    const dynamicGap = itemsPerCol > 3 ? 0.4 : (newTemplate.lineGapMm || 0.8);
+    const rowH = Math.min(2.8, Math.max(1.8, Math.floor(((usableBandHeightMm - (itemsPerCol - 1) * dynamicGap) / itemsPerCol) * 10) / 10));
 
     newTemplate.objects.forEach((obj, idx) => {
       if (obj.locked) return;
-      const isCol2 = idx >= 3;
-      const colRowIdx = isCol2 ? idx - 3 : idx;
+      const isCol2 = idx >= itemsPerCol;
+      const colRowIdx = isCol2 ? idx - itemsPerCol : idx;
 
       obj.x = isCol2 ? col2X : col1X;
-      obj.y = Math.round((machine.contentPaddingTopMm + colRowIdx * (3.0 + newTemplate.lineGapMm)) * 10) / 10;
-      obj.fontSizeMm = Math.min(obj.fontSizeMm, 3.0);
-      obj.height = obj.fontSizeMm;
+      obj.y = Math.round((machine.contentPaddingTopMm + colRowIdx * (rowH + dynamicGap)) * 10) / 10;
+      if (obj.type !== 'barcode' && obj.type !== 'qr' && obj.type !== 'line') {
+        obj.fontSizeMm = rowH;
+        obj.height = rowH;
+      } else if (obj.type === 'line') {
+        obj.height = Math.min(rowH, 0.4);
+      } else {
+        obj.height = Math.min(usableBandHeightMm - obj.y, Math.max(rowH, 5.0));
+      }
       obj.width = colWidth;
     });
     changesMade.push('Arranged objects into 2-column horizontal stack layout');
   } else if (newTemplate.travel === 'Horizontal' && newTemplate.layout === 'Strip') {
     // Horizontal Strip: Flow objects horizontally across the length
+    const canvasLen = newTemplate.customLengthMm || 35.0;
     let currentX = machine.contentPaddingLeftMm;
+    const totalCount = newTemplate.objects.length || 1;
+    const maxPerObjW = Math.max(4.0, (canvasLen - 1.0 - (totalCount * 0.8)) / totalCount);
+
     newTemplate.objects.forEach(obj => {
       if (obj.locked) return;
+      obj.width = Math.min(obj.width, maxPerObjW);
       obj.x = Math.round(currentX * 10) / 10;
       obj.y = machine.contentPaddingTopMm;
-      currentX += obj.width + newTemplate.lineGapMm;
+      obj.height = Math.min(obj.height, usableBandHeightMm);
+      currentX += obj.width + 0.8;
     });
     changesMade.push('Arranged objects along horizontal strip');
   } else {
@@ -115,6 +217,14 @@ export function fitObjectsToBand(
     reflowStackedLines(newTemplate, machine);
     changesMade.push('Reflowed lines vertically');
   }
+
+  // Final Safety Guarantee: Clamp all objects within substrate canvas frame
+  newTemplate.objects.forEach(obj => {
+    obj.width = Math.min(obj.width, frameWidth - 1.0);
+    obj.height = Math.min(obj.height, frameHeight - 1.0);
+    obj.x = Math.max(0.5, Math.min(frameWidth - obj.width - 0.5, obj.x));
+    obj.y = Math.max(0.5, Math.min(frameHeight - obj.height - 0.5, obj.y));
+  });
 
   // Validate quality after fitting
   const quality = validateTemplateQuality(newTemplate, machine, packProfile);
