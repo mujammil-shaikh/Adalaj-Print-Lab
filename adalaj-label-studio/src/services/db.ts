@@ -15,7 +15,8 @@ import type {
   Template, 
   Batch, 
   PrintJob, 
-  AuditLogEntry 
+  AuditLogEntry,
+  LooseStockRecord
 } from '../types';
 
 export class LabelStudioDatabase extends Dexie {
@@ -30,6 +31,7 @@ export class LabelStudioDatabase extends Dexie {
   batches!: Table<Batch, string>;
   printJobs!: Table<PrintJob, string>;
   auditLogs!: Table<AuditLogEntry, string>;
+  looseStock!: Table<LooseStockRecord, string>;
 
   constructor() {
     super('AdalajLabelStudioDB');
@@ -45,6 +47,20 @@ export class LabelStudioDatabase extends Dexie {
       batches: 'id, productId, status, createdAt',
       printJobs: 'id, jobCode, batchId, productionStatus, createdAt',
       auditLogs: 'id, timestamp, action'
+    });
+    this.version(2).stores({
+      businesses: 'id, name',
+      brands: 'id, businessId, name',
+      products: 'id, brandId, shortCode, archived',
+      skus: 'id, productId, packSize',
+      packProfiles: 'id, name, status',
+      machineProfiles: 'id, name, technology',
+      mediaProfiles: 'id, name',
+      templates: 'id, name, status, version',
+      batches: 'id, productId, status, createdAt',
+      printJobs: 'id, jobCode, batchId, productionStatus, createdAt',
+      auditLogs: 'id, timestamp, action',
+      looseStock: 'id, productId, sourceBatchId, lotDate, status, createdAt'
     });
   }
 }
@@ -65,13 +81,35 @@ export function initializeDatabase(): Promise<void> {
 }
 
 async function doInitializeDatabase() {
-  const [businessCount, machCount, tmplCount] = await Promise.all([
+  const [businessCount, machCount, tmplCount, looseCount] = await Promise.all([
     db.businesses.count(),
     db.machineProfiles.count(),
     db.templates.count(),
+    db.looseStock.count()
   ]);
   // DATA-03: Ensure incomplete databases are healed rather than skipping on businessCount alone
-  if (businessCount > 0 && machCount > 0 && tmplCount > 0) return;
+  if (businessCount > 0 && machCount > 0 && tmplCount > 0) {
+    if (looseCount === 0) {
+      await db.looseStock.put({
+        id: 'loose_ADTP013_residual',
+        productId: 'prod_adtp',
+        sourceBatchId: 'ADTP013',
+        lotDate: '2026-03-01',
+        initialQuantityKg: 5.0,
+        availableQuantityKg: 5.0,
+        reservedQuantityKg: 0,
+        consumedQuantityKg: 0,
+        scrappedQuantityKg: 0,
+        containerId: 'BIN_TURMERIC_RESIDUAL_01',
+        qualityPassed: true,
+        notes: 'Residual 5.0 kg loose stock from batch ADTP013 (50 kg raw - 20 kg 100g - 25 kg 500g)',
+        status: 'Available',
+        createdAt: '2026-03-01T12:00:00.000Z',
+        updatedAt: '2026-03-01T12:00:00.000Z'
+      });
+    }
+    return;
+  }
 
   const initialBusiness: Business = {
     id: 'biz_default',
@@ -480,7 +518,9 @@ async function doInitializeDatabase() {
     db.skus,
     db.templates,
     db.batches,
-    db.auditLogs
+    db.auditLogs,
+    db.looseStock,
+    db.printJobs
   ], async () => {
     await db.businesses.put(initialBusiness);
     await db.brands.put(initialBrand);
@@ -532,11 +572,94 @@ async function doInitializeDatabase() {
     };
     await db.templates.bulkPut([defaultTemplate, pack100gDefaultTmpl, pack500gDefaultTmpl, turmeric100gTmpl, turmeric500gTmpl]);
     await db.batches.put(historicalBatch);
+
+    const seedLooseStock: LooseStockRecord = {
+      id: 'loose_ADTP013_residual',
+      productId: 'prod_adtp',
+      sourceBatchId: 'ADTP013',
+      lotDate: '2026-03-01',
+      initialQuantityKg: 5.0,
+      availableQuantityKg: 5.0,
+      reservedQuantityKg: 0,
+      consumedQuantityKg: 0,
+      scrappedQuantityKg: 0,
+      containerId: 'BIN_TURMERIC_RESIDUAL_01',
+      qualityPassed: true,
+      notes: 'Residual 5.0 kg loose stock from batch ADTP013 (50 kg raw - 20 kg 100g - 25 kg 500g)',
+      status: 'Available',
+      createdAt: '2026-03-01T12:00:00.000Z',
+      updatedAt: '2026-03-01T12:00:00.000Z'
+    };
+    await db.looseStock.put(seedLooseStock);
+
+    const seedPrintJob: PrintJob = {
+      id: 'job_adtp013_100g',
+      jobCode: 'JOB-ADTP013-100G',
+      businessName: 'ADALAJ Organics & Packaging',
+      brandName: 'ADALAJ',
+      productName: 'Turmeric Powder',
+      skuSize: '100 g',
+      batchId: 'ADTP013',
+      quantityPacks: 200,
+      completedQuantity: 200,
+      rejectedQuantity: 0,
+      proofStatus: 'Production Ready',
+      productionStatus: 'Completed',
+      machineId: 'mach_r2d2',
+      machineName: 'R2D2-SX100',
+      surfaceProfileName: '100 g Pouch',
+      travel: 'Horizontal',
+      layout: 'Stack',
+      passPlan: {
+        totalPasses: 1,
+        passes: [{
+          passNumber: 1,
+          objectIds: defaultTemplate.objects.map(o => o.id),
+          linesSummary: 'M.R.P. ₹50 / B.No. ADTP013 / MFD 01/03/26',
+          startOffsetMm: 0,
+          travelLengthMm: 35,
+          direction: 'Horizontal',
+          rotation: 0,
+          fileName: 'ADTP013A.BMP'
+        }],
+        oneLineReason: 'Fits within single 12.5mm TIJ print band'
+      },
+      transform: {
+        originX: 'left',
+        originY: 'top',
+        rotation: 0,
+        mirrorX: false,
+        mirrorY: false,
+        scaleX: 1,
+        scaleY: 1,
+        translationXMm: 0,
+        translationYMm: 0,
+        registrationOffsetMm: 0,
+        feedDirection: 'Top -> Bottom'
+      },
+      templateSnapshot: turmeric100gTmpl,
+      valuesSnapshot: {
+        mrp: '₹50',
+        batch: 'ADTP013',
+        net_wt: '100 g',
+        mfd: '01/03/26',
+        best_before: '28/02/27',
+        rate_per_gm: '₹0.50 / g'
+      },
+      exportedFiles: [
+        { name: 'ADTP013A.BMP', sizeBytes: 15360, type: 'image/bmp' }
+      ],
+      operatorName: 'Production Lead',
+      createdAt: '2026-03-01T10:00:00.000Z',
+      updatedAt: '2026-03-01T10:30:00.000Z'
+    };
+    await db.printJobs.put(seedPrintJob);
+
     await db.auditLogs.put({
       id: 'audit_init',
       timestamp: new Date().toISOString(),
       action: 'SYSTEM_INIT',
-      details: 'ADALAJ Label Studio database initialized with seed catalog and historical batch ADTP013.',
+      details: 'ADALAJ Label Studio database initialized with seed catalog, loose stock ledger, and historical batch ADTP013.',
       user: 'System',
       undoable: false
     });

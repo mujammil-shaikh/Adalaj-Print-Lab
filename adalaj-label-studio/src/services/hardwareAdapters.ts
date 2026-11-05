@@ -275,32 +275,98 @@ class HardwareManager {
     this.addLog('info', `Network socket target updated to: ${this.networkConfig.ip}:${this.networkConfig.port}`);
   }
 
-  public async sendViaNetworkSocket(buffer: ArrayBuffer): Promise<{ success: boolean; bytesWritten: number; error?: string }> {
+  private arrayBufferToBase64(buffer: ArrayBuffer): string {
+    let binary = '';
+    const bytes = new Uint8Array(buffer);
+    const len = bytes.byteLength;
+    for (let i = 0; i < len; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return typeof btoa !== 'undefined' ? btoa(binary) : Buffer.from(binary, 'binary').toString('base64');
+  }
+
+  public async checkAgentStatus(): Promise<{ online: boolean; version?: string; error?: string }> {
+    try {
+      const res = await fetch('http://127.0.0.1:9123/api/status');
+      if (res.ok) {
+        const data = await res.json();
+        return { online: true, version: data.version };
+      }
+      return { online: false, error: `Agent responded with HTTP ${res.status}` };
+    } catch (err: any) {
+      return { online: false, error: err.message || 'Local Print Agent is offline' };
+    }
+  }
+
+  public async testNetworkPrinter(host?: string, port?: number): Promise<{ success: boolean; latencyMs?: number; error?: string }> {
+    const targetHost = host || this.networkConfig.ip;
+    const targetPort = port || this.networkConfig.port;
+    try {
+      const res = await fetch('http://127.0.0.1:9123/api/printers/test-connection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ host: targetHost, port: targetPort, timeoutMs: 3000 })
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+      return { success: false, error: `Agent HTTP ${res.status} error` };
+    } catch (err: any) {
+      return {
+        success: false,
+        error: `Could not reach Local Print Agent on port 9123. Ensure 'pnpm run agent' is running. (${err.message})`
+      };
+    }
+  }
+
+  public async sendViaNetworkSocket(
+    buffer: ArrayBuffer,
+    explicitJobId?: string
+  ): Promise<{ success: boolean; bytesWritten: number; error?: string; status?: string }> {
     const { ip, port } = this.networkConfig;
-    this.addLog('tx', `Dispatching ${buffer.byteLength} bytes to industrial printer at http://${ip}:${port}/raw...`);
+    const jobId = explicitJobId || `job_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    this.addLog('tx', `Dispatching ${buffer.byteLength} bytes to industrial printer at ${ip}:${port} via Local Print Agent (Job ID: ${jobId})...`);
 
     try {
-      // Browser network dispatch via direct fetch to printer raw print endpoint
+      const rawBase64 = this.arrayBufferToBase64(buffer);
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), this.networkConfig.timeoutMs);
+      const timeoutId = setTimeout(() => controller.abort(), this.networkConfig.timeoutMs + 2000);
 
-      const response = await fetch(`http://${ip}:${port}/raw`, {
+      const response = await fetch('http://127.0.0.1:9123/api/jobs', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/octet-stream'
+          'Content-Type': 'application/json'
         },
-        body: buffer,
-        mode: 'no-cors', // standard for embedded printer microcontrollers
+        body: JSON.stringify({
+          jobId,
+          printerHost: ip,
+          printerPort: port,
+          rawBase64,
+          timeoutMs: this.networkConfig.timeoutMs
+        }),
         signal: controller.signal
       });
 
       clearTimeout(timeoutId);
-      this.addLog('success', `Network socket packet delivered to ${ip}:${port} (${buffer.byteLength} bytes).`);
-      return { success: true, bytesWritten: buffer.byteLength };
+
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`Agent rejected job (HTTP ${response.status}): ${errText}`);
+      }
+
+      const result = await response.json();
+      if (!result.success) {
+        throw new Error(result.error || 'Agent reported TCP transmission failure');
+      }
+
+      const bytesDelivered = result.bytesWritten || buffer.byteLength;
+      this.addLog('success', `Native TCP socket packet delivered via Local Print Agent to ${ip}:${port} (${bytesDelivered} bytes). Status: ${result.status || 'acknowledged'}`);
+      return { success: true, bytesWritten: bytesDelivered, status: result.status };
     } catch (err: any) {
-      const msg = err.name === 'AbortError'
-        ? `Connection timed out to ${ip}:${port}. Check IP address and printer power.`
-        : `Network socket transmission to ${ip}:${port} failed: ${err.message || 'CORS / Network Error'}. Direct raw TCP printing requires a local print agent bridge; browser sandbox cannot guarantee raw socket delivery.`;
+      const isAgentOffline = err.message && (err.message.includes('fetch') || err.message.includes('Failed to fetch') || err.message.includes('ECONNREFUSED') || err.name === 'TypeError');
+      const msg = isAgentOffline
+        ? `Local Print Agent is offline on http://127.0.0.1:9123. Direct raw TCP socket printing (port ${port}) requires the local print agent bridge. Run 'pnpm run agent' to start it.`
+        : `Network socket transmission to ${ip}:${port} failed: ${err.message}`;
       
       this.addLog('error', msg);
       // P0-01/PR-01/PR-02: Never return success on adapter failure or timeout!
@@ -311,8 +377,9 @@ class HardwareManager {
   // Unified Print Dispatcher
   public async dispatchPrintJob(
     transport: HardwareTransportType,
-    bmpBlob: Blob
-  ): Promise<{ success: boolean; bytesWritten: number; message: string }> {
+    bmpBlob: Blob,
+    jobId?: string
+  ): Promise<{ success: boolean; bytesWritten: number; message: string; status?: string }> {
     const buffer = await bmpBlob.arrayBuffer();
 
     if (transport === 'webusb') {
@@ -330,18 +397,20 @@ class HardwareManager {
         message: res.success ? `Bluetooth wireless transmission of ${res.bytesWritten} bytes succeeded.` : res.error || 'Bluetooth error'
       };
     } else if (transport === 'network_socket') {
-      const res = await this.sendViaNetworkSocket(buffer);
+      const res = await this.sendViaNetworkSocket(buffer, jobId);
       return {
         success: res.success,
         bytesWritten: res.bytesWritten,
+        status: res.status,
         message: res.success
-          ? `Network transmission dispatched to ${this.networkConfig.ip}:${this.networkConfig.port} (${res.bytesWritten} bytes).`
+          ? `Network transmission dispatched to ${this.networkConfig.ip}:${this.networkConfig.port} via Local Print Agent (${res.bytesWritten} bytes).`
           : `Network transmission failed: ${res.error || 'Connection error'}`
       };
     } else {
       return {
         success: true,
         bytesWritten: buffer.byteLength,
+        status: 'device_acknowledged',
         message: 'USB Drive file ready for FAT32 export (offline file preparation).'
       };
     }

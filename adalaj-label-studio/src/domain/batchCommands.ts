@@ -45,7 +45,7 @@ export function createBatchCommand(
   product: Product,
   availableSkus: SKU[],
   existingBatches: { id: string }[]
-): { success: boolean; batch?: Batch; error?: string } {
+): { success: boolean; batch?: Batch; residualKg?: number; error?: string } {
   // 1. Validate ID Uniqueness
   const cleanId = input.batchId.trim().toUpperCase();
   if (!cleanId) {
@@ -125,7 +125,7 @@ export function createBatchCommand(
     createdAt: new Date().toISOString(),
   };
 
-  return { success: true, batch };
+  return { success: true, batch, residualKg: balance.looseBalanceKg };
 }
 
 /**

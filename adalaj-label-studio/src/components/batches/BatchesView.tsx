@@ -21,6 +21,8 @@ import {
 import type { Batch, BatchAllocation, Product, SKU } from '../../types';
 import { createBatchCommand, generateNextBatchId } from '../../domain/batchCommands';
 import { parseDateInput, calculateBestBeforeDate, formatCalendarDateDMY } from '../../domain/dates';
+import { createLooseStockRecord, allocateFromLooseStock } from '../../domain/looseStock';
+import { db } from '../../services/db';
 
 interface BatchesViewProps {
   batches: Batch[];
@@ -184,13 +186,23 @@ export const BatchesView: React.FC<BatchesViewProps> = ({
     }
 
     onCreateBatch(result.batch);
+    if (result.residualKg && result.residualKg > 0) {
+      const looseRecord = createLooseStockRecord({
+        productId: prod.id,
+        sourceBatchId: result.batch.id,
+        lotDate: result.batch.lotDate,
+        residualKg: result.residualKg,
+        notes: `Residual loose stock from batch ${result.batch.id}`
+      });
+      db.looseStock.put(looseRecord).catch(console.error);
+    }
     onSelectBatch(result.batch);
     setShowNewWizard(false);
     setToastMsg(`✓ Batch ${result.batch.id} created successfully with ${result.batch.allocations.length} pack allocation(s)!`);
     setTimeout(() => setToastMsg(null), 4000);
   };
 
-  const handlePackFromLoose = () => {
+  const handlePackFromLoose = async () => {
     if (!currentBatch || kgFromLoose <= 0 || kgFromLoose > looseBalanceKg) return;
 
     const packGrams = parsePackGrams(packSizeFromLoose);
@@ -200,17 +212,11 @@ export const BatchesView: React.FC<BatchesViewProps> = ({
     const sku = skus.find(s => s.productId === currentBatch.productId && s.packSize.toLowerCase() === packSizeFromLoose.toLowerCase());
     const mrp = sku?.mrp;
 
-    let mfdFormatted = '04/11/26';
-    let bbFormatted = '03/11/27';
-    try {
-      const cal = parseDateInput(currentBatch.lotDate || new Date());
-      mfdFormatted = formatCalendarDateDMY(cal);
-      const shelfLife = sku?.shelfLifeOverrideMonths || prod?.defaultShelfLifeMonths || 12;
-      const bb = calculateBestBeforeDate(cal, shelfLife);
-      bbFormatted = formatCalendarDateDMY(bb);
-    } catch {
-      // fallback
-    }
+    const cal = parseDateInput(currentBatch.lotDate || new Date());
+    const mfdFormatted = formatCalendarDateDMY(cal);
+    const shelfLife = sku?.shelfLifeOverrideMonths || prod?.defaultShelfLifeMonths || 12;
+    const bb = calculateBestBeforeDate(cal, shelfLife);
+    const bbFormatted = formatCalendarDateDMY(bb);
 
     const newAlloc: BatchAllocation = {
       id: `alloc_${Date.now()}`,
@@ -233,6 +239,20 @@ export const BatchesView: React.FC<BatchesViewProps> = ({
       ...currentBatch,
       allocations: [...currentBatch.allocations, newAlloc]
     };
+
+    // Update DB loose stock record if exists
+    try {
+      const records = await db.looseStock.where('sourceBatchId').equals(currentBatch.id).toArray();
+      if (records.length > 0) {
+        const primary = records[0];
+        const allocRes = allocateFromLooseStock(primary, kgFromLoose, currentBatch.id);
+        if (allocRes.success && allocRes.updatedRecord) {
+          await db.looseStock.put(allocRes.updatedRecord);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to sync loose stock ledger:', err);
+    }
 
     onUpdateBatch(updatedBatch);
     setShowLoosePackModal(false);

@@ -325,3 +325,6 @@ export interface ActionDefinition {
   tooltip: string;
   ariaKeyshortcuts?: string;
 }
+
+export * from '../domain/looseStock';
+
