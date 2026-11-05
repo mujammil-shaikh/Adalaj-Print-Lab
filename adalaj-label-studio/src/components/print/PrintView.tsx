@@ -31,12 +31,14 @@ import {
   Terminal,
   Unplug
 } from 'lucide-react';
-import type { Batch, BatchAllocation, Template, MachineProfile, PackProfile, Product, SKU } from '../../types';
+import type { Batch, BatchAllocation, Template, MachineProfile, PackProfile, Product, SKU, PrintJob, PrintTransform } from '../../types';
 import { renderTemplateToCanvas, canvasTo1BitBmp, canvasToStandardBmp, createExportZip } from '../../services/printTransform';
 import { fitObjectsToBand, validateTemplateQuality, type QualityIssue } from '../../services/fitEngine';
 import { buildPassPlan } from '../../services/passPlanner';
 import { hardwareManager, type HardwareTransportType, type HardwareLogEntry } from '../../services/hardwareAdapters';
 import { resolveLayout } from '../../services/layoutRegistry';
+import { createImmutablePrintJobSnapshot, runPreflightCheck } from '../../domain/printJob';
+import { db } from '../../services/db';
 
 interface PrintViewProps {
   batches: Batch[];
@@ -49,6 +51,8 @@ interface PrintViewProps {
   initialAllocId?: string;
   templates?: Template[];
   packProfiles?: PackProfile[];
+  reprintJob?: PrintJob | null;
+  onClearReprint?: () => void;
   onMarkPrinted: (batchId: string, allocId: string, count: number) => void;
   onUpdateTemplate: (t: Template) => void;
 }
@@ -64,6 +68,8 @@ export const PrintView: React.FC<PrintViewProps> = ({
   initialAllocId,
   templates,
   packProfiles,
+  reprintJob,
+  onClearReprint,
   onMarkPrinted,
   onUpdateTemplate
 }) => {
@@ -114,15 +120,17 @@ export const PrintView: React.FC<PrintViewProps> = ({
     }
   }, [currentBatch, selectedAllocId]);
 
-  // Dynamically resolve template for exact selected allocation (WF-002, PR-08)
+  // Dynamically resolve template for exact selected allocation (WF-002, PR-08) or immutable reprint snapshot (HIST-02)
   const activeTemplate = useMemo(() => {
+    if (reprintJob?.templateSnapshot) return reprintJob.templateSnapshot;
     if (!currentProduct || !currentAlloc || !templates || templates.length === 0) return template;
     const resolved = resolveLayout(currentProduct.id, currentAlloc.packSize, templates, packProfiles || [packProfile]);
     return resolved.template || template;
-  }, [currentProduct?.id, currentAlloc?.packSize, templates, packProfiles, template, packProfile]);
+  }, [reprintJob, currentProduct?.id, currentAlloc?.packSize, templates, packProfiles, template, packProfile]);
 
-  // Derived values memoized with NO fallback MRP/Date/Batch (P0-03, PR-09)
+  // Derived values memoized with NO fallback MRP/Date/Batch (P0-03, PR-09) or immutable reprint snapshot (HIST-02)
   const values = useMemo<Record<string, string>>(() => {
+    if (reprintJob?.valuesSnapshot) return { ...reprintJob.valuesSnapshot };
     const matchedSku = currentAlloc ? skus.find(s => s.productId === currentProduct?.id && s.packSize.toLowerCase() === currentAlloc.packSize.toLowerCase()) : null;
     const effectiveMrp = currentAlloc?.mrpSnapshot || matchedSku?.mrp;
     const mrpVal = (typeof effectiveMrp === 'number' && effectiveMrp > 0) ? `₹${effectiveMrp}` : '[Needs MRP]';
@@ -149,6 +157,7 @@ export const PrintView: React.FC<PrintViewProps> = ({
       pack_size: currentAlloc?.packSize || ''
     };
   }, [
+    reprintJob,
     currentAlloc?.id,
     currentAlloc?.mrpSnapshot,
     currentAlloc?.packSize,
@@ -182,6 +191,20 @@ export const PrintView: React.FC<PrintViewProps> = ({
   );
   const [contentScale, setContentScale] = useState<number>(1.0); // 100% design scale on canvas
   const [isFitEdgeToEdge, setIsFitEdgeToEdge] = useState<boolean>(false);
+
+  const currentTransform: PrintTransform = useMemo(() => ({
+    originX: 'left',
+    originY: 'top',
+    rotation: exportOrientation === 'rotate90' ? 90 : exportOrientation === 'rotate180' ? 180 : exportOrientation === 'rotate270' ? 270 : 0,
+    mirrorX: machine.mirrorX || false,
+    mirrorY: machine.mirrorY || false,
+    scaleX: contentScale || 1.0,
+    scaleY: contentScale || 1.0,
+    translationXMm: 0,
+    translationYMm: 0,
+    registrationOffsetMm: machine.edgeBufferMm || 0,
+    feedDirection: (machine.feedOrigin as any) || 'Top -> Bottom'
+  }), [exportOrientation, machine, contentScale]);
 
   // Effective preview dimensions respecting live rotation
   const isRotated90or270 = exportOrientation === 'rotate90' || exportOrientation === 'rotate270';
@@ -348,6 +371,24 @@ export const PrintView: React.FC<PrintViewProps> = ({
       setExportCompleteMsg('❌ Export blocked: Missing authorized MRP for this pack size.');
       return;
     }
+
+    if (currentProduct && currentBatch && currentAlloc) {
+      const currentSku = skus.find(s => s.productId === currentProduct.id && s.packSize.toLowerCase() === currentAlloc.packSize.toLowerCase());
+      const preflight = runPreflightCheck({
+        product: currentProduct,
+        sku: currentSku || null,
+        batch: currentBatch,
+        allocation: currentAlloc,
+        template: activeTemplate,
+        machine,
+        packProfile
+      });
+      if (!preflight.passed) {
+        setExportCompleteMsg(`❌ Export blocked by preflight: ${preflight.blockers[0]}`);
+        return;
+      }
+    }
+
     setIsExporting(true);
     try {
       const canvas = renderTemplateToCanvas(activeTemplate, machine, values, {
@@ -394,7 +435,43 @@ export const PrintView: React.FC<PrintViewProps> = ({
       a.click();
       URL.revokeObjectURL(url);
 
-      setExportCompleteMsg('Production ZIP package generated successfully with INDEX.TXT manifest.');
+      // Persist immutable snapshot (HIST-01, HIST-02, WF-003)
+      if (currentProduct && currentBatch && currentAlloc) {
+        const jobCode = `JOB-${currentBatch.id}-${currentAlloc.packSize.replace(/\s+/g, '').toUpperCase()}-${Date.now().toString().slice(-4)}`;
+        const job = createImmutablePrintJobSnapshot({
+          jobCode,
+          businessName: 'ADALAJ Organics & Packaging',
+          brandName: 'ADALAJ',
+          product: currentProduct,
+          allocation: currentAlloc,
+          batch: currentBatch,
+          template: activeTemplate,
+          machine,
+          packProfile,
+          values,
+          passPlan,
+          transform: currentTransform,
+          operatorName: 'Operator'
+        });
+        job.productionStatus = 'Completed';
+        job.proofStatus = proofStatus;
+        job.completedQuantity = currentAlloc.expectedPacks;
+        job.exportedFiles = files.map(f => ({ name: f.filename, sizeBytes: f.blob.size, type: f.blob.type }));
+        await db.printJobs.put(job);
+
+        await db.auditLogs.put({
+          id: `audit_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+          timestamp: new Date().toISOString(),
+          action: 'PRINT_JOB_EXPORT_ZIP',
+          details: `Exported production ZIP package ${jobCode} for batch ${currentBatch.id} (${currentAlloc.packSize}). Immutable snapshot recorded.`,
+          user: 'Operator',
+          undoable: false
+        });
+
+        onMarkPrinted(currentBatch.id, currentAlloc.id, currentAlloc.expectedPacks);
+      }
+
+      setExportCompleteMsg('Production ZIP package generated successfully with INDEX.TXT manifest. Snapshot persisted in History.');
     } catch (err) {
       console.error(err);
     } finally {
@@ -426,6 +503,24 @@ export const PrintView: React.FC<PrintViewProps> = ({
       setExportCompleteMsg('❌ Transmission blocked: Missing authorized MRP.');
       return;
     }
+
+    if (currentProduct && currentBatch && currentAlloc) {
+      const currentSku = skus.find(s => s.productId === currentProduct.id && s.packSize.toLowerCase() === currentAlloc.packSize.toLowerCase());
+      const preflight = runPreflightCheck({
+        product: currentProduct,
+        sku: currentSku || null,
+        batch: currentBatch,
+        allocation: currentAlloc,
+        template: activeTemplate,
+        machine,
+        packProfile
+      });
+      if (!preflight.passed) {
+        setExportCompleteMsg(`❌ Direct transmission blocked: ${preflight.blockers[0]}`);
+        return;
+      }
+    }
+
     setIsTransmitting(true);
     try {
       const canvas = renderTemplateToCanvas(activeTemplate, machine, values, {
@@ -437,8 +532,45 @@ export const PrintView: React.FC<PrintViewProps> = ({
         hardwareManager.setNetworkConfig({ ip: networkIp, port: networkPort });
       }
 
-      const res = await hardwareManager.dispatchPrintJob(transportType, bmpBlob);
+      const jobCode = currentBatch && currentAlloc
+        ? `JOB-${currentBatch.id}-${currentAlloc.packSize.replace(/\s+/g, '').toUpperCase()}-${Date.now().toString().slice(-4)}`
+        : `JOB-DIRECT-${Date.now().toString().slice(-4)}`;
+
+      const res = await hardwareManager.dispatchPrintJob(transportType, bmpBlob, jobCode);
       setExportCompleteMsg(res.message);
+
+      if (res.success && currentProduct && currentBatch && currentAlloc) {
+        const job = createImmutablePrintJobSnapshot({
+          jobCode,
+          businessName: 'ADALAJ Organics & Packaging',
+          brandName: 'ADALAJ',
+          product: currentProduct,
+          allocation: currentAlloc,
+          batch: currentBatch,
+          template: activeTemplate,
+          machine,
+          packProfile,
+          values,
+          passPlan,
+          transform: currentTransform,
+          operatorName: 'Operator'
+        });
+        job.productionStatus = 'Completed';
+        job.proofStatus = proofStatus;
+        job.completedQuantity = currentAlloc.expectedPacks;
+        await db.printJobs.put(job);
+
+        await db.auditLogs.put({
+          id: `audit_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+          timestamp: new Date().toISOString(),
+          action: 'PRINT_JOB_HARDWARE_TRANSMIT',
+          details: `Transmitted print job ${jobCode} via ${transportType} (${res.bytesWritten} bytes).`,
+          user: 'Operator',
+          undoable: false
+        });
+
+        onMarkPrinted(currentBatch.id, currentAlloc.id, currentAlloc.expectedPacks);
+      }
     } catch (err: any) {
       console.error(err);
     } finally {
@@ -446,10 +578,34 @@ export const PrintView: React.FC<PrintViewProps> = ({
     }
   };
 
-  const handleMarkAsPrinted = () => {
+  const handleMarkAsPrinted = async () => {
     if (!currentBatch || !currentAlloc) return;
     onMarkPrinted(currentBatch.id, currentAlloc.id, currentAlloc.expectedPacks);
     setProofStatus('Production Ready');
+
+    if (currentProduct) {
+      const jobCode = `JOB-${currentBatch.id}-${currentAlloc.packSize.replace(/\s+/g, '').toUpperCase()}-${Date.now().toString().slice(-4)}`;
+      const job = createImmutablePrintJobSnapshot({
+        jobCode,
+        businessName: 'ADALAJ Organics & Packaging',
+        brandName: 'ADALAJ',
+        product: currentProduct,
+        allocation: currentAlloc,
+        batch: currentBatch,
+        template: activeTemplate,
+        machine,
+        packProfile,
+        values,
+        passPlan,
+        transform: currentTransform,
+        operatorName: 'Operator'
+      });
+      job.productionStatus = 'Completed';
+      job.proofStatus = 'Production Ready';
+      job.completedQuantity = currentAlloc.expectedPacks;
+      await db.printJobs.put(job);
+    }
+    setExportCompleteMsg(`✓ Allocation ${currentAlloc.packSize} marked printed (${currentAlloc.expectedPacks} packs). Snapshot saved in History.`);
   };
 
   return (
@@ -481,6 +637,27 @@ export const PrintView: React.FC<PrintViewProps> = ({
           </select>
         </div>
       </div>
+
+      {reprintJob && (
+        <div className="p-4 rounded-xl bg-amber-950/60 border border-amber-500/80 text-amber-200 text-xs flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-lg">
+          <div className="flex items-center gap-2">
+            <span className="px-2 py-0.5 rounded text-[10px] uppercase font-bold bg-amber-500 text-black">
+              Exact Historical Snapshot
+            </span>
+            <span>
+              Reproducing Job <strong>{reprintJob.jobCode}</strong> (Batch {reprintJob.batchId}, {reprintJob.skuSize}) from {new Date(reprintJob.createdAt).toLocaleString()}. Active template edits are locked.
+            </span>
+          </div>
+          {onClearReprint && (
+            <button
+              onClick={onClearReprint}
+              className="px-3 py-1 bg-zinc-900 hover:bg-zinc-800 text-amber-300 border border-amber-500/50 rounded font-semibold text-xs whitespace-nowrap"
+            >
+              Exit Reprint Mode
+            </button>
+          )}
+        </div>
+      )}
 
       {exportCompleteMsg && (
         <div className="p-3 rounded-xl bg-emerald-950/40 border border-emerald-500/50 text-emerald-200 text-xs flex items-center justify-between">

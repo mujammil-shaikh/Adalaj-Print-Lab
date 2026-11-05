@@ -16,7 +16,8 @@ import type {
   Template, 
   Batch, 
   AuditLogEntry,
-  DesignScope
+  DesignScope,
+  PrintJob
 } from './types';
 import { 
   resolveLayout, 
@@ -83,6 +84,7 @@ export default function App() {
   const [activePackProfile, setActivePackProfile] = useState<PackProfile | null>(null);
   const [activeTemplate, setActiveTemplate] = useState<Template | null>(null);
   const [printAllocId, setPrintAllocId] = useState<string>('');
+  const [reprintJob, setReprintJob] = useState<PrintJob | null>(null);
 
   // Initialize DB and load all data
   const loadDatabase = useCallback(async () => {
@@ -719,6 +721,8 @@ export default function App() {
               template={resolvedPrintTmpl || activeTemplate || templates[0]}
               machine={activeMachine || machines[0]}
               packProfile={activePackProfile || packProfiles[0]}
+              reprintJob={reprintJob}
+              onClearReprint={() => setReprintJob(null)}
               onMarkPrinted={handleMarkPrinted}
               onUpdateTemplate={t => {
                 setActiveTemplate(t);
@@ -733,8 +737,21 @@ export default function App() {
             batches={batches}
             auditLogs={auditLogs}
             products={products}
+            onReprintJob={job => {
+              setReprintJob(job);
+              const b = batches.find(bat => bat.id === job.batchId);
+              if (b) {
+                setActiveBatch(b);
+                const p = products.find(prod => prod.id === b.productId);
+                if (p) setActiveProduct(p);
+              }
+              setCurrentRoute('print');
+            }}
             onReprintBatch={b => {
+              setReprintJob(null);
               setActiveBatch(b);
+              const p = products.find(prod => prod.id === b.productId);
+              if (p) setActiveProduct(p);
               setCurrentRoute('print');
             }}
             onDuplicateBatch={b => {

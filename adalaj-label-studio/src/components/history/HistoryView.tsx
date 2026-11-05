@@ -3,7 +3,7 @@
  * Searchable production archive, reproducible historical reprints, and transaction audit trails
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   History as HistoryIcon, 
   Search, 
@@ -14,15 +14,19 @@ import {
   Clock, 
   ShieldCheck,
   Calendar,
-  Layers
+  Layers,
+  Filter
 } from 'lucide-react';
-import type { Batch, AuditLogEntry, Product } from '../../types';
+import type { Batch, AuditLogEntry, Product, PrintJob } from '../../types';
+import { db } from '../../services/db';
 
 interface HistoryViewProps {
   batches: Batch[];
   auditLogs: AuditLogEntry[];
   products: Product[];
+  printJobs?: PrintJob[];
   onReprintBatch: (b: Batch) => void;
+  onReprintJob?: (job: PrintJob) => void;
   onDuplicateBatch: (b: Batch) => void;
 }
 
@@ -30,15 +34,36 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
   batches,
   auditLogs,
   products,
+  printJobs: propPrintJobs,
   onReprintBatch,
+  onReprintJob,
   onDuplicateBatch
 }) => {
-  const [tab, setTab] = useState<'batches' | 'audit'>('batches');
+  const [tab, setTab] = useState<'jobs' | 'batches' | 'audit'>('jobs');
+  const [statusFilter, setStatusFilter] = useState<'All' | 'Completed' | 'Open'>('All');
   const [search, setSearch] = useState('');
+  const [loadedJobs, setLoadedJobs] = useState<PrintJob[]>([]);
 
-  const completedBatches = batches.filter(b => b.status === 'Completed' || b.id === 'ADTP013');
+  useEffect(() => {
+    let active = true;
+    db.printJobs.reverse().toArray().then(items => {
+      if (active) setLoadedJobs(items);
+    }).catch(console.error);
+    return () => { active = false; };
+  }, [tab]);
 
-  const filteredBatches = completedBatches.filter(b => {
+  const allJobs = propPrintJobs || loadedJobs;
+
+  const filteredJobs = allJobs.filter(j => {
+    return !search ||
+      j.jobCode.toLowerCase().includes(search.toLowerCase()) ||
+      j.batchId.toLowerCase().includes(search.toLowerCase()) ||
+      j.productName.toLowerCase().includes(search.toLowerCase()) ||
+      j.skuSize.toLowerCase().includes(search.toLowerCase());
+  });
+
+  const filteredBatches = batches.filter(b => {
+    if (statusFilter !== 'All' && b.status !== statusFilter) return false;
     const prod = products.find(p => p.id === b.productId);
     return !search || 
       b.id.toLowerCase().includes(search.toLowerCase()) ||
@@ -68,12 +93,20 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
         {/* View Tabs */}
         <div className="flex rounded-lg bg-zinc-900 border border-zinc-800 p-1 text-xs font-semibold">
           <button
+            onClick={() => setTab('jobs')}
+            className={`px-3 py-1 rounded transition-colors ${
+              tab === 'jobs' ? 'bg-amber-500 text-black shadow-xs' : 'text-zinc-400 hover:text-white'
+            }`}
+          >
+            Print Jobs Archive ({allJobs.length})
+          </button>
+          <button
             onClick={() => setTab('batches')}
             className={`px-3 py-1 rounded transition-colors ${
               tab === 'batches' ? 'bg-amber-500 text-black shadow-xs' : 'text-zinc-400 hover:text-white'
             }`}
           >
-            Printed Batches ({completedBatches.length})
+            Batches ({batches.length})
           </button>
           <button
             onClick={() => setTab('audit')}
@@ -81,25 +114,123 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
               tab === 'audit' ? 'bg-amber-500 text-black shadow-xs' : 'text-zinc-400 hover:text-white'
             }`}
           >
-            System Audit Trail ({auditLogs.length})
+            Audit Trail ({auditLogs.length})
           </button>
         </div>
       </div>
 
-      {/* Search Input */}
-      <div className="p-3 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center gap-2 max-w-md">
-        <Search className="w-4 h-4 text-zinc-500" />
-        <input
-          type="text"
-          placeholder="Search by batch ID, product name, or action (/)..."
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          className="w-full bg-transparent text-xs text-zinc-200 placeholder-zinc-500 focus:outline-hidden"
-        />
+      {/* Search and Filters Toolbar */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="p-3 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center gap-2 max-w-md w-full">
+          <Search className="w-4 h-4 text-zinc-500" />
+          <input
+            type="text"
+            placeholder={tab === 'jobs' ? 'Search jobs by code, batch, product...' : 'Search by batch ID, product name, or action (/)...'}
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="w-full bg-transparent text-xs text-zinc-200 placeholder-zinc-500 focus:outline-hidden"
+          />
+        </div>
+
+        {tab === 'batches' && (
+          <div className="flex items-center gap-2 text-xs">
+            <Filter className="w-3.5 h-3.5 text-zinc-400" />
+            <span className="text-zinc-400">Status:</span>
+            <div className="flex rounded-lg bg-zinc-900 border border-zinc-800 p-0.5">
+              {(['All', 'Completed', 'Open'] as const).map(st => (
+                <button
+                  key={st}
+                  onClick={() => setStatusFilter(st)}
+                  className={`px-2.5 py-1 rounded text-xs font-semibold ${
+                    statusFilter === st ? 'bg-amber-500 text-black' : 'text-zinc-400 hover:text-white'
+                  }`}
+                >
+                  {st}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Main Content */}
-      {tab === 'batches' ? (
+      {tab === 'jobs' ? (
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900 overflow-hidden shadow-lg">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-zinc-950 text-zinc-400 uppercase font-mono text-[10px] border-b border-zinc-800">
+                <tr>
+                  <th className="p-3">Job Code</th>
+                  <th className="p-3">Batch & SKU</th>
+                  <th className="p-3">Product</th>
+                  <th className="p-3">Target / Output</th>
+                  <th className="p-3">Machine</th>
+                  <th className="p-3">Proof Status</th>
+                  <th className="p-3">Timestamp</th>
+                  <th className="p-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-800/80">
+                {filteredJobs.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="p-8 text-center text-zinc-500 font-mono">
+                      No print jobs recorded yet. Dispatched jobs will appear here with immutable snapshots.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredJobs.map(j => (
+                    <tr key={j.id} className="hover:bg-zinc-800/40 transition-colors">
+                      <td className="p-3">
+                        <span className="font-mono font-bold text-amber-400 text-xs block">{j.jobCode}</span>
+                        <span className="text-[10px] text-zinc-500 font-mono">{j.id}</span>
+                      </td>
+                      <td className="p-3 font-mono">
+                        <span className="text-white font-bold">{j.batchId}</span>
+                        <span className="text-zinc-400 block text-[11px]">{j.skuSize}</span>
+                      </td>
+                      <td className="p-3 text-zinc-200 font-medium">{j.productName}</td>
+                      <td className="p-3 font-mono">
+                        <span className="text-emerald-400 font-bold">{j.completedQuantity}</span>
+                        <span className="text-zinc-500"> / {j.quantityPacks} packs</span>
+                      </td>
+                      <td className="p-3 text-zinc-300 font-mono text-[11px]">{j.machineName}</td>
+                      <td className="p-3">
+                        <span className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold ${
+                          j.proofStatus === 'Production Ready'
+                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                            : 'bg-zinc-800 text-zinc-400'
+                        }`}>
+                          {j.proofStatus}
+                        </span>
+                      </td>
+                      <td className="p-3 text-zinc-400 font-mono text-[11px]">
+                        {new Date(j.createdAt).toLocaleDateString()} {new Date(j.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </td>
+                      <td className="p-3 text-right">
+                        <button
+                          onClick={() => {
+                            if (onReprintJob) {
+                              onReprintJob(j);
+                            } else {
+                              const b = batches.find(bat => bat.id === j.batchId);
+                              if (b) onReprintBatch(b);
+                            }
+                          }}
+                          className="px-2.5 py-1 text-xs font-semibold rounded bg-amber-500 hover:bg-amber-400 text-black shadow-xs inline-flex items-center gap-1"
+                          title="Reprint exactly from byte-identical snapshot"
+                        >
+                          <Printer className="w-3 h-3" />
+                          Reprint Exact
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : tab === 'batches' ? (
         <div className="rounded-xl border border-zinc-800 bg-zinc-900 overflow-hidden shadow-lg">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
@@ -110,6 +241,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                   <th className="p-3">Raw kg</th>
                   <th className="p-3">Allocations</th>
                   <th className="p-3">Packs Printed</th>
+                  <th className="p-3">Status</th>
                   <th className="p-3">Production Date</th>
                   <th className="p-3 text-right">Actions</th>
                 </tr>
@@ -137,15 +269,24 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                       <td className="p-3 font-mono font-bold text-emerald-400">
                         {totalPrinted} packs
                       </td>
+                      <td className="p-3">
+                        <span className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold ${
+                          b.status === 'Completed'
+                            ? 'bg-emerald-500/20 text-emerald-400'
+                            : 'bg-amber-500/20 text-amber-400'
+                        }`}>
+                          {b.status}
+                        </span>
+                      </td>
                       <td className="p-3 font-mono text-zinc-400">{b.lotDate}</td>
                       <td className="p-3 text-right space-x-2">
                         <button
                           onClick={() => onReprintBatch(b)}
                           className="px-2.5 py-1 text-xs font-semibold rounded bg-amber-500 hover:bg-amber-400 text-black shadow-xs inline-flex items-center gap-1"
-                          title="Reprint exactly with original immutable snapshot"
+                          title="Reprint batch allocations"
                         >
                           <Printer className="w-3 h-3" />
-                          Reprint Exact
+                          Reprint
                         </button>
                         <button
                           onClick={() => onDuplicateBatch(b)}
