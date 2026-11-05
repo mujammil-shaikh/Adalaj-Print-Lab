@@ -1,7 +1,7 @@
-# Adalaj Label Studio — 1,000 Production Scenarios & User Stories Master Taxonomy
+# Adalaj Print Lab — 1,000 Production Scenarios & User Stories Master Taxonomy
 
 **Date:** 5 November 2026  
-**Audited Target:** `https://adalaj-label-studio.vercel.app` & `src/`  
+**Audited Target:** `https://adalaj-print-lab.vercel.app` & `src/`  
 **Total Target Scenarios:** 1,000 Exhaustive Scenarios Across 10 Volumes  
 **Framework Coverage:** Simple, Medium, Complex & Edge Cases across All Pages, Modals, Hardware, and Domain Logic.
 

@@ -61,7 +61,7 @@ export const PWAInstallButton: React.FC = () => {
     return (
       <button
         onClick={handleInstallClick}
-        aria-label="Install ADALAJ Label Studio application"
+        aria-label="Install Adalaj Print Lab application"
         className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded bg-amber-500 hover:bg-amber-400 text-black transition-colors focus:ring-2 focus:ring-amber-300"
       >
         <Download className="w-3.5 h-3.5" />

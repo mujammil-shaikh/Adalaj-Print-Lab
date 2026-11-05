@@ -1,7 +1,7 @@
 # Volume 03 — Batch Planning & Mass Balance (Scenarios 201 – 300)
 
 **Domain:** Batch Planning Wizard, Auto-Sequential Batch Codes, Mass Balance Engine, Raw Material Lots, Expiry Date Math (Clamped Anniversary Minus 1 Day), Status Lifecycle  
-**Target:** `https://adalaj-label-studio.vercel.app` & `src/components/batches/BatchesView.tsx`, `src/utils/dateCalculations.ts`, `src/types/`
+**Target:** `https://adalaj-print-lab.vercel.app` & `src/components/batches/BatchesView.tsx`, `src/utils/dateCalculations.ts`, `src/types/`
 
 ---
 

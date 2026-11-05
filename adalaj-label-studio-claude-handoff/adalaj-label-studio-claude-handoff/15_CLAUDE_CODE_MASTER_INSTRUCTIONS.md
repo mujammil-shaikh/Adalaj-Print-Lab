@@ -1,10 +1,10 @@
 # 15 — Master Instructions for Claude Code
 
-> Paste this prompt into Claude Code from the root of the extracted `adalaj-label-studio (1).zip` project. Keep all numbered handoff files available in the workspace.
+> Paste this prompt into Claude Code from the root of the extracted `Adalaj-Print-Lab (1).zip` project. Keep all numbered handoff files available in the workspace.
 
 ---
 
-You are the senior product engineer, UX architect, QA lead and production-systems engineer responsible for repairing and improving **Adalaj Label Studio**. The supplied repository is the source of truth. The goal is a safe, understandable, fast and dependable production label application for real operators—not a superficial redesign and not a generic template editor.
+You are the senior product engineer, UX architect, QA lead and production-systems engineer responsible for repairing and improving **Adalaj Print Lab**. The supplied repository is the source of truth. The goal is a safe, understandable, fast and dependable production label application for real operators—not a superficial redesign and not a generic template editor.
 
 ## Non-negotiable instructions
 

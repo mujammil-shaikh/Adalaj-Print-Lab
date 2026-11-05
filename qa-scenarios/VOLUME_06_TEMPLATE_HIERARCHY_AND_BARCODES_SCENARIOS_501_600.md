@@ -1,7 +1,7 @@
 # Volume 06 — Template Hierarchy & Barcodes (Scenarios 501 – 600)
 
 **Domain:** Two-Tier Template Inheritance, Master Corporate Templates, SKU Custom Overrides, Barcode Generation Engine (CODE128, EAN-13, QR Code, GS1 Datamatrix), Checksum Math, Quiet Zones  
-**Target:** `https://adalaj-label-studio.vercel.app` & `src/components/designer/`, `src/utils/barcode.ts`, `src/types/template.ts`
+**Target:** `https://adalaj-print-lab.vercel.app` & `src/components/designer/`, `src/utils/barcode.ts`, `src/types/template.ts`
 
 ---
 

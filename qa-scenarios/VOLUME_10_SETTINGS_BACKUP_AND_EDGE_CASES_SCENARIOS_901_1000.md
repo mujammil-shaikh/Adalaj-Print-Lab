@@ -1,7 +1,7 @@
 # Volume 10 — Settings, Backup & Cross-Viewport Edge Cases (Scenarios 901 – 1000)
 
 **Domain:** Settings Engine, Machine Profile Configuration, Keyboard Shortcuts & Chords, V2 Full System Backup/Restore, Viewport Responsiveness (375px Mobile, 768px Tablet, 1920px Desktop), Internationalization & Edge Cases  
-**Target:** `https://adalaj-label-studio.vercel.app` & `src/components/settings/SettingsView.tsx`, `src/types/machine.ts`, `src/services/backupV2.ts`
+**Target:** `https://adalaj-print-lab.vercel.app` & `src/components/settings/SettingsView.tsx`, `src/types/machine.ts`, `src/services/backupV2.ts`
 
 ---
 
@@ -106,13 +106,13 @@
 | SCN-981 | Complex | QAC | Special Characters in Batch Code (`AD-TP/2026#01-A`) | Enter complex batch ID | Render barcode and text | Text renders accurately; barcode encodes supported alphanumeric chars without breaking. | Verified |
 | SCN-982 | Medium | QAC | Non-ASCII / Regional Script Product Names | Product name: "हल्दी पाउडर (Haldi Powder)" | View label canvas | UTF-8 rendering displays Hindi Devanagari script crisply on canvas. | Verified |
 | SCN-983 | Simple | MNT | Offline Service Worker Operation | Disconnect Wi-Fi completely | Navigate through all 7 views | PWA Service Worker serves all assets from cache; app operates 100% offline! | Verified |
-| SCN-984 | Simple | MNT | PWA Install Prompt (Add to Desktop) | Browser PWA indicator | Click "Install ADALAJ Studio" | Installs as standalone desktop application with custom icon and window chrome. | Verified |
+| SCN-984 | Simple | MNT | PWA Install Prompt (Add to Desktop) | Browser PWA indicator | Click "Install Adalaj Print Lab" | Installs as standalone desktop application with custom icon and window chrome. | Verified |
 | SCN-985 | Simple | OPR | Standalone Desktop Window Operation | Launch installed PWA | Use application | Runs in clean borderless window without browser address bar or tabs. | Verified |
 | SCN-986 | Medium | MNT | Service Worker Auto-Update | Deploy new Vercel version | Background worker check | Detects new version; displays subtle toast: "Update available. Click to reload." | Verified |
 | SCN-987 | Simple | MNT | Service Worker Update Reload | Click "Update & Reload" | Browser reloads | Immediately activates new service worker and loads fresh assets. | Verified |
 | SCN-988 | Complex | MNT | IndexedDB Storage Quota Warning | Storage exceeds 80% quota | System health check | Alerts administrator with storage usage bar and cleanup options. | Verified |
 | SCN-989 | Simple | OPR | Browser Back / Forward History Integration | Navigate Home -> Products -> Batches | Click browser "Back" button | Navigates to Products view cleanly with state preserved. | Verified |
-| SCN-990 | Simple | OPR | Deep Linking to Specific View | Direct URL `https://adalaj-label-studio.vercel.app/print` | Load page directly | Deep link routes straight to Print Center without redirecting to Home. | Verified |
+| SCN-990 | Simple | OPR | Deep Linking to Specific View | Direct URL `https://adalaj-print-lab.vercel.app/print` | Load page directly | Deep link routes straight to Print Center without redirecting to Home. | Verified |
 | SCN-991 | Medium | PLN | Concurrent Tab Conflict Protection | Edit product in Tab 1 and Tab 2 | Save Tab 1 then Tab 2 | IndexedDB version stamps detect out-of-order writes and prompt user to refresh. | Verified |
 | SCN-992 | Simple | OPR | Form Input Autofill Suppression | Credit card / address inputs | Check HTML attributes | Forms declare `autocomplete="off"` to prevent inappropriate browser autofill popups on factory terminals. | Verified |
 | SCN-993 | Simple | QAC | Color Blind Accessibility (Protanopia / Deuteranopia) | Inspect status badges | View with colorblind filter | All statuses rely on text labels and icons, NOT color alone! | Verified |

@@ -1,6 +1,6 @@
 # 18 — Cross-Page Workflow Logic & Operator UX Audit
 
-**Audit target:** `adalaj-label-studio (1).zip` — extracted React/Vite source  
+**Audit target:** `Adalaj-Print-Lab (1).zip` — extracted React/Vite source  
 **Audit date:** 4 November 2026  
 **Purpose:** identify failures that only become visible when an actual operator moves across pages and performs a complete job. This supplements the page-by-page audit. It is not a claim that a physical printer has been tested.
 

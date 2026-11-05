@@ -171,7 +171,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
             <span className="text-xs text-zinc-400 font-mono">Any surface • Any printer • Physical mm precision</span>
           </div>
           <h2 className="text-xl md:text-2xl font-black text-white tracking-tight">
-            ADALAJ Production Label Studio
+            ADALAJ Print Lab
           </h2>
           <p className="text-xs text-zinc-300 max-w-2xl leading-relaxed">
             High-precision, keyboard-first label design and print management. Configured for <strong>{machineName}</strong> ({machineTech}, {machineHead} mm head, usable {machineBand} mm band @ {machineDpi} DPI).

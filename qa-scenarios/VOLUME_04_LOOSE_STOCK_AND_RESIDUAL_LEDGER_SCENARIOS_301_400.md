@@ -1,7 +1,7 @@
 # Volume 04 — Loose Stock & Residual Ledger (Scenarios 301 – 400)
 
 **Domain:** Residual Material Policy, Loose Stock Inventory Ledger, Container & Bin IDs, Raw Lot Traceability, Scrap Thresholds, Allocation Draw, Zero Double-Counting  
-**Target:** `https://adalaj-label-studio.vercel.app` & `src/components/batches/`, `src/types/`, `src/db/`
+**Target:** `https://adalaj-print-lab.vercel.app` & `src/components/batches/`, `src/types/`, `src/db/`
 
 ---
 

@@ -1,5 +1,5 @@
 {
-  "name": "ADALAJ Label Studio",
+  "name": "Adalaj Print Lab",
   "description": "Keyboard-first, measurement-driven, machine-agnostic universal label design and print management platform.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

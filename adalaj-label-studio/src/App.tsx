@@ -1,5 +1,5 @@
 /**
- * ADALAJ Label Studio - Universal Print Management Application Root
+ * Adalaj Print Lab - Universal Print Management Application Root
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -711,7 +711,7 @@ export default function App() {
         <div className="w-12 h-12 rounded-xl bg-amber-500 text-black font-black flex items-center justify-center text-lg shadow-lg animate-pulse">
           AD
         </div>
-        <div className="text-sm font-bold text-zinc-200">Loading ADALAJ Label Studio...</div>
+        <div className="text-sm font-bold text-zinc-200">Loading Adalaj Print Lab...</div>
         <div className="text-xs text-zinc-500 font-mono">Initializing local-first database and hardware engine</div>
       </div>
     );

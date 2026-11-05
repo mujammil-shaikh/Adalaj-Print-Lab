@@ -14,9 +14,9 @@ export default defineConfig(() => {
         includeAssets: ['icon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png'],
         manifest: {
           id: '/',
-          name: 'ADALAJ Label Studio',
-          short_name: 'ADALAJ',
-          description: 'Keyboard-first, measurement-driven, machine-agnostic universal label design and print management platform.',
+          name: 'Adalaj Print Lab',
+          short_name: 'AdalajPrintLab',
+          description: 'Adalaj Print Lab - Universal Packaging & Marking Studio',
           theme_color: '#18181b',
           background_color: '#18181b',
           display: 'standalone',

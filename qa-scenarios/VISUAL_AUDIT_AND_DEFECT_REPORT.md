@@ -1,7 +1,7 @@
 # Comprehensive Visual QA Audit & Defect Report
 
-**App URL:** `https://adalaj-label-studio.vercel.app`  
-**GitHub Repository:** `https://github.com/mujammil-shaikh/adalaj-label-studio`  
+**App URL:** `https://adalaj-print-lab.vercel.app`  
+**GitHub Repository:** `https://github.com/mujammil-shaikh/Adalaj-Print-Lab`  
 **Audit Date:** 05-Nov-2026  
 **Auditor:** Antigravity Autonomous Visual QA Agent  
 **Inspection Tool:** Chrome DevTools Protocol (`chrome-devtools-mcp`)  

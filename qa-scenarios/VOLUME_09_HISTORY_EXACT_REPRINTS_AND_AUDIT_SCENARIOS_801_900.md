@@ -1,7 +1,7 @@
 # Volume 09 — History, Reprints & Audit Trail (Scenarios 801 – 900)
 
 **Domain:** Historical Audit Trail, Exact Cryptographic Snapshot Reprints (Zero Date Regeneration), Dynamic Batch/SKU Filters, Void/Waste Reconciliation, CSV/JSON Exports, Regulatory Audit Compliance  
-**Target:** `https://adalaj-label-studio.vercel.app` & `src/components/history/HistoryView.tsx`, `src/types/printJob.ts`, `src/db/`
+**Target:** `https://adalaj-print-lab.vercel.app` & `src/components/history/HistoryView.tsx`, `src/types/printJob.ts`, `src/db/`
 
 ---
 

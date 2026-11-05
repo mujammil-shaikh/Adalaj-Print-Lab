@@ -4,7 +4,7 @@ Paste this prompt into Claude Code before making broad UI changes.
 
 ---
 
-You are working on the real Adalaj Label Studio repository. Read all Markdown files in this handoff, especially:
+You are working on the real Adalaj Print Lab repository. Read all Markdown files in this handoff, especially:
 
 - `00_MASTER_INDEX_AND_HOW_TO_USE.md`
 - `02_PRODUCT_BLUEPRINT_AND_OPERATOR_WORKFLOWS.md`

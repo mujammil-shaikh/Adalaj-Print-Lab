@@ -19,7 +19,7 @@ export const GuidedTour: React.FC<GuidedTourProps> = ({ isOpen, onClose, onNavig
 
   const steps = [
     {
-      title: 'Welcome to ADALAJ Label Studio',
+      title: 'Welcome to Adalaj Print Lab',
       route: 'home',
       content: 'A keyboard-first, measurement-driven, machine-agnostic print and marking platform. Built for any packaging, direct-product marking, and any printer technology (TIJ, CIJ, Laser, Thermal).',
       tip: 'Press Alt+1 through Alt+7 at any time to instantly switch between workspaces.'

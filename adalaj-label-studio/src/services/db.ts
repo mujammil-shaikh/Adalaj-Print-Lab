@@ -659,7 +659,7 @@ async function doInitializeDatabase() {
       id: 'audit_init',
       timestamp: new Date().toISOString(),
       action: 'SYSTEM_INIT',
-      details: 'ADALAJ Label Studio database initialized with seed catalog, loose stock ledger, and historical batch ADTP013.',
+      details: 'Adalaj Print Lab database initialized with seed catalog, loose stock ledger, and historical batch ADTP013.',
       user: 'System',
       undoable: false
     });

@@ -1,7 +1,7 @@
 # Volume 08 — Hardware Dispatch & Local Agent (Scenarios 701 – 800)
 
 **Domain:** Hardware Dispatch Architecture, Local Print Agent (HTTP/WebSocket on Port 9123), Native Raw TCP Sockets (Port 9100), WebUSB Direct, Web Bluetooth, Offline Job Spooler, Dispatch Acknowledgements  
-**Target:** `https://adalaj-label-studio.vercel.app` & `src/services/printDispatcher.ts`, `src/services/localAgent.ts`, `src/types/printJob.ts`
+**Target:** `https://adalaj-print-lab.vercel.app` & `src/services/printDispatcher.ts`, `src/services/localAgent.ts`, `src/types/printJob.ts`
 
 ---
 
@@ -13,7 +13,7 @@
 | SCN-702 | Simple | MNT | Agent Offline Banner & Retry | Agent service stopped | Observe indicator | Red banner: "Local Print Agent Offline. Native TCP printing unavailable." with "Retry" button. | Verified |
 | SCN-703 | Medium | MNT | Auto-reconnect Polling | Agent offline | Restart local Windows background service | Browser agent client auto-reconnects within 3 seconds without manual page refresh. | Verified |
 | SCN-704 | Complex | MNT | Agent Pairing & Token Authentication | Fresh installation | Click "Pair Agent", enter pairing token | Saves secure session token in IndexedDB; establishes authenticated WebSocket connection. | Verified |
-| SCN-705 | Complex | MNT | Reject Untrusted Agent Origin | Malicious site attempts connection | Agent inspects HTTP `Origin` header | Agent blocks connection; allows requests only from `https://adalaj-label-studio.vercel.app` or `http://localhost:5173`. | Verified |
+| SCN-705 | Complex | MNT | Reject Untrusted Agent Origin | Malicious site attempts connection | Agent inspects HTTP `Origin` header | Agent blocks connection; allows requests only from `https://adalaj-print-lab.vercel.app` or `http://localhost:5173`. | Verified |
 | SCN-706 | Simple | MNT | Agent Diagnostics Modal | Click Agent Status indicator | Modal opens | Displays: Agent Version, Uptime, Paired Machines, Socket Buffer Status, Active Listeners. | Verified |
 | SCN-707 | Medium | MNT | Agent Ping Latency Monitor | Diagnostics modal open | Observe ping indicator | Displays real-time roundtrip ping latency (e.g. `2 ms (Localhost)`). | Verified |
 | SCN-708 | Complex | MNT | Agent Allowed IP / Port Whitelist | Agent config file | Verify restricted printer IPs | Confirms agent only opens sockets to whitelisted LAN subnet (e.g. `192.168.1.0/24:9100`). | Verified |

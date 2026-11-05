@@ -1,5 +1,5 @@
 /**
- * ADALAJ Label Studio - Two-Tier Layout Registry & Inheritance Engine
+ * Adalaj Print Lab - Two-Tier Layout Registry & Inheritance Engine
  *
  * Tier 1: General Pack Size Default (e.g. all 100g packages across all products)
  * Tier 2: Product / SKU Specific Override (e.g. Turmeric 500g specific tweak)

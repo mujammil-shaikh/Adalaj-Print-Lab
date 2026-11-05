@@ -1,7 +1,7 @@
 # Volume 01 — Home & Shell Navigation (Scenarios 001 – 100)
 
 **Domain:** Home Dashboard, Global App Shell, Navigation Shortcuts, Live Preview Sync, Preflight Readiness, Command Palette, Tour  
-**Target:** `https://adalaj-label-studio.vercel.app` & `src/components/home/HomeView.tsx`, `src/components/shell/`
+**Target:** `https://adalaj-print-lab.vercel.app` & `src/components/home/HomeView.tsx`, `src/components/shell/`
 
 ---
 
@@ -9,8 +9,8 @@
 
 | ID | Tier | Persona | User Story / Intent | Preconditions | Action Steps | Expected Visual & Logical Outcome | Status |
 |---|---|---|---|---|---|---|---|
-| SCN-001 | Simple | OPR | Initial app launch | First visit, empty cache | Open `https://adalaj-label-studio.vercel.app` | Splash screen with animated "AD" pulse displays, IndexedDB initializes, redirects cleanly to Home. | Verified |
-| SCN-002 | Simple | OPR | View default header banner | App loaded | Observe top header bar | Header displays "ADALAJ Studio", active product "Turmeric Powder", and active batch "ADTP013". | Verified |
+| SCN-001 | Simple | OPR | Initial app launch | First visit, empty cache | Open `https://adalaj-print-lab.vercel.app` | Splash screen with animated "AD" pulse displays, IndexedDB initializes, redirects cleanly to Home. | Verified |
+| SCN-002 | Simple | OPR | View default header banner | App loaded | Observe top header bar | Header displays "Adalaj Print Lab", active product "Turmeric Powder", and active batch "ADTP013". | Verified |
 | SCN-003 | Simple | OPR | Verify machine profile tag | App loaded | Check machine specs in Home hero | Displays active machine name, technology (TIJ Inkjet / Laser), head width, usable band, and DPI. | Verified |
 | SCN-004 | Simple | OPR | Navigate via Top Nav buttons | On Home | Click "Products & SKUs" button in header | Route updates to `/products`, nav button gains active amber indicator, Products view renders. | Verified |
 | SCN-005 | Simple | OPR | Navigate to Batches via Nav | On Products | Click "Batches" button in header | Route updates to `/batches`, active batch ADTP013 is selected, allocation list renders. | Verified |
@@ -114,10 +114,10 @@
 | SCN-082 | Simple | OPR | Scroll performance on Home | Home page loaded | Rapidly scroll up and down | Smooth 60fps scrolling with zero stuttering or canvas redraw lag. | Verified |
 | SCN-083 | Complex | MNT | Rapid theme toggling stress test | On Home | Press `Alt+T` 10 times rapidly | State transitions cleanly without flickering or CSS variable race conditions. | Verified |
 | SCN-084 | Complex | MNT | Rapid modal open/close stress | On Home | Press `Ctrl+K` then `Escape` repeatedly | Overlays open and close smoothly without phantom focus traps. | Verified |
-| SCN-085 | Medium | OPR | PWA Install prompt availability | Browser supports PWA | Observe browser address bar | "Install ADALAJ Studio" icon appears in supported browsers. | Verified |
+| SCN-085 | Medium | OPR | PWA Install prompt availability | Browser supports PWA | Observe browser address bar | "Install Adalaj Print Lab" icon appears in supported browsers. | Verified |
 | SCN-086 | Complex | MNT | Memory leak audit on Home view | Chrome DevTools Memory | Mount/unmount Home 20 times | Heap snapshot reveals zero detached DOM nodes or uncleared timers. | Verified |
 | SCN-087 | Simple | OPR | Favicon and app icon check | App open | Check browser tab icon | Crisp ADALAJ SVG favicon rendered in tab. | Verified |
-| SCN-088 | Simple | OPR | Title tag reflects page state | Navigate between pages | Observe document title | Shows "ADALAJ Label Studio" consistently across pages. | Verified |
+| SCN-088 | Simple | OPR | Title tag reflects page state | Navigate between pages | Observe document title | Shows "Adalaj Print Lab" consistently across pages. | Verified |
 | SCN-089 | Medium | OPR | Keyboard focus outline visibility | Navigate using Tab key | Press `Tab` through interactive elements | High-contrast amber focus rings clearly identify active element. | Verified |
 | SCN-090 | Medium | OPR | Skip to main content link | Initial tab on page | Press `Tab` on first focus | "Skip to main content" link appears and jumps to `<main>` container. | Verified |
 | SCN-091 | Complex | QAC | Currency symbol configuration | Settings currency set to '$' | Return to Home preview | M.R.P. reflects configured currency symbol cleanly. | Verified |

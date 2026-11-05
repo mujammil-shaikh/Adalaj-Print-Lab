@@ -622,7 +622,7 @@ export async function createExportZip(
 ): Promise<Blob> {
   const zip = new JSZip();
 
-  let indexText = `ADALAJ LABEL STUDIO - PRODUCTION EXPORT INDEX\r\n`;
+  let indexText = `ADALAJ PRINT LAB - PRODUCTION EXPORT INDEX\r\n`;
   indexText += `==============================================\r\n`;
   indexText += `BATCH ID:     ${meta.batchId}\r\n`;
   indexText += `PRODUCT:      ${meta.productName}\r\n`;

@@ -1,7 +1,7 @@
 # Volume 07 — Print Center Preflight & Proofing (Scenarios 601 – 700)
 
 **Domain:** Print Center, Mandatory Preflight Validation Gates (Missing MRP, Invalid Dates, Unassigned SKU), 4-Stage Proof Approval Workflow, 1-bit Monochrome Binarizer, Live Printhead Preview, Print Speed Estimator  
-**Target:** `https://adalaj-label-studio.vercel.app` & `src/components/print/PrintView.tsx`, `src/utils/preflightValidation.ts`, `src/utils/monochromeRasterizer.ts`
+**Target:** `https://adalaj-print-lab.vercel.app` & `src/components/print/PrintView.tsx`, `src/utils/preflightValidation.ts`, `src/utils/monochromeRasterizer.ts`
 
 ---
 

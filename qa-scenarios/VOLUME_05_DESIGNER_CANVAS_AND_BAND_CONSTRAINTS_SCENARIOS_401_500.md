@@ -1,7 +1,7 @@
 # Volume 05 — Designer Canvas & Band Constraints (Scenarios 401 – 500)
 
 **Domain:** 2D Canvas Designer, 12.5 mm TIJ Nozzle Band Restrictions, Dynamic Field Tokens, Auto-Fit Text, Layer Hierarchy, Snap Grids, 1-bit Monochrome Rendering  
-**Target:** `https://adalaj-label-studio.vercel.app` & `src/components/designer/`, `src/types/template.ts`
+**Target:** `https://adalaj-print-lab.vercel.app` & `src/components/designer/`, `src/types/template.ts`
 
 ---
 

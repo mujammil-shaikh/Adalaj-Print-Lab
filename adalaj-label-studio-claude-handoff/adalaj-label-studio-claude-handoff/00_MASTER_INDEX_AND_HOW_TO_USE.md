@@ -1,6 +1,6 @@
-# Adalaj Label Studio — Complete Audit & Claude Code Implementation Handoff
+# Adalaj Print Lab — Complete Audit & Claude Code Implementation Handoff
 
-**Source archive audited:** `adalaj-label-studio (1).zip`  
+**Source archive audited:** `Adalaj-Print-Lab (1).zip`  
 **Source directory used:** extracted `adalaj-audit/`  
 **Audit date:** 4 November 2026  
 **Purpose:** turn the current codebase into a dependable, operator-friendly production label authoring, job preparation, and print-control application.

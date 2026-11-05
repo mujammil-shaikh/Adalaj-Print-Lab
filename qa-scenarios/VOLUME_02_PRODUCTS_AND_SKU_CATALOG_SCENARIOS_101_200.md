@@ -1,7 +1,7 @@
 # Volume 02 — Products & SKU Catalog (Scenarios 101 – 200)
 
 **Domain:** Products Master Data, SKU Matrix, Allowed Pack Sizes, Inline MRP Authorizations, Unit Rate Calculations, Bulk Updates, Commercial Truth  
-**Target:** `https://adalaj-label-studio.vercel.app` & `src/components/products/ProductsView.tsx`, `src/types/`
+**Target:** `https://adalaj-print-lab.vercel.app` & `src/components/products/ProductsView.tsx`, `src/types/`
 
 ---
 

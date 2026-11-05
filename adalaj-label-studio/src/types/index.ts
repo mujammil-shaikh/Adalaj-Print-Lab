@@ -1,5 +1,5 @@
 /**
- * ADALAJ Label Studio - Universal Core Domain Types
+ * Adalaj Print Lab - Universal Core Domain Types
  */
 
 export type TravelDirection = 'Vertical' | 'Horizontal';
