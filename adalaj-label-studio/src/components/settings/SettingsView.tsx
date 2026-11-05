@@ -72,6 +72,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     return unsub;
   }, []);
 
+  const [editingMachine, setEditingMachine] = useState<MachineProfile | null>(null);
+  const [backupFeedback, setBackupFeedback] = useState<string | null>(null);
+
   // Screen scale calibration state
   const [calibratedMm, setCalibratedMm] = useState<number>(100);
   const [calibrationSuccess, setCalibrationSuccess] = useState(false);
@@ -138,26 +141,34 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   const handleExportBackup = async () => {
     const data = {
-      version: 1,
+      format: 'ADALAJ_LABEL_STUDIO_BACKUP' as const,
+      version: 2,
       exportedAt: new Date().toISOString(),
-      business: await db.businesses.toArray(),
-      brands: await db.brands.toArray(),
-      products: await db.products.toArray(),
-      skus: await db.skus.toArray(),
-      packProfiles: await db.packProfiles.toArray(),
-      machineProfiles: await db.machineProfiles.toArray(),
-      templates: await db.templates.toArray(),
-      batches: await db.batches.toArray(),
-      auditLogs: await db.auditLogs.toArray()
+      appVersion: '1.0.0',
+      tables: {
+        businesses: await db.businesses.toArray(),
+        brands: await db.brands.toArray(),
+        products: await db.products.toArray(),
+        skus: await db.skus.toArray(),
+        packProfiles: await db.packProfiles.toArray(),
+        machineProfiles: await db.machineProfiles.toArray(),
+        mediaProfiles: await db.mediaProfiles.toArray(),
+        templates: await db.templates.toArray(),
+        batches: await db.batches.toArray(),
+        printJobs: await db.printJobs.toArray(),
+        looseStock: await db.looseStock.toArray(),
+        auditLogs: await db.auditLogs.toArray()
+      }
     };
 
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `ADALAJ_BACKUP_${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `ADALAJ_BACKUP_V2_${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
+    setBackupFeedback(`Backup exported successfully (${Object.keys(data.tables).length} tables: ${data.tables.products.length} products, ${data.tables.batches.length} batches, ${data.tables.printJobs.length} print jobs, ${data.tables.looseStock.length} loose stock items).`);
   };
 
   const handleImportBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -168,33 +179,57 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     reader.onload = async (event) => {
       try {
         const json = JSON.parse(event.target?.result as string);
-        if (json.batches && json.products) {
-          await db.transaction('rw', [
-            db.businesses,
-            db.brands,
-            db.products,
-            db.skus,
-            db.packProfiles,
-            db.machineProfiles,
-            db.templates,
-            db.batches,
-            db.auditLogs
-          ], async () => {
-            if (json.businesses) await db.businesses.bulkPut(json.businesses);
-            if (json.brands) await db.brands.bulkPut(json.brands);
-            if (json.products) await db.products.bulkPut(json.products);
-            if (json.skus) await db.skus.bulkPut(json.skus);
-            if (json.packProfiles) await db.packProfiles.bulkPut(json.packProfiles);
-            if (json.machineProfiles) await db.machineProfiles.bulkPut(json.machineProfiles);
-            if (json.templates) await db.templates.bulkPut(json.templates);
-            if (json.batches) await db.batches.bulkPut(json.batches);
-            if (json.auditLogs) await db.auditLogs.bulkPut(json.auditLogs);
-          });
-          onRestoreBackup();
-          alert('Backup restored successfully!');
+        // Canonical v2 uses { format, version, tables: { ... } }; v1 used root keys
+        const tables = json.tables || json;
+        const businesses = tables.businesses || (tables.business ? (Array.isArray(tables.business) ? tables.business : [tables.business]) : []);
+        const brands = tables.brands || [];
+        const products = tables.products || [];
+        const skus = tables.skus || [];
+        const packProfiles = tables.packProfiles || [];
+        const machineProfiles = tables.machineProfiles || [];
+        const mediaProfiles = tables.mediaProfiles || [];
+        const templates = tables.templates || [];
+        const batches = tables.batches || [];
+        const printJobs = tables.printJobs || [];
+        const looseStock = tables.looseStock || [];
+        const auditLogs = tables.auditLogs || [];
+
+        if (!products.length && !batches.length) {
+          throw new Error('Backup file does not contain valid catalog or batch records.');
         }
-      } catch (err) {
-        alert('Invalid backup file JSON structure.');
+
+        await db.transaction('rw', [
+          db.businesses,
+          db.brands,
+          db.products,
+          db.skus,
+          db.packProfiles,
+          db.machineProfiles,
+          db.mediaProfiles,
+          db.templates,
+          db.batches,
+          db.printJobs,
+          db.looseStock,
+          db.auditLogs
+        ], async () => {
+          if (businesses.length) await db.businesses.bulkPut(businesses);
+          if (brands.length) await db.brands.bulkPut(brands);
+          if (products.length) await db.products.bulkPut(products);
+          if (skus.length) await db.skus.bulkPut(skus);
+          if (packProfiles.length) await db.packProfiles.bulkPut(packProfiles);
+          if (machineProfiles.length) await db.machineProfiles.bulkPut(machineProfiles);
+          if (mediaProfiles.length) await db.mediaProfiles.bulkPut(mediaProfiles);
+          if (templates.length) await db.templates.bulkPut(templates);
+          if (batches.length) await db.batches.bulkPut(batches);
+          if (printJobs.length) await db.printJobs.bulkPut(printJobs);
+          if (looseStock.length) await db.looseStock.bulkPut(looseStock);
+          if (auditLogs.length) await db.auditLogs.bulkPut(auditLogs);
+        });
+
+        setBackupFeedback(`✓ Backup restored: ${products.length} products, ${batches.length} batches, ${printJobs.length} print jobs, ${looseStock.length} loose stock items.`);
+        onRestoreBackup();
+      } catch (err: any) {
+        setBackupFeedback(`❌ Restore failed: ${err.message || 'Invalid backup file structure'}`);
       }
     };
     reader.readAsText(file);
@@ -287,18 +322,27 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       <p className="text-[11px] text-zinc-400">{m.manufacturer} • {m.technology}</p>
                     </div>
                   </div>
-                  {isActive ? (
-                    <span className="px-2 py-0.5 rounded text-[10px] uppercase font-bold bg-amber-500 text-black">
-                      Active
-                    </span>
-                  ) : (
+                  <div className="flex items-center gap-2">
                     <button
-                      onClick={() => onSelectMachine(m)}
-                      className="px-2.5 py-1 text-xs font-semibold rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700"
+                      onClick={() => setEditingMachine(m)}
+                      className="px-2.5 py-1 text-xs font-semibold rounded bg-zinc-800 hover:bg-zinc-700 text-amber-300 border border-zinc-700 inline-flex items-center gap-1"
                     >
-                      Make Active
+                      <Sliders className="w-3 h-3" />
+                      Edit Specs
                     </button>
-                  )}
+                    {isActive ? (
+                      <span className="px-2 py-0.5 rounded text-[10px] uppercase font-bold bg-amber-500 text-black">
+                        Active
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => onSelectMachine(m)}
+                        className="px-2.5 py-1 text-xs font-semibold rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700"
+                      >
+                        Make Active
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* Geometry Specs */}
@@ -641,10 +685,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     <div className="flex items-center gap-1">
                       <input
                         type="text"
-                        placeholder="Press key..."
+                        placeholder="Press key combo..."
                         value={capturedKey}
-                        onChange={e => setCapturedKey(e.target.value)}
-                        className="w-24 bg-zinc-950 border border-amber-500 rounded px-1.5 py-0.5 text-xs text-amber-300 font-mono"
+                        readOnly
+                        onKeyDown={e => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const parts: string[] = [];
+                          if (e.ctrlKey || e.metaKey) parts.push('Ctrl');
+                          if (e.altKey) parts.push('Alt');
+                          if (e.shiftKey) parts.push('Shift');
+                          if (e.key && !['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) {
+                            parts.push(e.key.length === 1 ? e.key.toUpperCase() : e.key);
+                          }
+                          if (parts.length > 0) {
+                            setCapturedKey(parts.join('+'));
+                          }
+                        }}
+                        className="w-32 bg-zinc-950 border border-amber-500 rounded px-2 py-0.5 text-xs text-amber-300 font-mono font-bold"
                       />
                       <button
                         onClick={() => handleAssignShortcut(action.id)}
@@ -715,6 +773,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <input type="file" accept=".json" onChange={handleImportBackup} className="hidden" />
             </label>
           </div>
+
+          {backupFeedback && (
+            <div className={`p-3 rounded-lg text-xs ${
+              backupFeedback.startsWith('✓') || backupFeedback.includes('successfully')
+                ? 'bg-emerald-950/40 border border-emerald-500/50 text-emerald-300'
+                : 'bg-rose-950/40 border border-rose-500/50 text-rose-300'
+            }`}>
+              {backupFeedback}
+            </div>
+          )}
         </div>
       )}
 
@@ -789,6 +857,144 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 className="px-4 py-2 text-xs font-bold rounded-lg bg-amber-500 hover:bg-amber-400 text-black shadow-sm"
               >
                 Save Measurements
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Edit Machine Profile (SET-01) */}
+      {editingMachine && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
+          <div className="w-full max-w-xl rounded-2xl bg-zinc-900 border-2 border-zinc-700 p-6 shadow-2xl space-y-4">
+            <div className="border-b border-zinc-800 pb-2">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <Cpu className="w-5 h-5 text-amber-400" />
+                Edit Machine Profile — {editingMachine.name}
+              </h3>
+              <p className="text-xs text-zinc-400">
+                Adjust nozzle band width, DPI, export rotation, and edge buffer constraints.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 text-xs">
+              <div>
+                <label className="text-zinc-300 font-semibold block mb-1">Machine Name</label>
+                <input
+                  type="text"
+                  value={editingMachine.name}
+                  onChange={e => setEditingMachine({ ...editingMachine, name: e.target.value })}
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-zinc-200"
+                />
+              </div>
+
+              <div>
+                <label className="text-zinc-300 font-semibold block mb-1">Manufacturer</label>
+                <input
+                  type="text"
+                  value={editingMachine.manufacturer}
+                  onChange={e => setEditingMachine({ ...editingMachine, manufacturer: e.target.value })}
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-zinc-200"
+                />
+              </div>
+
+              <div>
+                <label className="text-zinc-300 font-semibold block mb-1">Usable Print Band (mm)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={editingMachine.printBandMm}
+                  onChange={e => setEditingMachine({ ...editingMachine, printBandMm: parseFloat(e.target.value) || 0 })}
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-amber-300 font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="text-zinc-300 font-semibold block mb-1">Physical Head Width (mm)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={editingMachine.headWidthMm}
+                  onChange={e => setEditingMachine({ ...editingMachine, headWidthMm: parseFloat(e.target.value) || 0 })}
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-zinc-200"
+                />
+              </div>
+
+              <div>
+                <label className="text-zinc-300 font-semibold block mb-1">Resolution (DPI)</label>
+                <input
+                  type="number"
+                  value={editingMachine.defaultDpi}
+                  onChange={e => setEditingMachine({ ...editingMachine, defaultDpi: parseInt(e.target.value) || 300 })}
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-zinc-200"
+                />
+              </div>
+
+              <div>
+                <label className="text-zinc-300 font-semibold block mb-1">Edge Buffer (mm)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={editingMachine.edgeBufferMm}
+                  onChange={e => setEditingMachine({ ...editingMachine, edgeBufferMm: parseFloat(e.target.value) || 0 })}
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-zinc-200"
+                />
+              </div>
+
+              <div>
+                <label className="text-zinc-300 font-semibold block mb-1">Feed Origin</label>
+                <select
+                  value={editingMachine.feedOrigin}
+                  onChange={e => setEditingMachine({ ...editingMachine, feedOrigin: e.target.value as any })}
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-zinc-200"
+                >
+                  <option value="Top -> Bottom">Top &rarr; Bottom</option>
+                  <option value="Bottom -> Top">Bottom &rarr; Top</option>
+                  <option value="Left -> Right">Left &rarr; Right</option>
+                  <option value="Right -> Left">Right &rarr; Left</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-zinc-300 font-semibold block mb-1">Export Rotation (°)</label>
+                <select
+                  value={editingMachine.exportRotation}
+                  onChange={e => setEditingMachine({ ...editingMachine, exportRotation: parseInt(e.target.value) as any })}
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-zinc-200"
+                >
+                  <option value="0">0°</option>
+                  <option value="90">90°</option>
+                  <option value="180">180°</option>
+                  <option value="270">270°</option>
+                </select>
+              </div>
+
+              <div className="col-span-2">
+                <label className="text-zinc-300 font-semibold block mb-1">Operator / Hardware Notes</label>
+                <textarea
+                  rows={2}
+                  value={editingMachine.notes || ''}
+                  onChange={e => setEditingMachine({ ...editingMachine, notes: e.target.value })}
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-1.5 text-zinc-200 font-sans text-xs"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-zinc-800">
+              <button
+                onClick={() => setEditingMachine(null)}
+                className="px-3 py-1.5 text-xs font-semibold text-zinc-400 hover:text-zinc-200"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  onUpdateMachine(editingMachine);
+                  setEditingMachine(null);
+                }}
+                className="px-4 py-2 text-xs font-bold rounded-lg bg-amber-500 hover:bg-amber-400 text-black shadow-sm"
+              >
+                Save Machine Profile
               </button>
             </div>
           </div>
