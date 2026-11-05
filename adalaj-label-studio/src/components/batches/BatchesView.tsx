@@ -492,8 +492,10 @@ export const BatchesView: React.FC<BatchesViewProps> = ({
 
             <div className="grid grid-cols-2 gap-3 text-xs">
               <div>
-                <label className="font-semibold text-zinc-300 block mb-1">Product Item</label>
+                <label htmlFor="wizard-product-select" className="font-semibold text-zinc-300 block mb-1">Product Item</label>
                 <select
+                  id="wizard-product-select"
+                  name="productId"
                   value={selectedProductId}
                   onChange={e => {
                     setSelectedProductId(e.target.value);
@@ -509,8 +511,10 @@ export const BatchesView: React.FC<BatchesViewProps> = ({
               </div>
 
               <div>
-                <label className="font-semibold text-zinc-300 block mb-1">Batch ID Sequence</label>
+                <label htmlFor="wizard-batch-id" className="font-semibold text-zinc-300 block mb-1">Batch ID Sequence</label>
                 <input
+                  id="wizard-batch-id"
+                  name="batchId"
                   type="text"
                   value={batchIdInput}
                   onChange={e => setBatchIdInput(e.target.value.toUpperCase())}
@@ -520,8 +524,10 @@ export const BatchesView: React.FC<BatchesViewProps> = ({
               </div>
 
               <div>
-                <label className="font-semibold text-zinc-300 block mb-1">Total Raw Material (kg)</label>
+                <label htmlFor="wizard-raw-kg" className="font-semibold text-zinc-300 block mb-1">Total Raw Material (kg)</label>
                 <input
+                  id="wizard-raw-kg"
+                  name="rawKg"
                   type="number"
                   value={rawKgInput}
                   onChange={e => setRawKgInput(parseFloat(e.target.value) || 0)}
@@ -532,8 +538,10 @@ export const BatchesView: React.FC<BatchesViewProps> = ({
               </div>
 
               <div>
-                <label className="font-semibold text-zinc-300 block mb-1">Manufacturing Date</label>
+                <label htmlFor="wizard-lot-date" className="font-semibold text-zinc-300 block mb-1">Manufacturing Date</label>
                 <input
+                  id="wizard-lot-date"
+                  name="mfd"
                   type="date"
                   value={lotDateInput}
                   onChange={e => setLotDateInput(e.target.value)}
@@ -579,9 +587,12 @@ export const BatchesView: React.FC<BatchesViewProps> = ({
                     >
                       {/* Pack Size Selector / Input */}
                       <div className="sm:col-span-4">
-                        <label className="text-[10px] text-zinc-400 block mb-0.5">Pack Size</label>
+                        <label htmlFor={`alloc-packsize-${alloc.id}`} className="text-[10px] text-zinc-400 block mb-0.5">Pack Size</label>
                         <div className="flex items-center gap-1">
                           <input
+                            id={`alloc-packsize-${alloc.id}`}
+                            name={`packSize_${alloc.id}`}
+                            aria-label={`Pack size for row ${alloc.id}`}
                             type="text"
                             value={alloc.packSize}
                             onChange={e => handleUpdateWizardAllocRow(alloc.id, 'packSize', e.target.value)}
@@ -590,6 +601,9 @@ export const BatchesView: React.FC<BatchesViewProps> = ({
                           />
                           {/* Quick size dropdown */}
                           <select
+                            id={`alloc-quicksize-${alloc.id}`}
+                            name={`quickSize_${alloc.id}`}
+                            aria-label={`Quick size preset for row ${alloc.id}`}
                             onChange={e => {
                               if (e.target.value) handleUpdateWizardAllocRow(alloc.id, 'packSize', e.target.value);
                             }}
@@ -612,9 +626,12 @@ export const BatchesView: React.FC<BatchesViewProps> = ({
 
                       {/* Allocated (kg) */}
                       <div className="sm:col-span-3">
-                        <label className="text-[10px] text-zinc-400 block mb-0.5">Allocated (kg)</label>
+                        <label htmlFor={`alloc-kg-${alloc.id}`} className="text-[10px] text-zinc-400 block mb-0.5">Allocated (kg)</label>
                         <div className="flex items-center gap-1">
                           <input
+                            id={`alloc-kg-${alloc.id}`}
+                            name={`allocatedKg_${alloc.id}`}
+                            aria-label={`Allocated kg for row ${alloc.id}`}
                             type="number"
                             min="0"
                             step="0.5"
@@ -628,8 +645,11 @@ export const BatchesView: React.FC<BatchesViewProps> = ({
 
                       {/* M.R.P. (₹) */}
                       <div className="sm:col-span-3">
-                        <label className="text-[10px] text-amber-300 font-semibold block mb-0.5">M.R.P. (₹) *</label>
+                        <label htmlFor={`alloc-mrp-${alloc.id}`} className="text-[10px] text-amber-300 font-semibold block mb-0.5">M.R.P. (₹) *</label>
                         <input
+                          id={`alloc-mrp-${alloc.id}`}
+                          name={`mrp_${alloc.id}`}
+                          aria-label={`M.R.P. in rupees for row ${alloc.id}`}
                           type="number"
                           placeholder="e.g. 50"
                           value={alloc.mrp}
@@ -704,8 +724,10 @@ export const BatchesView: React.FC<BatchesViewProps> = ({
 
             <div className="space-y-3 text-xs">
               <div>
-                <label className="font-semibold text-zinc-300 block mb-1">Target Pack Size</label>
+                <label htmlFor="loose-pack-size-select" className="font-semibold text-zinc-300 block mb-1">Target Pack Size</label>
                 <select
+                  id="loose-pack-size-select"
+                  name="packSizeFromLoose"
                   value={packSizeFromLoose}
                   onChange={e => setPackSizeFromLoose(e.target.value)}
                   className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 text-zinc-200"
@@ -717,8 +739,10 @@ export const BatchesView: React.FC<BatchesViewProps> = ({
               </div>
 
               <div>
-                <label className="font-semibold text-zinc-300 block mb-1">Weight to Pack (kg)</label>
+                <label htmlFor="loose-weight-input" className="font-semibold text-zinc-300 block mb-1">Weight to Pack (kg)</label>
                 <input
+                  id="loose-weight-input"
+                  name="kgFromLoose"
                   type="number"
                   value={kgFromLoose}
                   onChange={e => setKgFromLoose(parseFloat(e.target.value) || 0)}

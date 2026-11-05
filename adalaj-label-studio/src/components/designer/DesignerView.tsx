@@ -1150,8 +1150,11 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
         <div className="flex items-center gap-2.5">
           {allProducts && allProducts.length > 0 && (
             <div className="flex items-center gap-1.5">
-              <span className="text-zinc-500 text-[11px] font-medium">Product:</span>
+              <label htmlFor="designer-product-select" className="text-zinc-500 text-[11px] font-medium cursor-pointer">Product:</label>
               <select
+                id="designer-product-select"
+                name="designerProduct"
+                aria-label="Designer active product"
                 value={activeProduct?.id}
                 onChange={e => {
                   const p = allProducts.find(prod => prod.id === e.target.value);
@@ -1182,8 +1185,11 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
           )}
 
           <div className="flex items-center gap-1.5">
-            <span className="text-zinc-500 text-[11px] font-medium">SKU:</span>
+            <label htmlFor="designer-sku-select" className="text-zinc-500 text-[11px] font-medium cursor-pointer">SKU:</label>
             <select
+              id="designer-sku-select"
+              name="designerSku"
+              aria-label="Designer active SKU"
               value={previewSkuId}
               onChange={e => {
                 const s = productSkus.find(sku => sku.id === e.target.value);
@@ -1340,8 +1346,11 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
 
           {/* ENDLESS / UNRESTRICTED TRAVEL LENGTH CONTROL (35, 45, 80, 100mm / 1181px) */}
           <div className="flex items-center gap-1 bg-zinc-950 border border-zinc-800 rounded-lg p-0.5 text-xs text-zinc-300">
-            <span className="text-[10px] text-zinc-500 px-1 font-medium">Length:</span>
+            <label htmlFor="designer-length-input" className="text-[10px] text-zinc-500 px-1 font-medium cursor-pointer">Length:</label>
             <input
+              id="designer-length-input"
+              name="designerLengthMm"
+              aria-label="Travel length in millimeters"
               type="number"
               step="1"
               min="10"
@@ -2247,6 +2256,9 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                     </div>
                   </div>
                   <input
+                    id="designer-pos-x-input"
+                    name="positionX"
+                    aria-label="X position in millimeters"
                     type="number"
                     step="0.1"
                     value={selectedObject.x}
@@ -2260,7 +2272,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                 </div>
                 <div>
                   <div className="flex items-center justify-between mb-0.5">
-                    <label className="text-[10px] text-zinc-500">Y (mm)</label>
+                    <label htmlFor="designer-pos-y-input" className="text-[10px] text-zinc-500">Y (mm)</label>
                     <div className="flex items-center gap-0.5">
                       <button 
                         type="button"
@@ -2281,6 +2293,9 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                     </div>
                   </div>
                   <input
+                    id="designer-pos-y-input"
+                    name="positionY"
+                    aria-label="Y position in millimeters"
                     type="number"
                     step="0.1"
                     value={selectedObject.y}
@@ -2293,8 +2308,11 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] text-zinc-500 block mb-0.5">Width (mm)</label>
+                  <label htmlFor="designer-dim-w-input" className="text-[10px] text-zinc-500 block mb-0.5">Width (mm)</label>
                   <input
+                    id="designer-dim-w-input"
+                    name="dimensionWidth"
+                    aria-label="Width in millimeters"
                     type="number"
                     step="0.1"
                     value={selectedObject.width}
@@ -2307,8 +2325,11 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] text-zinc-500 block mb-0.5">Height (mm)</label>
+                  <label htmlFor="designer-dim-h-input" className="text-[10px] text-zinc-500 block mb-0.5">Height (mm)</label>
                   <input
+                    id="designer-dim-h-input"
+                    name="dimensionHeight"
+                    aria-label="Height in millimeters"
                     type="number"
                     step="0.1"
                     value={selectedObject.height}
@@ -2647,8 +2668,11 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       {/* Bottom Batch-Value Preview Bar with Working Action Buttons */}
       <div className="h-10 bg-zinc-900 border-t border-zinc-800 px-4 flex items-center justify-between text-xs overflow-x-auto scrollbar-none gap-4 shrink-0">
         <div className="flex items-center gap-2 shrink-0">
-          <span className="font-bold uppercase tracking-wider text-[10px] text-zinc-400">Live Values:</span>
+          <label htmlFor="designer-live-sku-select" className="font-bold uppercase tracking-wider text-[10px] text-zinc-400 cursor-pointer">Live Values:</label>
           <select
+            id="designer-live-sku-select"
+            name="livePreviewSku"
+            aria-label="Select SKU for Live Values Preview"
             value={previewSkuId}
             onChange={e => {
               const s = productSkus.find(sku => sku.id === e.target.value);

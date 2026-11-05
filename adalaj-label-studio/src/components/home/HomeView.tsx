@@ -215,8 +215,11 @@ export const HomeView: React.FC<HomeViewProps> = ({
           <div className="flex flex-wrap items-center gap-2">
             {/* SKU Selector */}
             <div className="flex items-center gap-1.5 bg-zinc-950 border border-zinc-700 rounded-lg px-2.5 py-1 text-xs">
-              <span className="text-zinc-500 text-[11px]">Preview SKU:</span>
+              <label htmlFor="home-preview-sku-select" className="text-zinc-500 text-[11px] cursor-pointer">Preview SKU:</label>
               <select
+                id="home-preview-sku-select"
+                name="previewSku"
+                aria-label="Preview SKU for active batch"
                 value={selectedPreviewSkuId}
                 onChange={e => setSelectedPreviewSkuId(e.target.value)}
                 className="bg-transparent text-amber-400 font-mono font-bold focus:outline-hidden"

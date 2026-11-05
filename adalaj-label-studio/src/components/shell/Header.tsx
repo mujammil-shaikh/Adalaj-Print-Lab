@@ -81,7 +81,7 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Active Product & Batch Chip */}
         <div 
           onClick={() => onNavigate('batches')}
-          className="cursor-pointer flex items-center gap-1.5 px-2.5 py-1 rounded bg-zinc-900 border border-zinc-700 hover:border-amber-500/50 transition-colors text-xs"
+          className="cursor-pointer hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded bg-zinc-900 border border-zinc-700 hover:border-amber-500/50 transition-colors text-xs"
           title="Click to view and switch Batches & Products"
         >
           <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
@@ -92,6 +92,16 @@ export const Header: React.FC<HeaderProps> = ({
           <span className="text-amber-400 font-mono font-bold">
             {activeBatch ? activeBatch.id : 'ADTP014'}
           </span>
+        </div>
+
+        {/* Compact Active Batch Chip on Mobile */}
+        <div 
+          onClick={() => onNavigate('batches')}
+          className="cursor-pointer sm:hidden flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-900 border border-zinc-700 text-[11px]"
+          title="Active Batch"
+        >
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+          <span className="text-amber-400 font-mono font-bold">{activeBatch ? activeBatch.id : 'ADTP014'}</span>
         </div>
 
         {/* Mode Toggle */}
@@ -110,7 +120,7 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
 
       {/* Main Navigation Tabs */}
-      <nav className="flex items-center gap-1 overflow-x-auto scrollbar-none py-1">
+      <nav aria-label="Main Navigation" className="flex items-center gap-1 overflow-x-auto scrollbar-none py-1 w-full md:w-auto -mx-1 px-1">
         {navItems.map(item => {
           const Icon = item.icon;
           const isActive = currentRoute === item.id;

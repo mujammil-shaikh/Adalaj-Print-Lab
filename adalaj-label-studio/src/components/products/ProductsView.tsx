@@ -182,6 +182,9 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
         <div className="flex items-center gap-2 flex-1 max-w-md">
           <Search className="w-4 h-4 text-zinc-500" />
           <input
+            id="products-search-input"
+            name="productsSearch"
+            aria-label="Search by product name, code, or pack size"
             type="text"
             placeholder="Search by product name, code, or pack size (/)..."
             value={search}
@@ -191,8 +194,11 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
         </div>
 
         <div className="flex items-center gap-2 text-xs">
-          <span className="text-zinc-500">Product:</span>
+          <label htmlFor="products-filter-select" className="text-zinc-500 cursor-pointer">Product:</label>
           <select
+            id="products-filter-select"
+            name="productFilter"
+            aria-label="Filter SKUs by product"
             value={selectedProductFilter}
             onChange={e => setSelectedProductFilter(e.target.value)}
             className="bg-zinc-950 border border-zinc-800 text-xs rounded px-2 py-1 text-zinc-300 focus:outline-hidden"
@@ -213,6 +219,9 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
               <tr>
                 <th className="p-3 w-10 text-center">
                   <input
+                    id="products-select-all-checkbox"
+                    name="selectAllSkus"
+                    aria-label="Select all SKUs"
                     type="checkbox"
                     checked={filteredSkus.length > 0 && selectedSkuIds.size === filteredSkus.length}
                     onChange={handleSelectAll}
@@ -245,6 +254,9 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                   >
                     <td className="p-3 text-center">
                       <input
+                        id={`sku-checkbox-${sku.id}`}
+                        name={`select_sku_${sku.id}`}
+                        aria-label={`Select ${sku.packSize}`}
                         type="checkbox"
                         checked={isSelected}
                         onChange={() => handleToggleSelectSku(sku.id)}
@@ -267,6 +279,9 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
                       {editingSkuId === sku.id ? (
                         <div className="flex items-center gap-1">
                           <input
+                            id={`inline-mrp-${sku.id}`}
+                            name={`inlineMrp_${sku.id}`}
+                            aria-label={`Edit MRP for ${sku.packSize}`}
                             type="number"
                             step="0.5"
                             value={editMrpValue}
@@ -337,8 +352,10 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
             </p>
 
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-zinc-300">New M.R.P. (₹)</label>
+              <label htmlFor="bulk-mrp-input" className="text-xs font-semibold text-zinc-300">New M.R.P. (₹)</label>
               <input
+                id="bulk-mrp-input"
+                name="bulkMrpValue"
                 type="number"
                 placeholder="e.g. 120"
                 value={bulkMrpValue}
@@ -376,8 +393,10 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
 
             <div className="space-y-3 text-xs">
               <div>
-                <label className="font-semibold text-zinc-300 block mb-1">Product Name</label>
+                <label htmlFor="new-product-name" className="font-semibold text-zinc-300 block mb-1">Product Name</label>
                 <input
+                  id="new-product-name"
+                  name="productName"
                   type="text"
                   placeholder="e.g. Industrial Valve Pin, Cumin Powder"
                   value={newProdName}
@@ -388,8 +407,10 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
               </div>
 
               <div>
-                <label className="font-semibold text-zinc-300 block mb-1">Short Code / Prefix</label>
+                <label htmlFor="new-product-code" className="font-semibold text-zinc-300 block mb-1">Short Code / Prefix</label>
                 <input
+                  id="new-product-code"
+                  name="productCode"
                   type="text"
                   placeholder="e.g. IVP, ADCP"
                   value={newProdCode}
@@ -400,8 +421,10 @@ export const ProductsView: React.FC<ProductsViewProps> = ({
               </div>
 
               <div>
-                <label className="font-semibold text-zinc-300 block mb-1">Default Shelf Life (Months)</label>
+                <label htmlFor="new-product-shelflife" className="font-semibold text-zinc-300 block mb-1">Default Shelf Life (Months)</label>
                 <input
+                  id="new-product-shelflife"
+                  name="productShelfLife"
                   type="number"
                   value={newProdShelfLife}
                   onChange={e => setNewProdShelfLife(parseInt(e.target.value) || 12)}

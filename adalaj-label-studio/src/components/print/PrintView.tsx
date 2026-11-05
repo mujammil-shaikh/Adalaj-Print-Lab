@@ -624,8 +624,11 @@ export const PrintView: React.FC<PrintViewProps> = ({
 
         {/* Proof Status Badge */}
         <div className="flex items-center gap-2">
-          <span className="text-xs text-zinc-400">Proof Status:</span>
+          <label htmlFor="print-proof-status-select" className="text-xs text-zinc-400 cursor-pointer">Proof Status:</label>
           <select
+            id="print-proof-status-select"
+            name="proofStatus"
+            aria-label="Proof Status"
             value={proofStatus}
             onChange={e => setProofStatus(e.target.value as any)}
             className="bg-zinc-900 border border-zinc-700 text-xs rounded-lg px-3 py-1.5 font-bold text-amber-400 focus:outline-hidden"
@@ -680,8 +683,11 @@ export const PrintView: React.FC<PrintViewProps> = ({
 
             <div className="space-y-3 text-xs">
               <div>
-                <label className="text-zinc-400 block mb-1">Production Batch</label>
+                <label htmlFor="print-batch-select" className="text-zinc-400 block mb-1">Production Batch</label>
                 <select
+                  id="print-batch-select"
+                  name="batchId"
+                  aria-label="Select Production Batch"
                   value={selectedBatchId}
                   onChange={e => setSelectedBatchId(e.target.value)}
                   className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 text-zinc-200 font-mono font-bold"
@@ -778,6 +784,9 @@ export const PrintView: React.FC<PrintViewProps> = ({
                 <span className="text-[10px] text-zinc-500 uppercase font-mono block">Industrial Printer IP / Port:</span>
                 <div className="grid grid-cols-3 gap-2">
                   <input
+                    id="print-network-ip-input"
+                    name="networkIp"
+                    aria-label="Printer IP address"
                     type="text"
                     value={networkIp}
                     onChange={e => setNetworkIp(e.target.value)}
@@ -785,6 +794,9 @@ export const PrintView: React.FC<PrintViewProps> = ({
                     className="col-span-2 bg-zinc-900 border border-zinc-700 rounded px-2 py-1 font-mono text-zinc-200"
                   />
                   <input
+                    id="print-network-port-input"
+                    name="networkPort"
+                    aria-label="Printer Port"
                     type="number"
                     value={networkPort}
                     onChange={e => setNetworkPort(parseInt(e.target.value) || 9100)}
@@ -1278,11 +1290,14 @@ export const PrintView: React.FC<PrintViewProps> = ({
               {/* Custom Dimensions & Orientation Row */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1 border-t border-zinc-800/80">
                 <div>
-                  <label className="text-[10px] text-zinc-400 block mb-1">
+                  <label htmlFor="print-export-width-input" className="text-[10px] text-zinc-400 block mb-1">
                     Export Width (Pixels):
                   </label>
                   <div className="flex items-center gap-1">
                     <input
+                      id="print-export-width-input"
+                      name="exportWidthPx"
+                      aria-label="Export Width in Pixels"
                       type="number"
                       min="30"
                       max="4000"
@@ -1298,11 +1313,14 @@ export const PrintView: React.FC<PrintViewProps> = ({
                 </div>
 
                 <div>
-                  <label className="text-[10px] text-zinc-400 block mb-1">
+                  <label htmlFor="print-export-height-input" className="text-[10px] text-zinc-400 block mb-1">
                     Export Height (Pixels):
                   </label>
                   <div className="flex items-center gap-1">
                     <input
+                      id="print-export-height-input"
+                      name="exportHeightPx"
+                      aria-label="Export Height in Pixels"
                       type="number"
                       min="30"
                       max="8000"

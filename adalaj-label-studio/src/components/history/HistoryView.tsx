@@ -124,6 +124,9 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
         <div className="p-3 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center gap-2 max-w-md w-full">
           <Search className="w-4 h-4 text-zinc-500" />
           <input
+            id="history-search-input"
+            name="historySearch"
+            aria-label="Search print jobs and audit logs"
             type="text"
             placeholder={tab === 'jobs' ? 'Search jobs by code, batch, product...' : 'Search by batch ID, product name, or action (/)...'}
             value={search}

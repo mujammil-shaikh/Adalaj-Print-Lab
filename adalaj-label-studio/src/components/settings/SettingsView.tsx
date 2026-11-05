@@ -527,6 +527,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <div className="space-y-1.5 text-xs">
                 <div className="flex gap-2">
                   <input
+                    id="settings-test-net-ip"
+                    name="testNetIp"
+                    aria-label="Target printer IP"
                     type="text"
                     value={testNetIp}
                     onChange={e => setTestNetIp(e.target.value)}
@@ -534,6 +537,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     className="flex-1 bg-zinc-950 border border-zinc-700 rounded px-2 py-1 font-mono text-zinc-200"
                   />
                   <input
+                    id="settings-test-net-port"
+                    name="testNetPort"
+                    aria-label="Target printer port"
                     type="number"
                     value={testNetPort}
                     onChange={e => setTestNetPort(parseInt(e.target.value) || 9100)}
@@ -664,6 +670,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
           <div className="p-2.5 rounded-lg bg-zinc-950 border border-zinc-800">
             <input
+              id="settings-shortcut-search"
+              name="shortcutFilter"
+              aria-label="Search keyboard shortcuts"
               type="text"
               placeholder="Search shortcuts..."
               value={shortcutFilter}
@@ -684,6 +693,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   {editingActionId === action.id ? (
                     <div className="flex items-center gap-1">
                       <input
+                        id="settings-captured-key-input"
+                        name="capturedKey"
+                        aria-label="Capture key combo"
                         type="text"
                         placeholder="Press key combo..."
                         value={capturedKey}
