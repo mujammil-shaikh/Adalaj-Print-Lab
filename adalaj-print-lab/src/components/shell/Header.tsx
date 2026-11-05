@@ -66,12 +66,16 @@ export const Header: React.FC<HeaderProps> = ({
     <header className="sticky top-0 z-40 bg-zinc-950 border-b-2 border-zinc-800 px-4 py-2 flex flex-col md:flex-row md:items-center md:justify-between gap-2 shadow-md">
       {/* Brand & Active Batch Chip */}
       <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-amber-500 text-black font-black flex items-center justify-center text-sm shadow-sm">
-            AD
-          </div>
+        <div className="flex items-center gap-2.5">
+          <img 
+            src="/brand/Adalaj_Print_Lab_Printer_Icon.svg" 
+            alt="Adalaj Print Lab" 
+            className="w-9 h-9 rounded-lg border border-zinc-700/80 shadow-md object-contain bg-black shrink-0 hover:scale-105 transition-transform cursor-pointer"
+            onClick={() => onNavigate('home')}
+            title="Adalaj Print Lab - Home"
+          />
           <div>
-            <h1 className="text-sm font-black tracking-tight text-zinc-100 flex items-center gap-1.5">
+            <h1 className="text-sm font-black tracking-tight text-zinc-100 flex items-center gap-1.5 cursor-pointer" onClick={() => onNavigate('home')}>
               ADALAJ <span className="text-amber-400 font-medium text-xs">Print Lab</span>
             </h1>
             <p className="text-[10px] text-zinc-400 font-mono">Adalaj Mark & Code v3</p>
@@ -86,7 +90,9 @@ export const Header: React.FC<HeaderProps> = ({
         >
           <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
           <span className="text-zinc-400 font-medium">Product:</span>
-          <span className="text-zinc-100 font-semibold">{activeProduct?.name || 'Turmeric Powder'}</span>
+          <span className="text-zinc-100 font-semibold max-w-[140px] truncate inline-block align-bottom" title={activeProduct?.name || 'Turmeric Powder'}>
+            {activeProduct?.name || 'Turmeric Powder'}
+          </span>
           <span className="text-zinc-600">•</span>
           <span className="text-zinc-400 font-medium">Batch:</span>
           <span className="text-amber-400 font-mono font-bold">

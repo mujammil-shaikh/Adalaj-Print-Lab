@@ -35,9 +35,11 @@ interface HomeViewProps {
   skus: SKU[];
   template?: Template | null;
   activeBatch?: Batch | null;
+  activeProduct?: Product | null;
   activeMachine?: MachineProfile | null;
   onNavigate: (route: string) => void;
   onSelectBatch: (b: Batch) => void;
+  onSelectProduct?: (p: Product) => void;
 }
 
 export const HomeView: React.FC<HomeViewProps> = ({
@@ -46,11 +48,14 @@ export const HomeView: React.FC<HomeViewProps> = ({
   skus,
   template,
   activeBatch,
+  activeProduct,
   activeMachine,
   onNavigate,
-  onSelectBatch
+  onSelectBatch,
+  onSelectProduct
 }) => {
   const [previewMode, setPreviewMode] = useState<'pouch' | 'band' | 'raster'>('pouch');
+  const [selectedProductId, setSelectedProductId] = useState<string>(activeProduct?.id || activeBatch?.productId || products[0]?.id || '');
   const [selectedPreviewSkuId, setSelectedPreviewSkuId] = useState<string>('');
   const [zoomFactor, setZoomFactor] = useState<number>(1.5);
   const [rasterDataUrl, setRasterDataUrl] = useState<string>('');
@@ -59,8 +64,18 @@ export const HomeView: React.FC<HomeViewProps> = ({
   const openBatches = batches.filter(b => b.status === 'Open');
   const completedBatches = batches.filter(b => b.status === 'Completed');
 
-  const currentBatch = activeBatch || batches[0];
-  const currentProduct = products.find(p => p.id === currentBatch?.productId) || products[0];
+  // Keep selectedProductId in sync when external activeProduct changes
+  useEffect(() => {
+    if (activeProduct && activeProduct.id !== selectedProductId) {
+      setSelectedProductId(activeProduct.id);
+    }
+  }, [activeProduct?.id]);
+
+  const currentBatch = (activeBatch && activeBatch.productId === selectedProductId) 
+    ? activeBatch 
+    : batches.find(b => b.productId === selectedProductId) || activeBatch || batches[0];
+
+  const currentProduct = products.find(p => p.id === selectedProductId) || activeProduct || products.find(p => p.id === currentBatch?.productId) || products[0];
 
   // Synchronize preview SKU to current product (WF-004)
   useEffect(() => {
@@ -194,39 +209,64 @@ export const HomeView: React.FC<HomeViewProps> = ({
       <div className="rounded-2xl bg-zinc-900 border-2 border-amber-500/50 shadow-2xl p-6 space-y-5">
         {/* Preview Card Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-800 pb-4">
-          <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/40 shadow-xs">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/40 shadow-xs shrink-0">
               <Eye className="w-5 h-5" />
             </div>
-            <div>
+            <div className="min-w-0">
               <h3 className="text-base font-black text-white tracking-tight flex items-center gap-2">
                 <span>Live Production Label Preview</span>
-                <span className="text-[10px] uppercase font-mono font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                <span className="text-[10px] uppercase font-mono font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shrink-0">
                   Ready to Print
                 </span>
               </h3>
-              <p className="text-xs text-zinc-400">
-                Batch: <strong className="text-amber-400 font-mono">{currentBatch?.id || 'ADTP014'}</strong> • Product: <strong className="text-zinc-200">{currentProduct?.name}</strong> • Head: <strong className="text-zinc-200">{machineBand} mm ({machineDpi} DPI)</strong>
+              <p className="text-xs text-zinc-400 truncate max-w-xl">
+                Batch: <strong className="text-amber-400 font-mono">{currentBatch?.id || 'ADTP014'}</strong> • Product: <strong className="text-zinc-200" title={currentProduct?.name}>{currentProduct?.name}</strong> • Head: <strong className="text-zinc-200">{machineBand} mm ({machineDpi} DPI)</strong>
               </p>
             </div>
           </div>
 
-          {/* Mode Switcher & SKU Selector */}
-          <div className="flex flex-wrap items-center gap-2">
+          {/* Mode Switcher & Product / SKU Selectors */}
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {/* Product Selector */}
+            <div className="flex items-center gap-1.5 bg-zinc-950 border border-zinc-700 rounded-lg px-2.5 py-1 text-xs">
+              <label htmlFor="home-preview-product-select" className="text-zinc-500 text-[11px] cursor-pointer shrink-0">Product:</label>
+              <select
+                id="home-preview-product-select"
+                name="previewProduct"
+                aria-label="Select Product to Preview"
+                value={currentProduct?.id}
+                onChange={e => {
+                  const prod = products.find(p => p.id === e.target.value);
+                  if (prod) {
+                    setSelectedProductId(prod.id);
+                    if (onSelectProduct) onSelectProduct(prod);
+                  }
+                }}
+                className="bg-transparent text-zinc-200 font-bold focus:outline-hidden max-w-[150px] truncate cursor-pointer"
+              >
+                {products.map(p => (
+                  <option key={p.id} value={p.id} className="bg-zinc-950 text-zinc-200">
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             {/* SKU Selector */}
             <div className="flex items-center gap-1.5 bg-zinc-950 border border-zinc-700 rounded-lg px-2.5 py-1 text-xs">
-              <label htmlFor="home-preview-sku-select" className="text-zinc-500 text-[11px] cursor-pointer">Preview SKU:</label>
+              <label htmlFor="home-preview-sku-select" className="text-zinc-500 text-[11px] cursor-pointer shrink-0">SKU:</label>
               <select
                 id="home-preview-sku-select"
                 name="previewSku"
                 aria-label="Preview SKU for active batch"
                 value={selectedPreviewSkuId}
                 onChange={e => setSelectedPreviewSkuId(e.target.value)}
-                className="bg-transparent text-amber-400 font-mono font-bold focus:outline-hidden"
+                className="bg-transparent text-amber-400 font-mono font-bold focus:outline-hidden max-w-[140px] truncate cursor-pointer"
               >
                 {skus.filter(s => s.productId === currentProduct?.id && s.enabled).map(s => (
                   <option key={s.id} value={s.id} className="bg-zinc-950 text-zinc-200">
-                    {currentProduct?.shortCode || 'AD'} {s.packSize} {s.mrp ? `(₹${s.mrp})` : '(Needs MRP)'}
+                    {s.packSize} {s.mrp ? `(₹${s.mrp})` : '(Needs MRP)'}
                   </option>
                 ))}
               </select>
@@ -283,36 +323,46 @@ export const HomeView: React.FC<HomeViewProps> = ({
           </div>
         </div>
 
-        {/* Live Preview Display Stage */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center">
-          {/* Main Visual Display (8 Cols) */}
-          <div className="lg:col-span-8 flex flex-col items-center justify-center p-6 rounded-xl bg-zinc-950 border border-zinc-800/80 min-h-80 overflow-hidden relative">
+        {/* Live Preview Display Stage - items-start prevents vertical bouncing */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          {/* Main Visual Display (8 Cols) - Solid 430px height allocated space */}
+          <div className="lg:col-span-8 flex flex-col items-center justify-center p-6 rounded-xl bg-zinc-950 border border-zinc-800/80 h-[430px] min-h-[430px] max-h-[430px] overflow-hidden relative">
             {previewMode === 'pouch' ? (
-              /* REALISTIC STAND-UP PACKAGING POUCH SIMULATION */
-              <div className="relative w-64 h-96 bg-linear-to-b from-amber-600 via-amber-700 to-amber-900 rounded-2xl shadow-2xl border-4 border-amber-500/80 p-4 flex flex-col justify-between text-white select-none">
+              /* REALISTIC STAND-UP PACKAGING POUCH SIMULATION (STABLE FIXED LAYOUT) */
+              <div className="relative w-64 h-[380px] bg-linear-to-b from-amber-600 via-amber-700 to-amber-900 rounded-2xl shadow-2xl border-4 border-amber-500/80 p-3.5 flex flex-col justify-between text-white select-none shrink-0 overflow-hidden">
                 {/* Metallic Top Seal / Zipper */}
-                <div className="w-full h-3 bg-linear-to-r from-amber-300 via-yellow-200 to-amber-400 rounded-xs mb-2 shadow-inner border border-amber-200/50" />
-                <div className="text-center font-mono text-[9px] uppercase tracking-widest text-amber-200">
+                <div className="w-full h-2.5 bg-linear-to-r from-amber-300 via-yellow-200 to-amber-400 rounded-xs mb-1 shadow-inner border border-amber-200/50 shrink-0" />
+                <div className="text-center font-mono text-[8px] uppercase tracking-widest text-amber-200 shrink-0">
                   Seal Area • Easy Open Zipper
                 </div>
 
-                {/* Brand & Artwork Area */}
-                <div className="text-center space-y-1 my-auto">
-                  <div className="inline-block px-3 py-1 rounded-full bg-zinc-950/80 border border-amber-400/80 font-black tracking-widest text-xs text-amber-300 shadow-md">
+                {/* Brand & Artwork Area with STRICT ALLOCATED FIXED HEIGHT (h-36) */}
+                <div className="text-center my-auto flex flex-col items-center justify-center shrink-0 h-36">
+                  <div className="inline-block px-2.5 py-0.5 rounded-full bg-zinc-950/80 border border-amber-400/80 font-black tracking-widest text-[11px] text-amber-300 shadow-md shrink-0">
                     ADALAJ ORGANICS
                   </div>
-                  <h4 className="text-lg font-black tracking-tight text-white drop-shadow-md">
-                    {currentProduct?.name || 'Turmeric Powder'}
-                  </h4>
-                  <p className="text-[10px] text-amber-200 font-medium">100% Pure Agmark Certified</p>
+                  
+                  {/* Fixed-Height Allocated Headline Container that NEVER wraps to shift layout below */}
+                  <div className="h-12 flex items-center justify-center w-full px-1 my-1">
+                    <h4 
+                      className={`font-black tracking-tight text-white drop-shadow-md text-center line-clamp-2 ${
+                        (currentProduct?.name || '').length > 22 ? 'text-sm leading-snug' : 'text-base leading-tight'
+                      }`}
+                      title={currentProduct?.name || 'Turmeric Powder'}
+                    >
+                      {currentProduct?.name || 'Turmeric Powder'}
+                    </h4>
+                  </div>
 
-                  <div className="inline-block px-2.5 py-0.5 rounded bg-amber-950/70 border border-amber-400/40 text-[11px] font-mono font-bold text-amber-200 mt-2">
+                  <p className="text-[10px] text-amber-200 font-medium shrink-0">100% Pure Agmark Certified</p>
+
+                  <div className="inline-block px-2.5 py-0.5 rounded bg-amber-950/70 border border-amber-400/40 text-[10px] font-mono font-bold text-amber-200 mt-1.5 shrink-0">
                     Net Weight: {activeSku?.packSize || '100 g'}
                   </div>
                 </div>
 
-                {/* PHYSICAL VARIABLE PRINT WINDOW (Where Handheld TIJ Prints) */}
-                <div className="bg-white text-black p-2.5 rounded-sm shadow-xl border-2 border-dashed border-zinc-800 font-mono text-[10px] leading-tight space-y-0.5 mt-auto">
+                {/* PHYSICAL VARIABLE PRINT WINDOW (Where Handheld TIJ Prints) - Fixed Bottom Positioning */}
+                <div className="bg-white text-black p-2 rounded-sm shadow-xl border-2 border-dashed border-zinc-800 font-mono text-[10px] leading-tight space-y-0.5 shrink-0 mt-auto">
                   <div className="text-[8px] uppercase tracking-wider text-zinc-500 font-bold border-b border-zinc-300 pb-0.5 mb-1 flex justify-between">
                     <span>Variable Print Band (12.5mm)</span>
                     <span className="text-emerald-700">TIJ Swept</span>

@@ -746,8 +746,20 @@ export default function App() {
             skus={skus}
             template={activeTemplate || templates[0]}
             activeBatch={activeBatch || batches[0]}
+            activeProduct={activeProduct || products[0]}
             activeMachine={activeMachine || machines[0]}
             onNavigate={setCurrentRoute}
+            onSelectProduct={p => {
+              setActiveProduct(p);
+              const pBatch = batches.find(b => b.productId === p.id);
+              if (pBatch) setActiveBatch(pBatch);
+              const pSku = skus.find(s => s.productId === p.id && s.packSize === activeSku?.packSize) || skus.find(s => s.productId === p.id);
+              if (pSku) {
+                setActiveSku(pSku);
+                const resolved = resolveLayout(p.id, pSku.packSize, templates, packProfiles);
+                setActiveTemplate(resolved.template);
+              }
+            }}
             onSelectBatch={b => {
               setActiveBatch(b);
               const p = products.find(prod => prod.id === b.productId);

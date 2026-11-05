@@ -1159,13 +1159,13 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       )}
 
       {/* Top Context Toolbar */}
-      {/* Tier 1: Context, Printhead Geometry & Save Bar */}
-      <div className="bg-zinc-900 border-b border-zinc-800 px-4 py-2 flex flex-wrap items-center justify-between gap-3 text-xs shrink-0">
+      {/* Tier 1: Context, Printhead Geometry & Save Bar (Fixed Height h-12 prevents canvas squeezing) */}
+      <div className="bg-zinc-900 border-b border-zinc-800 px-4 py-1.5 h-12 flex items-center justify-between gap-3 text-xs shrink-0 overflow-x-auto no-scrollbar">
         {/* Left: Synchronized Product & SKU Selectors + Inheritance Status */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           {allProducts && allProducts.length > 0 && (
             <div className="flex items-center gap-1.5 bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-0.5 h-8">
-              <label htmlFor="designer-product-select" className="text-zinc-500 text-[11px] font-medium cursor-pointer">Product:</label>
+              <label htmlFor="designer-product-select" className="text-zinc-500 text-[11px] font-medium cursor-pointer shrink-0">Product:</label>
               <select
                 id="designer-product-select"
                 name="designerProduct"
@@ -1187,7 +1187,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                     }
                   }
                 }}
-                className="bg-transparent font-bold text-zinc-100 focus:outline-hidden cursor-pointer text-xs"
+                className="bg-transparent font-bold text-zinc-100 focus:outline-hidden cursor-pointer text-xs max-w-[150px] sm:max-w-[190px] truncate"
                 title="Select active product"
               >
                 {allProducts.map(p => (
@@ -1200,7 +1200,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
           )}
 
           <div className="flex items-center gap-1.5 bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-0.5 h-8">
-            <label htmlFor="designer-sku-select" className="text-zinc-500 text-[11px] font-medium cursor-pointer">SKU:</label>
+            <label htmlFor="designer-sku-select" className="text-zinc-500 text-[11px] font-medium cursor-pointer shrink-0">SKU:</label>
             <select
               id="designer-sku-select"
               name="designerSku"
@@ -1218,7 +1218,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                   setRedoStack([]);
                 }
               }}
-              className="bg-transparent font-mono font-bold text-amber-400 focus:outline-hidden cursor-pointer text-xs"
+              className="bg-transparent font-mono font-bold text-amber-400 focus:outline-hidden cursor-pointer text-xs max-w-[120px] truncate"
               title="Select active SKU pack size"
             >
               {productSkus.map(s => (
@@ -1390,8 +1390,8 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
         </div>
       </div>
 
-      {/* Tier 2: Precision Canvas View & Smart Alignment Strip */}
-      <div className="bg-zinc-950 border-b border-zinc-800/80 px-4 py-1.5 flex flex-wrap items-center justify-between gap-3 text-xs shrink-0 select-none">
+      {/* Tier 2: Precision Canvas View & Smart Alignment Strip (Fixed Height h-11) */}
+      <div className="bg-zinc-950 border-b border-zinc-800/80 px-4 py-1 h-11 flex items-center justify-between gap-3 text-xs shrink-0 select-none overflow-x-auto no-scrollbar">
         {/* Left: View Mode Segmented Pill + Raster Orientation Controls */}
         <div className="flex items-center gap-2">
           {/* View Mode Pill */}
@@ -1807,7 +1807,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                               e.stopPropagation();
                               selectObject(obj.id);
                             }}
-                            className={`absolute flex items-center transition-shadow select-none ${
+                            className={`absolute flex items-center transition-shadow select-none whitespace-nowrap overflow-hidden ${
                               isSelected 
                                 ? 'outline outline-1.5 outline-amber-500 shadow-sm cursor-grab active:cursor-grabbing z-30' 
                                 : 'hover:bg-zinc-100/60 cursor-pointer z-10'
