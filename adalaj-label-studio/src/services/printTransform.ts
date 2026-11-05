@@ -266,9 +266,10 @@ export function renderTemplateToCanvas(
   const heightPx = options.targetHeightPx || template.customHeightPx || (template.travel === 'Vertical' ? defaultTravelPx : defaultBandPx);
 
   // Compute effective dpmm for drawing objects
+  // TIJ printer heads have uniform square pixel pitch. effDpmm must align with the physical nozzle swath density (X for vertical, Y for horizontal)
   const effDpmmX = widthPx / Math.max(0.1, docWidthMm);
   const effDpmmY = heightPx / Math.max(0.1, docHeightMm);
-  let effDpmm = (effDpmmX + effDpmmY) / 2;
+  const effDpmm = template.travel === 'Vertical' ? effDpmmX : effDpmmY;
 
   // Edge-to-edge auto-fit calculation if requested
   let edgeScaleX = 1.0;
@@ -495,10 +496,10 @@ function renderSingleObject(
 
     // Auto-fit text if it exceeds width so it NEVER cuts off
     if (totalInkWidth > w && w > 0) {
-      // If overflow is significant (>10%), proportionally reduce font size first to maintain natural typography
+      // Proportionally reduce font size first so glyph proportions remain natural and balanced
       const overflowRatio = w / totalInkWidth;
-      if (overflowRatio < 0.90) {
-        fontSizePx = Math.max(6, Math.round(fontSizePx * Math.max(0.75, overflowRatio)));
+      if (overflowRatio < 0.95) {
+        fontSizePx = Math.max(6, Math.floor(fontSizePx * overflowRatio * 0.96));
         ctx.font = `${fontStyle}${fontWeight}${fontSizePx}px ${obj.fontFamily}, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
       }
 

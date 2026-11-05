@@ -16,7 +16,13 @@ import {
   ShieldAlert,
   Calendar,
   FileText,
-  Trash2
+  Trash2,
+  Edit3,
+  Copy,
+  X,
+  Check,
+  RotateCcw,
+  Sparkles
 } from 'lucide-react';
 import type { Batch, BatchAllocation, Product, SKU } from '../../types';
 import { createBatchCommand, generateNextBatchId } from '../../domain/batchCommands';
@@ -33,6 +39,8 @@ interface BatchesViewProps {
   onCreateBatch: (b: Batch) => void;
   onNavigateToPrint: (b: Batch, allocId?: string) => void;
   onUpdateBatch: (b: Batch) => void;
+  onDeleteBatch?: (batchId: string) => void;
+  onDuplicateBatch?: (b: Batch) => void;
 }
 
 export const BatchesView: React.FC<BatchesViewProps> = ({
@@ -43,11 +51,24 @@ export const BatchesView: React.FC<BatchesViewProps> = ({
   onSelectBatch,
   onCreateBatch,
   onNavigateToPrint,
-  onUpdateBatch
+  onUpdateBatch,
+  onDeleteBatch,
+  onDuplicateBatch
 }) => {
   const [showNewWizard, setShowNewWizard] = useState(false);
   const [showLoosePackModal, setShowLoosePackModal] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+
+  // Edit existing batch modal state
+  const [editingBatch, setEditingBatch] = useState<Batch | null>(null);
+  const [editBatchId, setEditBatchId] = useState('');
+  const [editProductId, setEditProductId] = useState('');
+  const [editRawKg, setEditRawKg] = useState<number>(50);
+  const [editLotDate, setEditLotDate] = useState('');
+  const [editStatus, setEditStatus] = useState<Batch['status']>('Planned');
+  const [editAllocations, setEditAllocations] = useState<BatchAllocation[]>([]);
+  const [editErrorMsg, setEditErrorMsg] = useState('');
+  const [batchToDelete, setBatchToDelete] = useState<Batch | null>(null);
 
   // New batch wizard state
   const [selectedProductId, setSelectedProductId] = useState(products[0]?.id || '');
@@ -69,10 +90,73 @@ export const BatchesView: React.FC<BatchesViewProps> = ({
   ]);
   const [mrpErrorAlert, setMrpErrorAlert] = useState('');
 
+  // Auto-generate sequence for a product prefix
+  const handleAutoSequenceBatchId = (prodId: string) => {
+    const prod = products.find(p => p.id === prodId) || products[0];
+    const prefix = prod?.batchPrefix || prod?.shortCode || 'BAT';
+    const nextId = generateNextBatchId(prefix, batches);
+    setBatchIdInput(nextId);
+    return nextId;
+  };
+
+  const handleStartEditBatch = (b: Batch) => {
+    setEditingBatch(b);
+    setEditBatchId(b.id);
+    setEditProductId(b.productId);
+    setEditRawKg(b.rawMaterialKg);
+    setEditLotDate(b.lotDate);
+    setEditStatus(b.status);
+    setEditAllocations([...b.allocations]);
+    setEditErrorMsg('');
+  };
+
+  const handleSaveEditedBatch = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingBatch) return;
+
+    if (!editBatchId.trim()) {
+      setEditErrorMsg('Batch ID is required.');
+      return;
+    }
+
+    const totalAlloc = editAllocations.reduce((sum, a) => sum + (Number(a.allocatedKg) || 0), 0);
+    if (totalAlloc > editRawKg) {
+      setEditErrorMsg(`Allocated total (${totalAlloc} kg) exceeds raw material weight (${editRawKg} kg).`);
+      return;
+    }
+
+    const updatedBatch: Batch = {
+      ...editingBatch,
+      id: editBatchId.trim().toUpperCase(),
+      productId: editProductId,
+      rawMaterialKg: editRawKg,
+      lotDate: editLotDate,
+      status: editStatus,
+      allocations: editAllocations
+    };
+
+    onUpdateBatch(updatedBatch);
+    setEditingBatch(null);
+    setToastMsg(`✓ Batch ${updatedBatch.id} updated successfully!`);
+    setTimeout(() => setToastMsg(null), 3000);
+  };
+
+  const handleDeleteAllocationInCurrentBatch = (allocId: string) => {
+    if (!currentBatch) return;
+    const updated: Batch = {
+      ...currentBatch,
+      allocations: currentBatch.allocations.filter(a => a.id !== allocId)
+    };
+    onUpdateBatch(updated);
+    setToastMsg('Pack allocation removed from batch.');
+    setTimeout(() => setToastMsg(null), 3000);
+  };
+
   // Synchronize product ID when products load
   React.useEffect(() => {
     if (!selectedProductId && products[0]) {
       setSelectedProductId(products[0].id);
+      handleAutoSequenceBatchId(products[0].id);
     }
   }, [products, selectedProductId]);
 
@@ -356,8 +440,36 @@ export const BatchesView: React.FC<BatchesViewProps> = ({
 
                 <div className="flex items-center gap-2">
                   <button
+                    onClick={() => handleStartEditBatch(currentBatch)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold border border-zinc-700 transition-colors"
+                    title="Edit batch properties, raw material, or allocations"
+                  >
+                    <Edit3 className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Edit Batch</span>
+                  </button>
+                  {onDuplicateBatch && (
+                    <button
+                      onClick={() => onDuplicateBatch(currentBatch)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold border border-zinc-700 transition-colors"
+                      title="Duplicate batch definition"
+                    >
+                      <Copy className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Duplicate</span>
+                    </button>
+                  )}
+                  {onDeleteBatch && (
+                    <button
+                      onClick={() => setBatchToDelete(currentBatch)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-rose-950/60 text-zinc-400 hover:text-rose-300 text-xs font-semibold border border-zinc-700 transition-colors"
+                      title="Delete this batch"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                      <span>Delete</span>
+                    </button>
+                  )}
+                  <button
                     onClick={() => onNavigateToPrint(currentBatch)}
-                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold shadow-sm"
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold shadow-sm transition-colors"
                   >
                     <Printer className="w-3.5 h-3.5" />
                     <span>Print Batch Labels</span>
@@ -450,12 +562,21 @@ export const BatchesView: React.FC<BatchesViewProps> = ({
                             ₹{alloc.ratePerGmSnapshot?.toFixed(2)}
                           </td>
                           <td className="p-3 text-right">
-                            <button
-                              onClick={() => onNavigateToPrint(currentBatch, alloc.id)}
-                              className="px-2.5 py-1 text-xs font-semibold rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700"
-                            >
-                              Print
-                            </button>
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                onClick={() => onNavigateToPrint(currentBatch, alloc.id)}
+                                className="px-2.5 py-1 text-xs font-semibold rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700"
+                              >
+                                Print
+                              </button>
+                              <button
+                                onClick={() => handleDeleteAllocationInCurrentBatch(alloc.id)}
+                                className="p-1 rounded hover:bg-rose-950/50 text-zinc-500 hover:text-rose-400 transition-colors"
+                                title="Delete this allocation"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -498,9 +619,9 @@ export const BatchesView: React.FC<BatchesViewProps> = ({
                   name="productId"
                   value={selectedProductId}
                   onChange={e => {
-                    setSelectedProductId(e.target.value);
-                    const p = products.find(prod => prod.id === e.target.value);
-                    if (p) setBatchIdInput(`${p.batchPrefix}014`);
+                    const newProdId = e.target.value;
+                    setSelectedProductId(newProdId);
+                    handleAutoSequenceBatchId(newProdId);
                   }}
                   className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 text-zinc-200 focus:outline-hidden"
                 >
@@ -512,15 +633,26 @@ export const BatchesView: React.FC<BatchesViewProps> = ({
 
               <div>
                 <label htmlFor="wizard-batch-id" className="font-semibold text-zinc-300 block mb-1">Batch ID Sequence</label>
-                <input
-                  id="wizard-batch-id"
-                  name="batchId"
-                  type="text"
-                  value={batchIdInput}
-                  onChange={e => setBatchIdInput(e.target.value.toUpperCase())}
-                  required
-                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 font-mono uppercase text-amber-400 font-bold focus:outline-hidden"
-                />
+                <div className="flex items-center gap-1.5">
+                  <input
+                    id="wizard-batch-id"
+                    name="batchId"
+                    type="text"
+                    value={batchIdInput}
+                    onChange={e => setBatchIdInput(e.target.value.toUpperCase())}
+                    required
+                    className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 font-mono uppercase text-amber-400 font-bold focus:outline-hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleAutoSequenceBatchId(selectedProductId)}
+                    className="px-2.5 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-amber-300 font-mono text-xs font-bold shrink-0 border border-zinc-700 flex items-center gap-1"
+                    title="Auto generate next sequence"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Auto</span>
+                  </button>
+                </div>
               </div>
 
               <div>
@@ -772,6 +904,323 @@ export const BatchesView: React.FC<BatchesViewProps> = ({
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Modal: Edit Batch (Top-to-Bottom CRUD) */}
+      {editingBatch && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4">
+          <form onSubmit={handleSaveEditedBatch} className="w-full max-w-2xl rounded-2xl bg-zinc-900 border-2 border-zinc-700 p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+              <div>
+                <h3 className="text-base font-bold text-white flex items-center gap-2">
+                  <Edit3 className="w-4 h-4 text-amber-400" />
+                  Edit Batch: <span className="font-mono text-amber-400">{editingBatch.id}</span>
+                </h3>
+                <p className="text-xs text-zinc-400 mt-0.5">
+                  Update batch ID sequence, raw weight, dates, and customize individual pack allocations.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingBatch(null)}
+                className="p-1 rounded text-zinc-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {editErrorMsg && (
+              <div className="p-3 rounded-lg bg-rose-950/60 border border-rose-500 text-rose-200 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                <p>{editErrorMsg}</p>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              <div>
+                <label className="font-semibold text-zinc-300 block mb-1">Batch ID Sequence</label>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    value={editBatchId}
+                    onChange={e => setEditBatchId(e.target.value.toUpperCase())}
+                    required
+                    className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 font-mono uppercase text-amber-400 font-bold focus:outline-hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const prod = products.find(p => p.id === editProductId) || products[0];
+                      const prefix = prod?.batchPrefix || prod?.shortCode || 'BAT';
+                      setEditBatchId(generateNextBatchId(prefix, batches));
+                    }}
+                    className="px-2.5 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-amber-300 font-mono text-xs font-bold shrink-0 border border-zinc-700 flex items-center gap-1"
+                    title="Auto next sequence"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Auto</span>
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="font-semibold text-zinc-300 block mb-1">Product Item</label>
+                <select
+                  value={editProductId}
+                  onChange={e => setEditProductId(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 text-zinc-200 focus:outline-hidden"
+                >
+                  {products.map(p => (
+                    <option key={p.id} value={p.id}>{p.name} ({p.shortCode})</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="font-semibold text-zinc-300 block mb-1">Total Raw Material (kg)</label>
+                <input
+                  type="number"
+                  min="1"
+                  step="0.5"
+                  value={editRawKg}
+                  onChange={e => setEditRawKg(parseFloat(e.target.value) || 0)}
+                  required
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-zinc-200 focus:outline-hidden"
+                />
+              </div>
+
+              <div>
+                <label className="font-semibold text-zinc-300 block mb-1">Production Lot Date</label>
+                <input
+                  type="date"
+                  value={editLotDate}
+                  onChange={e => setEditLotDate(e.target.value)}
+                  required
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 text-zinc-200 focus:outline-hidden"
+                />
+              </div>
+
+              <div>
+                <label className="font-semibold text-zinc-300 block mb-1">Production Status</label>
+                <select
+                  value={editStatus}
+                  onChange={e => setEditStatus(e.target.value as any)}
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 text-zinc-200 focus:outline-hidden"
+                >
+                  <option value="Planned">Planned</option>
+                  <option value="In Production">In Production</option>
+                  <option value="Completed">Completed</option>
+                  <option value="Quarantined">Quarantined</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Edit Allocations Section */}
+            <div className="p-3.5 rounded-xl bg-zinc-950 border border-zinc-800 space-y-3">
+              <div className="flex items-center justify-between pb-1 border-b border-zinc-800">
+                <span className="text-xs font-bold uppercase tracking-wider text-amber-400">
+                  Allocations ({editAllocations.length})
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const prod = products.find(p => p.id === editProductId) || products[0];
+                    const cal = parseDateInput(editLotDate || new Date());
+                    const mfdFmt = formatCalendarDateDMY(cal);
+                    const bbFmt = formatCalendarDateDMY(calculateBestBeforeDate(cal, prod?.defaultShelfLifeMonths || 12));
+                    const newAlloc: BatchAllocation = {
+                      id: `alloc_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
+                      batchId: editBatchId,
+                      productId: editProductId,
+                      skuId: `sku_${Date.now()}`,
+                      packSize: '200 g',
+                      allocatedKg: 5,
+                      expectedPacks: 25,
+                      mfd: mfdFmt,
+                      bestBefore: bbFmt,
+                      mrpSnapshot: 95,
+                      ratePerGmSnapshot: 0.48,
+                      templateVersionSnapshot: 1,
+                      printStatus: 'Pending',
+                      packsPrinted: 0
+                    };
+                    setEditAllocations(prev => [...prev, newAlloc]);
+                  }}
+                  className="flex items-center gap-1 px-2 py-1 text-xs font-bold rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add Pack Allocation</span>
+                </button>
+              </div>
+
+              <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                {editAllocations.map((alloc, idx) => {
+                  const grams = parsePackGrams(alloc.packSize);
+                  const expectedPacks = alloc.allocatedKg > 0 ? Math.floor((alloc.allocatedKg * 1000) / grams) : 0;
+                  return (
+                    <div key={alloc.id || idx} className="p-2.5 rounded-lg bg-zinc-900 border border-zinc-800 grid grid-cols-1 sm:grid-cols-12 gap-2 items-center text-xs">
+                      <div className="sm:col-span-3">
+                        <label className="text-[10px] text-zinc-400 block mb-0.5">Pack Size</label>
+                        <input
+                          type="text"
+                          value={alloc.packSize}
+                          onChange={e => {
+                            const val = e.target.value;
+                            const newGrams = parsePackGrams(val);
+                            setEditAllocations(prev => prev.map((a, i) => i === idx ? {
+                              ...a,
+                              packSize: val,
+                              expectedPacks: Math.floor((a.allocatedKg * 1000) / newGrams)
+                            } : a));
+                          }}
+                          className="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-1 font-bold text-zinc-200"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-3">
+                        <label className="text-[10px] text-zinc-400 block mb-0.5">Allocated (kg)</label>
+                        <input
+                          type="number"
+                          step="0.5"
+                          min="0"
+                          value={alloc.allocatedKg}
+                          onChange={e => {
+                            const kg = parseFloat(e.target.value) || 0;
+                            setEditAllocations(prev => prev.map((a, i) => i === idx ? {
+                              ...a,
+                              allocatedKg: kg,
+                              expectedPacks: Math.floor((kg * 1000) / grams)
+                            } : a));
+                          }}
+                          className="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-1 font-mono text-zinc-200"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-3">
+                        <label className="text-[10px] text-amber-300 font-semibold block mb-0.5">M.R.P. (₹)</label>
+                        <input
+                          type="number"
+                          step="0.5"
+                          value={alloc.mrpSnapshot ?? ''}
+                          onChange={e => {
+                            const mrpVal = parseFloat(e.target.value) || 0;
+                            setEditAllocations(prev => prev.map((a, i) => i === idx ? {
+                              ...a,
+                              mrpSnapshot: mrpVal,
+                              ratePerGmSnapshot: mrpVal > 0 && grams > 0 ? Math.round((mrpVal / grams) * 100) / 100 : undefined
+                            } : a));
+                          }}
+                          className="w-full bg-zinc-950 border border-amber-500/50 rounded px-2 py-1 font-mono font-bold text-amber-300"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-3 flex items-center justify-between gap-1 pt-2 sm:pt-0">
+                        <div className="text-[10px] font-mono leading-tight">
+                          <span className="text-emerald-400 font-bold block">{expectedPacks} pk</span>
+                          <span className="text-zinc-500 text-[9px]">{alloc.mfd}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setEditAllocations(prev => prev.filter((_, i) => i !== idx))}
+                          className="p-1 rounded hover:bg-rose-950/50 text-zinc-500 hover:text-rose-400 transition-colors"
+                          title="Remove allocation"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Mass Balance Summary */}
+              {(() => {
+                const totalAllocated = editAllocations.reduce((sum, a) => sum + (Number(a.allocatedKg) || 0), 0);
+                const loose = Math.max(0, editRawKg - totalAllocated);
+                return (
+                  <div className="border-t border-zinc-800 pt-2 flex flex-wrap items-center justify-between gap-2 text-xs font-mono">
+                    <span className="text-zinc-400">
+                      Allocated: <strong className="text-emerald-400">{totalAllocated} kg</strong> / {editRawKg} kg
+                    </span>
+                    <span className="text-zinc-400">
+                      Loose balance: <strong className={loose > 0 ? 'text-amber-400' : 'text-zinc-500'}>{loose} kg</strong>
+                    </span>
+                  </div>
+                );
+              })()}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-zinc-800">
+              <button
+                type="button"
+                onClick={() => setEditingBatch(null)}
+                className="px-3 py-1.5 text-xs font-semibold text-zinc-400 hover:text-zinc-200"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="px-4 py-2 text-xs font-bold rounded-lg bg-amber-500 hover:bg-amber-400 text-black shadow-sm"
+              >
+                Save Batch Changes
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Modal: Delete Batch Confirmation */}
+      {batchToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-zinc-900 border-2 border-rose-500/50 p-6 shadow-2xl space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-rose-950 border border-rose-500 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5 text-rose-400" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Delete Production Batch?</h3>
+                <p className="text-xs text-zinc-400 font-mono mt-0.5">
+                  Batch ID: <span className="text-amber-400 font-bold">{batchToDelete.id}</span>
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-zinc-300">
+              This will permanently delete this batch ({batchToDelete.rawMaterialKg} kg raw input, {batchToDelete.allocations.length} allocations).
+              Any historical print logs associated with this batch will remain intact in the Audit History.
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-zinc-800">
+              <button
+                type="button"
+                onClick={() => setBatchToDelete(null)}
+                className="px-3 py-1.5 text-xs font-semibold text-zinc-400 hover:text-zinc-200"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (onDeleteBatch) onDeleteBatch(batchToDelete.id);
+                  setBatchToDelete(null);
+                  setToastMsg(`Batch ${batchToDelete.id} deleted.`);
+                  setTimeout(() => setToastMsg(null), 3000);
+                }}
+                className="px-4 py-1.5 text-xs font-bold rounded-lg bg-rose-600 hover:bg-rose-500 text-white shadow-sm"
+              >
+                Confirm Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Toast Notification */}
+      {toastMsg && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-2.5 rounded-xl bg-zinc-900 border-2 border-emerald-500 text-emerald-300 text-xs font-bold shadow-2xl animate-in fade-in slide-in-from-bottom-2 duration-200">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{toastMsg}</span>
         </div>
       )}
     </div>

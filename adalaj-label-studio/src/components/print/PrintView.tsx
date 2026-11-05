@@ -171,21 +171,29 @@ export const PrintView: React.FC<PrintViewProps> = ({
   ]);
 
   // Active Printhead Band (12.5, 12.7, 21.1, 25.0 mm, or machine default)
-  const currentBandMm = activeTemplate.customBandMm || machine.printBandMm || 12.7;
+  const currentBandMm = activeTemplate.customBandMm || machine.printBandMm || 12.5;
 
-  // Active Travel Length (custom e.g. 80, 100, 150 mm or pack profile default)
-  const currentLengthMm = activeTemplate.customLengthMm || packProfile.printWindowLengthMm || (activeTemplate.travel === 'Vertical' ? 100.0 : 45.0);
+  // Active Travel Length (custom e.g. 35, 45, 100 mm or pack profile default)
+  const currentLengthMm = activeTemplate.customLengthMm || packProfile.printWindowLengthMm || (activeTemplate.travel === 'Vertical' ? 35.0 : 45.0);
 
   // Physical millimeter bounds for preview
   const previewWidthMm = activeTemplate.travel === 'Vertical' ? currentBandMm : currentLengthMm;
   const previewHeightMm = activeTemplate.travel === 'Vertical' ? currentLengthMm : currentBandMm;
 
-  // Exact 1:1 Pixel Dimensions for Export
-  const defaultWidthPx = activeTemplate.customWidthPx || (activeTemplate.travel === 'Vertical' ? 148 : 1181);
-  const defaultHeightPx = activeTemplate.customHeightPx || (activeTemplate.travel === 'Vertical' ? 1181 : 148);
+  // Exact 1:1 Pixel Dimensions for Export (Strictly proportional to physical travel length)
+  const dpmmSafe = (machine.defaultDpi || 300) / 25.4;
+  const defaultWidthPx = activeTemplate.customWidthPx || Math.round(previewWidthMm * dpmmSafe);
+  const defaultHeightPx = activeTemplate.customHeightPx || Math.round(previewHeightMm * dpmmSafe);
 
   const [exportWidthPx, setExportWidthPx] = useState<number>(defaultWidthPx);
   const [exportHeightPx, setExportHeightPx] = useState<number>(defaultHeightPx);
+
+  // Dynamically synchronize dimensions when allocation, pack profile or template changes
+  useEffect(() => {
+    setExportWidthPx(defaultWidthPx);
+    setExportHeightPx(defaultHeightPx);
+  }, [defaultWidthPx, defaultHeightPx]);
+
   const [exportOrientation, setExportOrientation] = useState<'1to1' | 'rotate90' | 'rotate180' | 'rotate270'>(
     activeTemplate.customDownloadOrientation || '1to1'
   );
@@ -363,6 +371,31 @@ export const PrintView: React.FC<PrintViewProps> = ({
     a.click();
     URL.revokeObjectURL(url);
     setExportCompleteMsg(`Exported ${fileName} (Pure 1-bit monochrome BMP - exact 1:1 match: ${canvas.width}px × ${canvas.height}px, ${exportOrientation === '1to1' ? '0° upright' : exportOrientation})`);
+  };
+
+  // Direct High-Resolution Canvas PNG Download
+  const handleDownloadPng = () => {
+    if (values.mrp === '[Needs MRP]') {
+      setExportCompleteMsg('❌ Export blocked: Missing authorized MRP for this pack size.');
+      return;
+    }
+    const canvas = renderTemplateToCanvas(activeTemplate, machine, values, {
+      forDownload: true,
+      widthMm: previewWidthMm,
+      heightMm: previewHeightMm,
+      targetWidthPx: exportWidthPx,
+      targetHeightPx: exportHeightPx,
+      downloadOrientation: exportOrientation,
+      contentScale: contentScale,
+      fitEdgeToEdge: isFitEdgeToEdge
+    });
+    const fileName = `${(currentBatch?.id || 'TP014').toUpperCase()}_${(currentAlloc?.packSize || '100g').replace(/\s+/g, '')}.PNG`;
+    const url = canvas.toDataURL('image/png');
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    a.click();
+    setExportCompleteMsg(`Exported ${fileName} (Direct 1:1 Canvas PNG: ${canvas.width}px × ${canvas.height}px)`);
   };
 
   // ZIP Package with INDEX.TXT Download
@@ -1058,6 +1091,37 @@ export const PrintView: React.FC<PrintViewProps> = ({
                   </button>
                 ))}
               </div>
+
+              {/* Direct Instant Canvas Download Actions */}
+              <div className="flex items-center gap-1.5 ml-auto">
+                <button
+                  type="button"
+                  onClick={handleDownloadBmp}
+                  className="h-8 px-2.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-amber-300 font-bold text-xs border border-zinc-700 flex items-center gap-1 transition-colors cursor-pointer shadow-xs"
+                  title="Download direct 1:1 Windows BMP"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Canvas BMP</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDownload1BitBmp}
+                  className="h-8 px-2.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 font-semibold text-xs border border-zinc-700 flex items-center gap-1 transition-colors cursor-pointer"
+                  title="Download pure 1-bit monochrome BMP for TIJ head"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>1-Bit BMP</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDownloadPng}
+                  className="h-8 px-2.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 font-bold text-xs flex items-center gap-1 transition-colors cursor-pointer"
+                  title="Download direct high-resolution PNG"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>PNG</span>
+                </button>
+              </div>
             </div>
 
             {/* White Paper Result Rendering with Full Top-to-Bottom, Left-to-Right Scrolling Frame */}
@@ -1197,85 +1261,68 @@ export const PrintView: React.FC<PrintViewProps> = ({
                   type="button"
                   onClick={() => {
                     setExportWidthPx(148);
-                    setExportHeightPx(1181);
+                    setExportHeightPx(defaultHeightPx);
                     setExportOrientation('1to1');
                   }}
                   className={`px-2.5 py-1 rounded text-xs font-mono font-bold transition-all ${
-                    exportWidthPx === 148 && exportHeightPx === 1181 && exportOrientation === '1to1'
+                    exportWidthPx === 148 && exportHeightPx === defaultHeightPx && exportOrientation === '1to1'
                       ? 'bg-amber-500 text-black shadow-sm ring-2 ring-amber-400/50'
                       : 'bg-zinc-900 border border-zinc-700 text-zinc-300 hover:text-white'
                   }`}
-                  title="148 x 1181 px (12.5mm Hardware Printhead Swath @ 300 DPI - Zero Edge Cutoff)"
+                  title={`148 x ${defaultHeightPx} px (12.5mm Hardware Printhead Swath @ 300 DPI - Zero Edge Cutoff)`}
                 >
-                  ★ 148 × 1181 px (12.5mm Print Swath)
+                  ★ 148 × {defaultHeightPx} px (12.5mm Swath)
                 </button>
 
                 <button
                   type="button"
                   onClick={() => {
                     setExportWidthPx(150);
-                    setExportHeightPx(1181);
+                    setExportHeightPx(defaultHeightPx);
                     setExportOrientation('1to1');
                   }}
                   className={`px-2.5 py-1 rounded text-xs font-mono font-bold transition-all ${
-                    exportWidthPx === 150 && exportHeightPx === 1181 && exportOrientation === '1to1'
+                    exportWidthPx === 150 && exportHeightPx === defaultHeightPx && exportOrientation === '1to1'
                       ? 'bg-amber-500 text-black shadow-sm ring-2 ring-amber-400/50'
                       : 'bg-zinc-900 border border-zinc-700 text-zinc-300 hover:text-white'
                   }`}
-                  title="150 x 1181 px (12.7mm HP TIJ 2.5 Standard @ 300 DPI)"
+                  title={`150 x ${defaultHeightPx} px (12.7mm HP TIJ 2.5 Standard @ 300 DPI)`}
                 >
-                  150 × 1181 px (12.7mm)
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setExportWidthPx(248);
-                    setExportHeightPx(1181);
-                    setExportOrientation('1to1');
-                  }}
-                  className={`px-2.5 py-1 rounded text-xs font-mono font-bold transition-all ${
-                    exportWidthPx === 248 && exportHeightPx === 1181 && exportOrientation === '1to1'
-                      ? 'bg-amber-500 text-black shadow-sm ring-2 ring-amber-400/50'
-                      : 'bg-zinc-900 border border-zinc-700 text-zinc-300 hover:text-white'
-                  }`}
-                  title="248 x 1181 px (TIJ Injector Screen Resolution)"
-                >
-                  248 × 1181 px (Screen)
+                  150 × {defaultHeightPx} px (12.7mm)
                 </button>
 
                 <button
                   type="button"
                   onClick={() => {
                     setExportWidthPx(295);
-                    setExportHeightPx(1181);
+                    setExportHeightPx(defaultHeightPx);
                     setExportOrientation('1to1');
                   }}
                   className={`px-2.5 py-1 rounded text-xs font-mono font-bold transition-all ${
-                    exportWidthPx === 295 && exportHeightPx === 1181 && exportOrientation === '1to1'
+                    exportWidthPx === 295 && exportHeightPx === defaultHeightPx && exportOrientation === '1to1'
                       ? 'bg-amber-500 text-black shadow-sm ring-2 ring-amber-400/50'
                       : 'bg-zinc-900 border border-zinc-700 text-zinc-300 hover:text-white'
                   }`}
-                  title="295 x 1181 px (25.0mm Dual Head @ 300 DPI)"
+                  title={`295 x ${defaultHeightPx} px (25.0mm Dual Head @ 300 DPI)`}
                 >
-                  295 × 1181 px (25mm)
+                  295 × {defaultHeightPx} px (25mm)
                 </button>
 
                 <button
                   type="button"
                   onClick={() => {
-                    setExportWidthPx(1181);
+                    setExportWidthPx(defaultHeightPx);
                     setExportHeightPx(148);
                     setExportOrientation('1to1');
                   }}
                   className={`px-2.5 py-1 rounded text-xs font-mono font-bold transition-all ${
-                    exportWidthPx === 1181 && exportHeightPx === 148 && exportOrientation === '1to1'
+                    exportWidthPx === defaultHeightPx && exportHeightPx === 148 && exportOrientation === '1to1'
                       ? 'bg-amber-500 text-black shadow-sm ring-2 ring-amber-400/50'
                       : 'bg-zinc-900 border border-zinc-700 text-zinc-300 hover:text-white'
                   }`}
-                  title="1181 x 148 px (Horizontal Conveyor 1:1)"
+                  title={`${defaultHeightPx} x 148 px (Horizontal Conveyor 1:1)`}
                 >
-                  1181 × 148 px (Horizontal)
+                  {defaultHeightPx} × 148 px (Horizontal)
                 </button>
               </div>
 
@@ -1404,6 +1451,15 @@ export const PrintView: React.FC<PrintViewProps> = ({
                 >
                   <Download className="w-3.5 h-3.5" />
                   <span>Raw 1-Bit .BMP</span>
+                </button>
+
+                <button
+                  onClick={handleDownloadPng}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-750 text-amber-300 font-semibold text-xs border border-zinc-700 transition-colors"
+                  title="Download direct high-resolution PNG image"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Direct PNG</span>
                 </button>
 
                 <button

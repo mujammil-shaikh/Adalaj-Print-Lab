@@ -91,7 +91,7 @@ interface DesignerViewProps {
   onSelectSku?: (s: SKU) => void;
   onSelectBatch?: (b: Batch) => void;
   onSaveTemplate: (t: Template, scope: DesignScope) => void;
-  onSavePackDefault?: (t: Template, packSize: string) => Promise<void>;
+  onSavePackDefault?: (t: Template, packSize: string, currentProductId?: string) => Promise<void>;
   onSaveSkuOverride?: (t: Template, productId: string, productName: string, packSize: string) => Promise<void>;
   onRevertSkuOverride?: (productId: string, packSize: string) => Promise<void>;
   onNavigateToPrint: () => void;
@@ -830,7 +830,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
     try {
       const targetPackSize = previewSku.packSize;
       if (onSavePackDefault) {
-        await onSavePackDefault(template, targetPackSize);
+        await onSavePackDefault(template, targetPackSize, activeProduct.id);
       } else {
         const packTmpl = buildPackDefaultTemplate(template, targetPackSize);
         await onSaveTemplate(packTmpl, 'All SKUs of this pack size');
@@ -1322,127 +1322,48 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
             </button>
           </div>
 
-          {/* Reset to Global Button (Contextual) */}
+          {/* Revert to Global Button (Shown when editing a custom override) */}
           {currentLayoutInfo.source === 'sku_override' && (
             <button
               type="button"
               onClick={handleResetToGlobal}
-              className="flex items-center gap-1.5 px-2.5 h-8 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white border border-zinc-700 text-xs font-semibold transition-colors cursor-pointer"
-              title={`Reset ${activeProduct.name} to the active Global ${previewSku.packSize} Default layout`}
+              className="flex items-center gap-1.5 px-2.5 h-8 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-amber-300 hover:text-white border border-amber-500/40 text-xs font-semibold transition-colors cursor-pointer"
+              title={`Discard custom override and restore the latest saved Global ${previewSku.packSize} Default layout`}
             >
-              <RotateCcw className="w-3.5 h-3.5 text-zinc-400" />
-              <span className="hidden sm:inline">Reset to Global</span>
+              <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
+              <span className="hidden sm:inline">Revert to Global</span>
             </button>
           )}
 
-          {/* Split Save Action Button */}
-          <div className="flex items-center rounded-lg shadow-xs border border-amber-500/50 overflow-visible relative h-8">
-            <button
-              type="button"
-              onClick={handlePrimarySaveClick}
-              disabled={saveStatus === 'saving'}
-              className={`flex items-center gap-1.5 px-3 h-full font-bold text-xs transition-all active:scale-95 rounded-l-md cursor-pointer ${
-                saveStatus === 'saved'
-                  ? 'bg-emerald-500 hover:bg-emerald-400 text-black'
-                  : saveStatus === 'saving'
-                  ? 'bg-amber-600 text-black cursor-wait opacity-90'
-                  : 'bg-amber-500 hover:bg-amber-400 text-black'
-              }`}
-              title={
-                currentLayoutInfo.source === 'sku_override'
-                  ? `Save independent layout for ${activeProduct.name} (${previewSku.packSize}) only`
-                  : `Set as Global Default for ALL ${previewSku.packSize} products`
-              }
-            >
-              {saveStatus === 'saving' ? (
-                <>
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  <span>Saving...</span>
-                </>
-              ) : saveStatus === 'saved' ? (
-                <>
-                  <CheckCircle2 className="w-3.5 h-3.5 stroke-[2.5]" />
-                  <span>Saved!</span>
-                </>
-              ) : currentLayoutInfo.source === 'sku_override' ? (
-                <>
-                  <Star className="w-3.5 h-3.5 fill-black text-black" />
-                  <span>Save for {activeProduct.name}</span>
-                </>
-              ) : (
-                <>
-                  <Globe className="w-3.5 h-3.5 text-black" />
-                  <span>Set as Global {previewSku.packSize}</span>
-                </>
-              )}
-            </button>
-
-            {/* Dropdown Options Toggle */}
-            <button
-              type="button"
-              onClick={() => setIsSaveMenuOpen(prev => !prev)}
-              className="px-1.5 h-full bg-amber-600 hover:bg-amber-500 text-black border-l border-amber-600/60 font-bold transition-colors cursor-pointer rounded-r-md flex items-center justify-center"
-              title="Select save target (Global or Product only)..."
-            >
-              <ChevronDown className="w-3.5 h-3.5" />
-            </button>
-
-            {/* Floating Dropdown Menu */}
-            {isSaveMenuOpen && (
-              <div 
-                className="absolute right-0 top-full mt-1.5 w-80 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl p-2 z-50 animate-in fade-in zoom-in-95 duration-150 space-y-1"
-                onClick={e => e.stopPropagation()}
-              >
-                <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-zinc-400 border-b border-zinc-800">
-                  Save Scope Options
-                </div>
-
-                {/* Option 1: Set as Global Default */}
-                <button
-                  type="button"
-                  onClick={handleSaveGeneralPackDefault}
-                  className="w-full text-left p-2.5 rounded-lg hover:bg-zinc-800 transition-colors flex items-start gap-2.5 group cursor-pointer"
-                >
-                  <div className="w-6 h-6 rounded-md bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0 mt-0.5 group-hover:bg-emerald-500/30">
-                    <Globe className="w-3.5 h-3.5" />
-                  </div>
-                  <div>
-                    <div className="text-xs font-bold text-zinc-100 flex items-center gap-1.5">
-                      <span>Set as Global {previewSku.packSize} Default</span>
-                      {currentLayoutInfo.source === 'pack_default' && (
-                        <span className="text-[9px] font-mono bg-emerald-500/20 text-emerald-400 px-1 rounded">Active</span>
-                      )}
-                    </div>
-                    <p className="text-[11px] text-zinc-400 leading-tight mt-0.5">
-                      Applies this layout to all {previewSku.packSize} products that use the global default.
-                    </p>
-                  </div>
-                </button>
-
-                {/* Option 2: Save for Product only (Independent) */}
-                <button
-                  type="button"
-                  onClick={handleSaveSkuCustomOverride}
-                  className="w-full text-left p-2.5 rounded-lg hover:bg-zinc-800 transition-colors flex items-start gap-2.5 group cursor-pointer"
-                >
-                  <div className="w-6 h-6 rounded-md bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0 mt-0.5 group-hover:bg-amber-500/30">
-                    <Star className="w-3.5 h-3.5" />
-                  </div>
-                  <div>
-                    <div className="text-xs font-bold text-zinc-100 flex items-center gap-1.5">
-                      <span>Save for {activeProduct.name} only (Independent)</span>
-                      {currentLayoutInfo.source === 'sku_override' && (
-                        <span className="text-[9px] font-mono bg-amber-500/20 text-amber-400 px-1 rounded">Active</span>
-                      )}
-                    </div>
-                    <p className="text-[11px] text-zinc-400 leading-tight mt-0.5">
-                      Saves an independent custom layout specifically for {activeProduct.name} ({previewSku.packSize}).
-                    </p>
-                  </div>
-                </button>
-              </div>
+          {/* Action 1: Save as Global Default for All Products of this Pack Size */}
+          <button
+            type="button"
+            onClick={handleSaveGeneralPackDefault}
+            disabled={saveStatus === 'saving'}
+            className="flex items-center gap-1.5 px-3 h-8 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-xs transition-colors cursor-pointer"
+            title={`Set this layout as the Global Default for ALL ${previewSku.packSize} products. Clears product override.`}
+          >
+            {saveStatus === 'saving' ? (
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            ) : saveStatus === 'saved' ? (
+              <CheckCircle2 className="w-3.5 h-3.5" />
+            ) : (
+              <Globe className="w-3.5 h-3.5" />
             )}
-          </div>
+            <span>Save as Global {previewSku.packSize}</span>
+          </button>
+
+          {/* Action 2: Save as Independent Custom Override for this Product only */}
+          <button
+            type="button"
+            onClick={handleSaveSkuCustomOverride}
+            disabled={saveStatus === 'saving'}
+            className="flex items-center gap-1.5 px-3 h-8 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs shadow-xs transition-colors cursor-pointer"
+            title={`Save an independent layout specifically for ${activeProduct.name} (${previewSku.packSize}) only. Other products follow Global Default.`}
+          >
+            <Star className="w-3.5 h-3.5 fill-black text-black" />
+            <span>Save for {activeProduct.shortCode}</span>
+          </button>
 
           {/* Proceed to Print Action */}
           <button

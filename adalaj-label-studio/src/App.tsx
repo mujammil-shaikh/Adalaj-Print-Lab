@@ -21,6 +21,7 @@ import type {
 } from './types';
 import { 
   resolveLayout, 
+  normalizePackSize,
   buildPackDefaultTemplate, 
   buildSkuOverrideTemplate, 
   getSkuOverrideTemplateId,
@@ -461,6 +462,45 @@ export default function App() {
     setSkus(prev => [...prev, ...newSkus]);
   };
 
+  const handleUpdateProduct = async (updatedProd: Product) => {
+    await db.products.put(updatedProd);
+    setProducts(prev => prev.map(p => p.id === updatedProd.id ? updatedProd : p));
+    if (activeProduct?.id === updatedProd.id) setActiveProduct(updatedProd);
+  };
+
+  const handleDeleteProduct = async (productId: string) => {
+    await db.products.delete(productId);
+    const skusToDelete = skus.filter(s => s.productId === productId);
+    for (const s of skusToDelete) {
+      await db.skus.delete(s.id);
+    }
+    setProducts(prev => prev.filter(p => p.id !== productId));
+    setSkus(prev => prev.filter(s => s.productId !== productId));
+    if (activeProduct?.id === productId) {
+      const remaining = products.filter(p => p.id !== productId);
+      setActiveProduct(remaining[0] || null);
+    }
+  };
+
+  const handleCreateSku = async (newSku: SKU) => {
+    await db.skus.put(newSku);
+    setSkus(prev => {
+      const filtered = prev.filter(s => s.id !== newSku.id);
+      return [...filtered, newSku];
+    });
+    const prod = products.find(p => p.id === newSku.productId);
+    if (prod && !prod.allowedPackSizes.includes(newSku.packSize)) {
+      const updatedProd = { ...prod, allowedPackSizes: [...prod.allowedPackSizes, newSku.packSize] };
+      await db.products.put(updatedProd);
+      setProducts(prev => prev.map(p => p.id === updatedProd.id ? updatedProd : p));
+    }
+  };
+
+  const handleDeleteSku = async (skuId: string) => {
+    await db.skus.delete(skuId);
+    setSkus(prev => prev.filter(s => s.id !== skuId));
+  };
+
   const handleBulkUpdateSkus = async (skuIds: string[], updates: Partial<SKU>) => {
     await db.transaction('rw', db.skus, async () => {
       for (const id of skuIds) {
@@ -487,6 +527,31 @@ export default function App() {
     if (activeBatch?.id === updated.id) setActiveBatch(updated);
   };
 
+  const handleDeleteBatch = async (batchId: string) => {
+    await db.batches.delete(batchId);
+    setBatches(prev => prev.filter(b => b.id !== batchId));
+    if (activeBatch?.id === batchId) {
+      const remaining = batches.filter(b => b.id !== batchId);
+      setActiveBatch(remaining[0] || null);
+    }
+  };
+
+  const handleDuplicateBatch = async (sourceBatch: Batch) => {
+    const prod = products.find(p => p.id === sourceBatch.productId);
+    const prefix = prod?.batchPrefix || prod?.shortCode || 'BAT';
+    const nextId = generateNextBatchId(prefix, batches);
+    const cloned: Batch = {
+      ...sourceBatch,
+      id: nextId,
+      status: 'Planned',
+      createdAt: new Date().toISOString(),
+      notes: `Cloned from ${sourceBatch.id}`
+    };
+    await db.batches.put(cloned);
+    setBatches(prev => [cloned, ...prev]);
+    setActiveBatch(cloned);
+  };
+
   // Safe Design Scope Template Save (Strictly separates geometry from data)
   const handleSaveTemplate = async (updatedTmpl: Template, scope: DesignScope) => {
     await db.templates.put(updatedTmpl);
@@ -510,20 +575,29 @@ export default function App() {
   };
 
   // Tier 1: Save General Default for all packages of this pack size
-  const handleSavePackSizeDefault = async (tmplToSave: Template, packSize: string) => {
+  const handleSavePackSizeDefault = async (tmplToSave: Template, packSize: string, currentProductId?: string) => {
+    const norm = normalizePackSize(packSize);
     const packDefaultTmpl = buildPackDefaultTemplate(tmplToSave, packSize);
+
+    // Delete any conflicting custom override for currentProductId so this product inherits the new Global Default immediately
+    let updatedTemplates = templates.filter(t => t.id !== packDefaultTmpl.id);
+    if (currentProductId) {
+      const overrideId = getSkuOverrideTemplateId(currentProductId, packSize);
+      await db.templates.delete(overrideId);
+      updatedTemplates = updatedTemplates.filter(t => t.id !== overrideId && t.skuOverrideKey !== `${currentProductId}_${norm}`);
+    }
+
     await db.templates.put(packDefaultTmpl);
-    setTemplates(prev => {
-      const filtered = prev.filter(t => t.id !== packDefaultTmpl.id);
-      return [...filtered, packDefaultTmpl];
-    });
+    updatedTemplates.push(packDefaultTmpl);
+
+    setTemplates(updatedTemplates);
     setActiveTemplate(packDefaultTmpl);
 
     await db.auditLogs.put({
       id: `audit_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
       timestamp: new Date().toISOString(),
       action: 'PACK_SIZE_DEFAULT_SAVED',
-      details: `Saved General Default layout for all ${packSize} packages across all products.`,
+      details: `Saved new Global Default layout for all ${packSize} packages across all products. Conflicting custom override cleared.`,
       user: 'Operator',
       undoable: true
     });
@@ -672,6 +746,10 @@ export default function App() {
             skus={skus}
             onUpdateSku={handleUpdateSku}
             onCreateProduct={handleCreateProduct}
+            onUpdateProduct={handleUpdateProduct}
+            onDeleteProduct={handleDeleteProduct}
+            onCreateSku={handleCreateSku}
+            onDeleteSku={handleDeleteSku}
             onBulkUpdateSkus={handleBulkUpdateSkus}
           />
         )}
@@ -688,12 +766,14 @@ export default function App() {
               if (p) setActiveProduct(p);
             }}
             onCreateBatch={handleCreateBatch}
+            onUpdateBatch={handleUpdateBatch}
+            onDeleteBatch={handleDeleteBatch}
+            onDuplicateBatch={handleDuplicateBatch}
             onNavigateToPrint={(b, allocId) => {
               setActiveBatch(b);
               if (allocId) setPrintAllocId(allocId);
               setCurrentRoute('print');
             }}
-            onUpdateBatch={handleUpdateBatch}
           />
         )}
 
@@ -731,7 +811,7 @@ export default function App() {
               }
             }}
             onSaveTemplate={handleSaveTemplate}
-            onSavePackDefault={handleSavePackSizeDefault}
+            onSavePackDefault={(tmpl, packSize, currentProdId) => handleSavePackSizeDefault(tmpl, packSize, currentProdId || activeProduct?.id)}
             onSaveSkuOverride={handleSaveSkuOverride}
             onRevertSkuOverride={handleRevertSkuOverride}
             onNavigateToPrint={() => setCurrentRoute('print')}

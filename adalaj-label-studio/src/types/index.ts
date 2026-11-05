@@ -69,6 +69,7 @@ export interface SKU {
   netWeightGrams: number;
   unit: string;          // e.g. "g", "kg"
   mrp?: number;          // undefined if empty / "Needs MRP"
+  barcode?: string;
   shelfLifeOverrideMonths?: number;
   templateId?: string;
   enabled: boolean;
@@ -234,7 +235,7 @@ export interface Batch {
   productId: string;
   rawMaterialKg: number;
   lotDate: string;
-  status: 'Open' | 'Completed' | 'Archived';
+  status: 'Open' | 'Completed' | 'Archived' | 'Planned' | 'In Production' | 'Quarantined';
   notes?: string;
   allocations: BatchAllocation[];
   createdAt: string;
