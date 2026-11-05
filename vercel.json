@@ -1,0 +1,10 @@
+{
+  "buildCommand": "cd adalaj-label-studio && pnpm run build",
+  "outputDirectory": "adalaj-label-studio/dist",
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}
