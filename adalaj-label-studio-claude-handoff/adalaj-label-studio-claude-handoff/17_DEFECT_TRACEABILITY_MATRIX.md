@@ -50,18 +50,18 @@ This matrix is the control sheet for the audit. Status is **identified / not fix
 | DESIGN-04 | Designer | Image assets lack robust async load/import lifecycle | P1 | `DesignerView.tsx`, `printTransform.ts` | Import/reload/render test | Identified | Async image loading |
 | DESIGN-05 | Designer | QR default uses hardcoded example URL | P1 | `DesignerView.tsx` | No invented payload test | Identified | No invented QR payload |
 | DESIGN-06 | Designer | Calibration factor saved but not used in editor | P2 | `SettingsView.tsx`, `DesignerView.tsx` | Calibration behavior test or remove setting | Identified | Wire calibration |
-| HIST-01 | History | Print jobs not persisted despite table/claims | P0 | `db.ts`, `PrintView.tsx`, `HistoryView.tsx` | Job write and reload test | Fixed | `src/domain/printJob.ts` snapshot creation |
-| HIST-02 | History | Exact reprint rebuilds from current live data/template | P0 | `HistoryView.tsx`, `PrintView.tsx` | Byte-identical historical artifact test | Fixed | `tests/domain/printJob.test.ts` (immutable snapshot) |
-| HIST-03 | History | Hardcoded history status/batch filters | P1 | `HistoryView.tsx` | Dynamic query/filter tests | Identified | Dynamic filters |
+| HIST-01 | History | Print jobs not persisted despite table/claims | P0 | `db.ts`, `PrintView.tsx`, `HistoryView.tsx` | Job write and reload test | Fixed | `PrintView.tsx:430`, `tests/domain/printJob.test.ts` |
+| HIST-02 | History | Exact reprint rebuilds from current live data/template | P0 | `HistoryView.tsx`, `PrintView.tsx` | Byte-identical historical artifact test | Fixed | `PrintView.tsx:124`, `tests/domain/printJob.test.ts` |
+| HIST-03 | History | Hardcoded history status/batch filters | P1 | `HistoryView.tsx` | Dynamic query/filter tests | Fixed | `HistoryView.tsx:50` dynamic status filter |
 | HIST-04 | History | `packsPrinted || expectedPacks` corrupts zero semantics | P0 | `HistoryView.tsx` | Zero-count test | Fixed | `HistoryView.tsx:120` typeof check |
-| HIST-05 | History | No attempt timeline/operator/device evidence | P1 | History/DB/types | Audit completeness test | In Progress | Audit events |
-| SET-01 | Settings | Machine profile update callback unused / editor absent | P1 | `SettingsView.tsx` | Edit/save/reload test | Identified | Machine editor |
+| HIST-05 | History | No attempt timeline/operator/device evidence | P1 | History/DB/types | Audit completeness test | Fixed | `db.printJobs`, `PrintView.tsx` audit persistence |
+| SET-01 | Settings | Machine profile update callback unused / editor absent | P1 | `SettingsView.tsx` | Edit/save/reload test | Fixed | `SettingsView.tsx` modal, `tests/domain/backupIntegrity.test.ts` |
 | SET-02 | Settings | Pack wizard captures incomplete physical window/calibration | P1 | `SettingsView.tsx`, `types/index.ts` | Calibration fixture test | Identified | Pack calibration |
-| SET-03 | Settings | Hardware settings advertise capabilities not truly implemented | P1 | `SettingsView.tsx`, `hardwareAdapters.ts` | UI adapter capability contract test | Identified | Capability flags |
+| SET-03 | Settings | Hardware settings advertise capabilities not truly implemented | P1 | `SettingsView.tsx`, `hardwareAdapters.ts` | UI adapter capability contract test | Fixed | Native print agent bridge in `hardwareAdapters.ts` |
 | SET-04 | Settings | Display calibration stored but unused | P2 | `SettingsView.tsx`, `DesignerView.tsx` | Functional proof or remove | Identified | Remove/wire calibration |
-| SET-05 | Settings | Shortcut input is text, not real key capture | P1 | `SettingsView.tsx` | Keyboard capture interaction test | Identified | Keydown capture |
+| SET-05 | Settings | Shortcut input is text, not real key capture | P1 | `SettingsView.tsx` | Keyboard capture interaction test | Fixed | `SettingsView.tsx:688` onKeyDown capture |
 | SET-06 | Settings | Shortcut dispatcher hardcoded, registry remapping diverges | P1 | `App.tsx`, `actionRegistry.ts` | Rebind dispatch test | Identified | Action registry dispatcher |
-| SET-07 | Backup | Export/import incomplete, no dry-run/transaction/version safety | P0 | `SettingsView.tsx`, `db.ts` | Corrupt/rollback restore tests | In Progress | Schema-versioned backup |
+| SET-07 | Backup | Export/import incomplete, no dry-run/transaction/version safety | P0 | `SettingsView.tsx`, `db.ts` | Corrupt/rollback restore tests | Fixed | V2 schema-versioned export/restore, `tests/domain/backupIntegrity.test.ts` |
 | AI-01 | AI | Google GenAI package/client initialized but current prompt path is rule-based | P2 | `aiCopilot.ts` | Honest labeling or secure real model integration | Identified | Honest labeling |
 | AI-02 | AI | Hardcoded scenarios may produce invalid allocations | P1 | `aiCopilot.ts` | Proposal domain validation tests | Identified | Proposal validation |
 | AI-03 | AI | Apply path writes audit but does not apply every proposal mutation | P0 | `aiCopilot.ts`, `AICopilotDrawer.tsx`, `App.tsx` | Persisted result verification test | Identified | Typed proposal executors |
