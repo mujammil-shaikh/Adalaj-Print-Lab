@@ -454,7 +454,7 @@ export const PrintView: React.FC<PrintViewProps> = ({
         {
           filename: bmpName,
           blob: bmpBlob,
-          description: `Pass 1 of 1: ${currentProduct?.name || 'Product'} ${currentAlloc?.packSize || '100g'} (Universal Standard BMP)`
+          description: `Pass 1 of 1: ${currentProduct?.name || 'Product'} ${currentAlloc?.packSize || '100g'} (Standard Windows BMP)`
         },
         {
           filename: rawName,

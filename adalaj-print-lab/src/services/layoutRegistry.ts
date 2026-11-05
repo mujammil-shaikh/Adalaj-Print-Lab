@@ -727,8 +727,7 @@ export function getFactoryProductTemplate(productId: string, packSize: string): 
 }
 
 /**
-/**
- * Resolves the effective template following a clean, universal two-tier hierarchy:
+ * Resolves the effective template following a clean two-tier hierarchy:
  * 1. Independent Product-Specific Custom State / Override (if user saved one for this product)
  * 2. Global Pack Size Default across all products (e.g. 100g, 500g)
  * 3. Pristine Baseline Factory Template for the pack size

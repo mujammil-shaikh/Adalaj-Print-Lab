@@ -1,5 +1,5 @@
 /**
- * Adalaj Print Lab - Universal Print Management Application Root
+ * Adalaj Print Lab - Print Management Application Root
  */
 
 import React, { useState, useEffect, useCallback } from 'react';

@@ -1,5 +1,5 @@
 /**
- * Adalaj Print Lab - Universal Core Domain Types
+ * Adalaj Print Lab - Core Domain Types
  */
 
 export type TravelDirection = 'Vertical' | 'Horizontal';

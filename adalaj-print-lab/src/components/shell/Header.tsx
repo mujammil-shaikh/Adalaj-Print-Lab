@@ -74,7 +74,7 @@ export const Header: React.FC<HeaderProps> = ({
             <h1 className="text-sm font-black tracking-tight text-zinc-100 flex items-center gap-1.5">
               ADALAJ <span className="text-amber-400 font-medium text-xs">Print Lab</span>
             </h1>
-            <p className="text-[10px] text-zinc-400 font-mono">Universal Mark & Code v3</p>
+            <p className="text-[10px] text-zinc-400 font-mono">Adalaj Mark & Code v3</p>
           </div>
         </div>
 

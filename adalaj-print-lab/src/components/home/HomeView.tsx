@@ -166,7 +166,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
         <div className="space-y-1.5">
           <div className="flex items-center gap-2">
             <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase bg-amber-500 text-black">
-              Universal Platform
+              Adalaj Platform
             </span>
             <span className="text-xs text-zinc-400 font-mono">Any surface • Any printer • Physical mm precision</span>
           </div>

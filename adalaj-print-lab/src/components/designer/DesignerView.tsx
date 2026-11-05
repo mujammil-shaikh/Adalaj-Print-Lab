@@ -1991,7 +1991,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                   Download & Inspect
                 </span>
 
-                {/* Standard BMP button (Universal Windows Photos compatible) */}
+                {/* Standard BMP button (Windows Photos compatible) */}
                 <button
                   onClick={handleDownloadStandardBmp}
                   className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs shadow-sm transition-colors"

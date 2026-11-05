@@ -125,13 +125,13 @@ async function doInitializeDatabase() {
     id: 'brand_adalaj',
     businessId: 'biz_default',
     name: 'ADALAJ',
-    description: 'Universal seed brand for food, spice, and packaging products'
+    description: 'Adalaj brand for food, spice, and packaging products'
   };
 
   const initialMachine: MachineProfile = {
     id: 'mach_r2d2',
     name: 'R2D2-SX100',
-    manufacturer: 'Universal TIJ Systems',
+    manufacturer: 'Adalaj TIJ Systems',
     model: 'R2D2-SX100',
     technology: 'TIJ Inkjet',
     headWidthMm: 12.7,
@@ -271,7 +271,7 @@ async function doInitializeDatabase() {
   const defaultTemplate: Template = {
     id: 'tmpl_adalaj_6line',
     name: 'ADALAJ-6LINE',
-    description: 'Universal six-line variable data template (MRP, Batch, Net Wt, MFD, Best Before, Rate)',
+    description: 'Adalaj six-line variable data template (MRP, Batch, Net Wt, MFD, Best Before, Rate)',
     version: 1,
     status: 'Approved',
     travel: 'Vertical',

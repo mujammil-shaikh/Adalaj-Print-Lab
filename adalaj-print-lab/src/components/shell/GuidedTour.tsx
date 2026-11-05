@@ -1,6 +1,6 @@
 /**
  * Guided Spotlight Tour Component
- * Walkthrough of the core keyboard-first and universal workflow
+ * Walkthrough of the core keyboard-first workflow
  */
 
 import React, { useState } from 'react';
