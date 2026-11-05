@@ -755,10 +755,10 @@ export function resolveLayout(
   );
 
   // Check 2: Global Pack Default in database (e.g. tmpl_pack_default_100g)
-  const packDefault = templates.find(t => 
-    t.id === packDefaultId || 
-    (t.packSizeScope === norm && t.isPackSizeDefault)
-  );
+  // Priority: exact target packDefaultId (tmpl_pack_default_${norm}) takes absolute precedence over generic seed
+  const packDefault = templates.find(t => t.id === packDefaultId)
+    || templates.find(t => t.packSizeScope === norm && t.isPackSizeDefault && t.id !== 'tmpl_adalaj_6line')
+    || templates.find(t => t.packSizeScope === norm && t.isPackSizeDefault);
 
   if (skuOverride) {
     return {
@@ -782,7 +782,7 @@ export function resolveLayout(
 
   // Fallback 1: Pristine global 100g template
   if (norm === '100g') {
-    const seed = templates.find(t => t.id === 'tmpl_adalaj_6line') || default100gTemplate;
+    const seed = templates.find(t => t.id === packDefaultId) || templates.find(t => t.id === 'tmpl_adalaj_6line') || default100gTemplate;
     return {
       template: JSON.parse(JSON.stringify(seed)),
       source: 'pack_default',
@@ -794,8 +794,9 @@ export function resolveLayout(
 
   // Fallback 2: Pristine global 500g template
   if (norm === '500g') {
+    const seed = templates.find(t => t.id === packDefaultId) || default500gTemplate;
     return {
-      template: JSON.parse(JSON.stringify(default500gTemplate)),
+      template: JSON.parse(JSON.stringify(seed)),
       source: 'pack_default',
       normalizedPackSize: norm,
       hasCustomOverride: false,

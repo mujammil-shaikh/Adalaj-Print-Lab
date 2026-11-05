@@ -25,6 +25,7 @@ import {
   buildPackDefaultTemplate, 
   buildSkuOverrideTemplate, 
   getSkuOverrideTemplateId,
+  getPackDefaultTemplateId,
   default100gTemplate,
   default500gTemplate,
   turmeric100gOverrideTemplate,
@@ -577,18 +578,32 @@ export default function App() {
   // Tier 1: Save General Default for all packages of this pack size
   const handleSavePackSizeDefault = async (tmplToSave: Template, packSize: string, currentProductId?: string) => {
     const norm = normalizePackSize(packSize);
+    const targetId = getPackDefaultTemplateId(packSize);
     const packDefaultTmpl = buildPackDefaultTemplate(tmplToSave, packSize);
 
-    // Delete any conflicting custom override for currentProductId so this product inherits the new Global Default immediately
-    let updatedTemplates = templates.filter(t => t.id !== packDefaultTmpl.id);
+    // 1. Remove ANY previous template that served as the default for this pack size
+    // (including tmpl_adalaj_6line for 100g, or previous tmpl_pack_default_${norm})
+    let updatedTemplates = templates.filter(t => 
+      t.id !== targetId && 
+      !(t.packSizeScope === norm && t.isPackSizeDefault) &&
+      !(norm === '100g' && t.id === 'tmpl_adalaj_6line')
+    );
+
+    await db.templates.delete(targetId);
+    if (norm === '100g') {
+      await db.templates.delete('tmpl_adalaj_6line');
+    }
+
+    // 2. Also delete any conflicting custom override for currentProductId so this product inherits the new Global Default immediately
     if (currentProductId) {
       const overrideId = getSkuOverrideTemplateId(currentProductId, packSize);
       await db.templates.delete(overrideId);
       updatedTemplates = updatedTemplates.filter(t => t.id !== overrideId && t.skuOverrideKey !== `${currentProductId}_${norm}`);
     }
 
+    // 3. Save new default at the top of templates so it resolves first
     await db.templates.put(packDefaultTmpl);
-    updatedTemplates.push(packDefaultTmpl);
+    updatedTemplates = [packDefaultTmpl, ...updatedTemplates];
 
     setTemplates(updatedTemplates);
     setActiveTemplate(packDefaultTmpl);
@@ -607,12 +622,12 @@ export default function App() {
 
   // Tier 2: Save Custom Override specifically for this product & pack size
   const handleSaveSkuOverride = async (tmplToSave: Template, productId: string, productName: string, packSize: string) => {
+    const norm = normalizePackSize(packSize);
     const skuOverrideTmpl = buildSkuOverrideTemplate(tmplToSave, productId, productName, packSize);
     await db.templates.put(skuOverrideTmpl);
-    setTemplates(prev => {
-      const filtered = prev.filter(t => t.id !== skuOverrideTmpl.id);
-      return [...filtered, skuOverrideTmpl];
-    });
+    let updatedTemplates = templates.filter(t => t.id !== skuOverrideTmpl.id && t.skuOverrideKey !== `${productId}_${norm}`);
+    updatedTemplates = [skuOverrideTmpl, ...updatedTemplates];
+    setTemplates(updatedTemplates);
     setActiveTemplate(skuOverrideTmpl);
 
     await db.auditLogs.put({
@@ -629,9 +644,10 @@ export default function App() {
 
   // Revert Custom Override back to General Pack Size Default
   const handleRevertSkuOverride = async (productId: string, packSize: string) => {
+    const norm = normalizePackSize(packSize);
     const overrideId = getSkuOverrideTemplateId(productId, packSize);
     await db.templates.delete(overrideId);
-    const updatedTemplates = templates.filter(t => t.id !== overrideId);
+    const updatedTemplates = templates.filter(t => t.id !== overrideId && t.skuOverrideKey !== `${productId}_${norm}`);
     setTemplates(updatedTemplates);
 
     // Re-resolve layout from general default

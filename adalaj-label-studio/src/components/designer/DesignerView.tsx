@@ -68,6 +68,7 @@ import {
   resolveLayout, 
   buildPackDefaultTemplate, 
   buildSkuOverrideTemplate, 
+  getSkuOverrideTemplateId,
   normalizePackSize, 
   getCleanGlobalPackDefault,
   getFactoryProductTemplate,
@@ -168,18 +169,29 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
 
   const selectedObject = template.objects.find(o => o.id === selectedObjectId);
 
+  // Track currently loaded product and pack size
+  const activeProductAndPackRef = useRef<string>(`${activeProduct.id}_${previewSku.packSize}`);
+
   // Synchronize template whenever product or pack size changes
   useEffect(() => {
-    const resolved = resolveLayout(
-      activeProduct.id,
-      previewSku.packSize,
-      templates && templates.length > 0 ? templates : [initialTemplate],
-      packProfiles
-    );
-    setTemplate(resolved.template);
-    setSelectedObjectId(resolved.template.objects[0]?.id || null);
-    setHistory([]);
-    setRedoStack([]);
+    const key = `${activeProduct.id}_${previewSku.packSize}`;
+    const productOrPackChanged = activeProductAndPackRef.current !== key;
+    activeProductAndPackRef.current = key;
+
+    // Only force resolve and replace template if the user switched product or SKU pack size!
+    // If they just saved (which updates templates prop), DO NOT wipe out the canvas template!
+    if (productOrPackChanged) {
+      const resolved = resolveLayout(
+        activeProduct.id,
+        previewSku.packSize,
+        templates && templates.length > 0 ? templates : [initialTemplate],
+        packProfiles
+      );
+      setTemplate(resolved.template);
+      setSelectedObjectId(resolved.template.objects[0]?.id || null);
+      setHistory([]);
+      setRedoStack([]);
+    }
   }, [activeProduct.id, previewSku.packSize, templates]);
 
   // Undo / Redo history stacks (up to 25 states)
@@ -829,14 +841,16 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
     setShowScopeConfirmModal(false);
     try {
       const targetPackSize = previewSku.packSize;
+      const packTmpl = buildPackDefaultTemplate(template, targetPackSize);
+      // Immediately set the local template state so canvas retains all edits
+      setTemplate(packTmpl);
       if (onSavePackDefault) {
         await onSavePackDefault(template, targetPackSize, activeProduct.id);
       } else {
-        const packTmpl = buildPackDefaultTemplate(template, targetPackSize);
         await onSaveTemplate(packTmpl, 'All SKUs of this pack size');
       }
       setSaveStatus('saved');
-      setToastMessage(`✓ Saved as General Default for all ${targetPackSize} packages!`);
+      setToastMessage(`✓ Saved as Global Default for all ${targetPackSize} packages!`);
       setTimeout(() => setSaveStatus('idle'), 2500);
       setTimeout(() => setToastMessage(null), 3500);
     } catch (err) {
@@ -854,14 +868,16 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
     setShowScopeConfirmModal(false);
     try {
       const targetPackSize = previewSku.packSize;
+      const skuTmpl = buildSkuOverrideTemplate(template, activeProduct.id, activeProduct.name, targetPackSize);
+      // Immediately set the local template state so canvas retains all edits
+      setTemplate(skuTmpl);
       if (onSaveSkuOverride) {
         await onSaveSkuOverride(template, activeProduct.id, activeProduct.name, targetPackSize);
       } else {
-        const skuTmpl = buildSkuOverrideTemplate(template, activeProduct.id, activeProduct.name, targetPackSize);
         await onSaveTemplate(skuTmpl, 'This SKU');
       }
       setSaveStatus('saved');
-      setToastMessage(`✓ Saved Custom Override for ${activeProduct.name} (${targetPackSize})`);
+      setToastMessage(`✓ Saved Custom Override for ${activeProduct.shortCode} (${targetPackSize})`);
       setTimeout(() => setSaveStatus('idle'), 2500);
       setTimeout(() => setToastMessage(null), 3500);
     } catch (err) {
@@ -872,26 +888,24 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
     }
   };
 
-  // Reset design back to the current Global Default for this pack size (clears product override if any)
+  // Reset design back to the current Global Default for this pack size (clears product override if any, or restores last saved global default)
   const handleResetToGlobal = async () => {
     setIsSaveMenuOpen(false);
     setShowScopeConfirmModal(false);
     try {
       const targetPackSize = previewSku.packSize;
       const norm = normalizePackSize(targetPackSize);
-      if (currentLayoutInfo.source === 'sku_override') {
-        if (onRevertSkuOverride) {
-          await onRevertSkuOverride(activeProduct.id, targetPackSize);
-        }
+      if (onRevertSkuOverride) {
+        await onRevertSkuOverride(activeProduct.id, targetPackSize);
       }
-      const overrideId = `tmpl_sku_override_${activeProduct.id}_${norm}`;
+      const overrideId = getSkuOverrideTemplateId(activeProduct.id, targetPackSize);
       const remainingTemplates = (templates || []).filter(t => t.id !== overrideId && t.skuOverrideKey !== `${activeProduct.id}_${norm}`);
       const resolved = resolveLayout(activeProduct.id, targetPackSize, remainingTemplates, packProfiles);
       setTemplate(resolved.template);
       setSelectedObjectId(resolved.template.objects[0]?.id || null);
       setHistory(h => [...h.slice(-24), JSON.parse(JSON.stringify(template))]);
       setRedoStack([]);
-      setToastMessage(`↺ Reset ${activeProduct.name} back to Global ${targetPackSize} Default`);
+      setToastMessage(`↺ Reverted ${activeProduct.shortCode} back to Global ${targetPackSize} Default`);
       setTimeout(() => setToastMessage(null), 3000);
     } catch (err) {
       console.error(err);
@@ -1322,26 +1336,24 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
             </button>
           </div>
 
-          {/* Revert to Global Button (Shown when editing a custom override) */}
-          {currentLayoutInfo.source === 'sku_override' && (
-            <button
-              type="button"
-              onClick={handleResetToGlobal}
-              className="flex items-center gap-1.5 px-2.5 h-8 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-amber-300 hover:text-white border border-amber-500/40 text-xs font-semibold transition-colors cursor-pointer"
-              title={`Discard custom override and restore the latest saved Global ${previewSku.packSize} Default layout`}
-            >
-              <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
-              <span className="hidden sm:inline">Revert to Global</span>
-            </button>
-          )}
+          {/* Action 1: Revert to Global Default (Always Visible) */}
+          <button
+            type="button"
+            onClick={handleResetToGlobal}
+            className="flex items-center gap-1.5 px-2.5 h-8 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white border border-zinc-700 hover:border-amber-500/50 text-xs font-semibold transition-colors cursor-pointer"
+            title={`Revert back to the latest saved Global ${previewSku.packSize} Default layout (discards local override or unsaved edits)`}
+          >
+            <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden sm:inline">Revert to Global</span>
+          </button>
 
-          {/* Action 1: Save as Global Default for All Products of this Pack Size */}
+          {/* Action 2: Save as Global Default for All Products of this Pack Size (Always Visible) */}
           <button
             type="button"
             onClick={handleSaveGeneralPackDefault}
             disabled={saveStatus === 'saving'}
             className="flex items-center gap-1.5 px-3 h-8 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-xs transition-colors cursor-pointer"
-            title={`Set this layout as the Global Default for ALL ${previewSku.packSize} products. Clears product override.`}
+            title={`Set this layout as the Global Default for ALL ${previewSku.packSize} products. Clears conflicting product override.`}
           >
             {saveStatus === 'saving' ? (
               <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -1353,7 +1365,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
             <span>Save as Global {previewSku.packSize}</span>
           </button>
 
-          {/* Action 2: Save as Independent Custom Override for this Product only */}
+          {/* Action 3: Save as Independent Custom Override for this Product only (Always Visible) */}
           <button
             type="button"
             onClick={handleSaveSkuCustomOverride}
