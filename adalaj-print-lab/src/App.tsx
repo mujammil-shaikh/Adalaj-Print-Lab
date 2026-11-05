@@ -718,7 +718,7 @@ export default function App() {
   }
 
   return (
-    <div className={`min-h-screen flex flex-col font-sans transition-colors ${
+    <div className={`h-screen overflow-hidden flex flex-col font-sans transition-colors ${
       theme === 'light' ? 'bg-zinc-100 text-zinc-900' : 'bg-zinc-950 text-zinc-100'
     }`}>
       {/* Shell Header */}
@@ -738,7 +738,7 @@ export default function App() {
       />
 
       {/* Main Workspace Router */}
-      <main className="flex-1 overflow-x-hidden">
+      <main className={`flex-1 ${currentRoute === 'design' ? 'overflow-hidden flex flex-col' : 'overflow-y-auto industrial-scrollbar'}`}>
         {currentRoute === 'home' && (
           <HomeView
             batches={batches}

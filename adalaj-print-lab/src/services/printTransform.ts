@@ -448,11 +448,10 @@ function renderSingleObject(
 
   if (obj.type === 'text' || obj.type === 'field') {
     let text = obj.content || '';
-    if (obj.fieldKey && values[obj.fieldKey]) {
+    if (text.includes('{')) {
+      text = text.replace(/\{(\w+)\}/g, (_, k) => values[k] !== undefined ? values[k] : `{${k}}`);
+    } else if (obj.fieldKey && values[obj.fieldKey]) {
       text = values[obj.fieldKey];
-    } else {
-      // Replace placeholders e.g. {mrp}
-      text = text.replace(/\{(\w+)\}/g, (_, k) => values[k] || `{${k}}`);
     }
 
     if (obj.uppercase) {
@@ -559,10 +558,10 @@ function renderSingleObject(
   } else if (obj.type === 'barcode' || obj.type === 'qr') {
     // P0-02/RENDER-07: Standards-compliant barcode and QR code vector rendering
     let text = obj.content || '';
-    if (obj.fieldKey && values[obj.fieldKey]) {
+    if (text.includes('{')) {
+      text = text.replace(/\{(\w+)\}/g, (_, k) => values[k] !== undefined ? values[k] : `{${k}}`);
+    } else if (obj.fieldKey && values[obj.fieldKey]) {
       text = values[obj.fieldKey];
-    } else {
-      text = text.replace(/\{(\w+)\}/g, (_, k) => values[k] || `{${k}}`);
     }
     const payload = text.trim() || (obj.type === 'barcode' ? (values.batch || 'ADTP014') : 'https://adalaj.in');
 

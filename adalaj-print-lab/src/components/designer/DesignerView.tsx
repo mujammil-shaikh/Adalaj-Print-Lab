@@ -142,6 +142,17 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
   // Refs
   const canvasViewportRef = useRef<HTMLDivElement | null>(null);
   const printerCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const contentInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleObjectDoubleClick = (objId: string) => {
+    setSelectedObjectId(objId);
+    setTimeout(() => {
+      if (contentInputRef.current) {
+        contentInputRef.current.focus();
+        contentInputRef.current.select();
+      }
+    }, 50);
+  };
 
   // Filter SKUs strictly belonging to the currently active product
   const productSkus = useMemo(() => {
@@ -1147,7 +1158,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
   }, [template, scope]);
 
   return (
-    <div className="flex flex-col h-[calc(100vh-6.5rem)] select-none bg-zinc-950 relative">
+    <div className="flex flex-col flex-1 h-full select-none bg-zinc-950 relative overflow-hidden">
       {/* Toast Notification Banner */}
       {toastMessage && (
         <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-top-3 duration-200 pointer-events-none">
@@ -1159,8 +1170,8 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       )}
 
       {/* Top Context Toolbar */}
-      {/* Tier 1: Context, Printhead Geometry & Save Bar (Fixed Height h-12 prevents canvas squeezing) */}
-      <div className="bg-zinc-900 border-b border-zinc-800 px-4 py-1.5 h-12 flex items-center justify-between gap-3 text-xs shrink-0 overflow-x-auto no-scrollbar">
+      {/* Tier 1: Context, Printhead Geometry & Save Bar */}
+      <div className="bg-zinc-900 border-b border-zinc-800 px-3 py-1.5 h-12 flex items-center justify-between gap-2 text-xs shrink-0 overflow-x-auto no-scrollbar">
         {/* Left: Synchronized Product & SKU Selectors + Inheritance Status */}
         <div className="flex items-center gap-2 shrink-0">
           {allProducts && allProducts.length > 0 && (
@@ -1187,7 +1198,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                     }
                   }
                 }}
-                className="bg-transparent font-bold text-zinc-100 focus:outline-hidden cursor-pointer text-xs max-w-[150px] sm:max-w-[190px] truncate"
+                className="bg-transparent font-bold text-zinc-100 focus:outline-hidden cursor-pointer text-xs max-w-[140px] truncate"
                 title="Select active product"
               >
                 {allProducts.map(p => (
@@ -1218,7 +1229,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                   setRedoStack([]);
                 }
               }}
-              className="bg-transparent font-mono font-bold text-amber-400 focus:outline-hidden cursor-pointer text-xs max-w-[120px] truncate"
+              className="bg-transparent font-mono font-bold text-amber-400 focus:outline-hidden cursor-pointer text-xs max-w-[100px] truncate"
               title="Select active SKU pack size"
             >
               {productSkus.map(s => (
@@ -1234,26 +1245,24 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
             {currentLayoutInfo.source === 'sku_override' ? (
               <span className="flex items-center gap-1 text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 py-1 rounded-lg font-semibold" title={`Custom placement override for ${activeProduct.name} ${previewSku.packSize}`}>
                 <Star className="w-3 h-3 fill-amber-400" />
-                <span>Custom Override</span>
+                <span className="hidden md:inline">Override</span>
               </span>
             ) : (
               <span className="flex items-center gap-1 text-[11px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2 py-1 rounded-lg font-semibold" title={`Global default layout for all ${previewSku.packSize} products`}>
                 <Globe className="w-3 h-3" />
-                <span>Global Default</span>
+                <span className="hidden md:inline">Global Default</span>
               </span>
             )}
           </div>
         </div>
 
         {/* Center: Printhead Band Selector & Travel Length */}
-        <div className="hidden lg:flex items-center gap-2">
+        <div className="hidden lg:flex items-center gap-2 shrink-0">
           <div className="flex items-center gap-1 bg-zinc-950 border border-zinc-800 rounded-lg p-0.5 h-8">
             <span className="text-[10px] text-zinc-500 px-1 font-medium">Head:</span>
             {[
               { mm: 12.5, label: '12.5mm' },
-              { mm: 12.7, label: '12.7mm (½")' },
-              { mm: 21.08, label: '21.1mm' },
-              { mm: 25.0, label: '25mm' }
+              { mm: 12.7, label: '12.7mm' }
             ].map(b => (
               <button
                 key={b.mm}
@@ -1270,7 +1279,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
           </div>
 
           <div className="flex items-center gap-1 bg-zinc-950 border border-zinc-800 rounded-lg p-0.5 h-8">
-            <label htmlFor="designer-length-input" className="text-[10px] text-zinc-500 px-1 font-medium cursor-pointer">Length:</label>
+            <label htmlFor="designer-length-input" className="text-[10px] text-zinc-500 px-1 font-medium cursor-pointer">Len:</label>
             <input
               id="designer-length-input"
               name="designerLengthMm"
@@ -1281,13 +1290,13 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
               max="1000"
               value={currentLengthMm}
               onChange={e => handleSetLengthMm(parseFloat(e.target.value) || 35)}
-              className="w-12 bg-zinc-900 border border-zinc-700 rounded h-7 px-1 font-mono text-[11px] font-bold text-amber-400 text-center focus:outline-hidden"
+              className="w-10 bg-zinc-900 border border-zinc-700 rounded h-7 px-1 font-mono text-[11px] font-bold text-amber-400 text-center focus:outline-hidden"
               title="Travel length in mm"
             />
             <span className="text-[10px] text-zinc-500 font-mono pr-1">mm</span>
 
             <div className="flex items-center gap-0.5 pl-1 border-l border-zinc-800">
-              {[35, 45, 100].map(len => (
+              {[35, 45].map(len => (
                 <button
                   key={len}
                   type="button"
@@ -1297,7 +1306,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                   }`}
                   title={`Preset: ${len}mm`}
                 >
-                  {len}mm
+                  {len}
                 </button>
               ))}
             </div>
@@ -1308,15 +1317,15 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
           </div>
         </div>
 
-        {/* Right: History, Reset, Split Save & Proceed Actions */}
-        <div className="flex items-center gap-2 relative">
+        {/* Right: History, Reset, Save & Proceed Actions */}
+        <div className="flex items-center gap-1.5 shrink-0">
           {/* History Undo / Redo */}
           <div className="flex items-center bg-zinc-950 border border-zinc-800 rounded-lg p-0.5 h-8">
             <button
               type="button"
               onClick={handleUndo}
               disabled={history.length === 0}
-              className={`h-7 px-2 rounded flex items-center gap-1 font-semibold transition-colors ${
+              className={`h-7 px-1.5 rounded flex items-center gap-1 font-semibold transition-colors ${
                 history.length > 0 ? 'text-zinc-200 hover:text-white hover:bg-zinc-800 cursor-pointer' : 'text-zinc-600 cursor-not-allowed'
               }`}
               title="Undo change (Ctrl+Z)"
@@ -1327,7 +1336,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
               type="button"
               onClick={handleRedo}
               disabled={redoStack.length === 0}
-              className={`h-7 px-2 rounded flex items-center gap-1 font-semibold transition-colors border-l border-zinc-800 ${
+              className={`h-7 px-1.5 rounded flex items-center gap-1 font-semibold transition-colors border-l border-zinc-800 ${
                 redoStack.length > 0 ? 'text-zinc-200 hover:text-white hover:bg-zinc-800 cursor-pointer' : 'text-zinc-600 cursor-not-allowed'
               }`}
               title="Redo change (Ctrl+Y)"
@@ -1336,24 +1345,24 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
             </button>
           </div>
 
-          {/* Action 1: Revert to Global Default (Always Visible) */}
+          {/* Action 1: Revert to Global Default */}
           <button
             type="button"
             onClick={handleResetToGlobal}
-            className="flex items-center gap-1.5 px-2.5 h-8 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white border border-zinc-700 hover:border-amber-500/50 text-xs font-semibold transition-colors cursor-pointer"
-            title={`Revert back to the latest saved Global ${previewSku.packSize} Default layout (discards local override or unsaved edits)`}
+            className="flex items-center gap-1 px-2 h-8 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white border border-zinc-700 text-xs font-semibold transition-colors cursor-pointer"
+            title={`Revert back to the latest saved Global ${previewSku.packSize} Default layout`}
           >
             <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
-            <span className="hidden sm:inline">Revert to Global</span>
+            <span className="hidden xl:inline">Revert</span>
           </button>
 
-          {/* Action 2: Save as Global Default for All Products of this Pack Size (Always Visible) */}
+          {/* Action 2: Save as Global Default */}
           <button
             type="button"
             onClick={handleSaveGeneralPackDefault}
             disabled={saveStatus === 'saving'}
-            className="flex items-center gap-1.5 px-3 h-8 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-xs transition-colors cursor-pointer"
-            title={`Set this layout as the Global Default for ALL ${previewSku.packSize} products. Clears conflicting product override.`}
+            className="flex items-center gap-1.5 px-2.5 h-8 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-xs transition-colors cursor-pointer"
+            title={`Set this layout as the Global Default for ALL ${previewSku.packSize} products.`}
           >
             {saveStatus === 'saving' ? (
               <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -1362,16 +1371,16 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
             ) : (
               <Globe className="w-3.5 h-3.5" />
             )}
-            <span>Save as Global {previewSku.packSize}</span>
+            <span>Save Global</span>
           </button>
 
-          {/* Action 3: Save as Independent Custom Override for this Product only (Always Visible) */}
+          {/* Action 3: Save as SKU Custom Override */}
           <button
             type="button"
             onClick={handleSaveSkuCustomOverride}
             disabled={saveStatus === 'saving'}
-            className="flex items-center gap-1.5 px-3 h-8 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs shadow-xs transition-colors cursor-pointer"
-            title={`Save an independent layout specifically for ${activeProduct.name} (${previewSku.packSize}) only. Other products follow Global Default.`}
+            className="flex items-center gap-1.5 px-2.5 h-8 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs shadow-xs transition-colors cursor-pointer"
+            title={`Save an independent layout specifically for ${activeProduct.name} (${previewSku.packSize}) only.`}
           >
             <Star className="w-3.5 h-3.5 fill-black text-black" />
             <span>Save for {activeProduct.shortCode}</span>
@@ -1381,11 +1390,11 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
           <button
             type="button"
             onClick={onNavigateToPrint}
-            className="flex items-center gap-1.5 px-3 h-8 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-100 font-semibold text-xs border border-zinc-700 transition-colors cursor-pointer"
+            className="flex items-center gap-1.5 px-2.5 h-8 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-100 font-semibold text-xs border border-zinc-700 transition-colors cursor-pointer"
             title="Proceed to Print Production View"
           >
             <Printer className="w-3.5 h-3.5 text-amber-400" />
-            <span>Proceed to Print</span>
+            <span className="hidden sm:inline">Print</span>
           </button>
         </div>
       </div>
@@ -1639,7 +1648,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
         </div>
 
         {/* Center Canvas Workspace Wrapper */}
-        <div className="flex-1 relative flex flex-col overflow-hidden bg-zinc-950">
+        <div className="flex-1 relative flex flex-col overflow-hidden bg-zinc-950 drafting-dot-grid">
           {/* Scrollable Viewport with Full Top-to-Bottom, Left-to-Right Scrolling without Cutoff */}
           <div 
             ref={canvasViewportRef}
@@ -1647,7 +1656,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
             onMouseMove={handleViewportMouseMove}
             onMouseUp={handleViewportMouseUp}
             onMouseLeave={handleViewportMouseUp}
-            className="flex-1 overflow-auto relative select-none cursor-grab active:cursor-grabbing"
+            className="flex-1 overflow-auto relative select-none cursor-grab active:cursor-grabbing industrial-scrollbar"
             style={{
               scrollbarGutter: 'stable',
               overscrollBehavior: 'contain'
@@ -1655,14 +1664,14 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
           >
             <div 
               data-pan-background="true"
-              className="inline-flex min-w-full min-h-full p-16"
+              className="inline-flex min-w-full min-h-full p-20"
               style={{
                 justifyContent: 'safe center',
                 alignItems: 'safe center'
               }}
             >
               {/* UNIFIED DUAL-AXIS RULERS INTEGRATED FOR BOTH PACK VIEW & PRINTER RASTER VIEW */}
-              <div className="relative inline-flex flex-col shadow-2xl shrink-0 my-auto mx-auto cursor-default">
+              <div className="relative inline-flex flex-col shadow-[0_25px_60px_rgba(0,0,0,0.95)] ring-1 ring-zinc-800 rounded-xs shrink-0 my-auto mx-auto cursor-default">
                 {/* Top Row: Corner Origin Box + X Horizontal Ruler */}
                 <div className="flex">
                   {/* (0,0) Corner Box */}
@@ -1688,10 +1697,12 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                       return (
                         <div 
                           key={mm} 
-                          className="absolute bottom-0 flex flex-col items-center pointer-events-none -translate-x-1/2"
+                          className={`absolute bottom-0 flex flex-col pointer-events-none ${
+                            mm === 0 ? 'items-start left-0' : 'items-center -translate-x-1/2'
+                          }`}
                           style={{ left: `${posPx}px` }}
                         >
-                          {is10mm && (
+                          {is10mm && mm > 0 && (
                             <span className="text-[8px] font-mono text-zinc-400 leading-none mb-0.5 select-none">
                               {mm}
                             </span>
@@ -1727,10 +1738,12 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                       return (
                         <div 
                           key={mm} 
-                          className="absolute right-0 flex items-center pointer-events-none -translate-y-1/2"
+                          className={`absolute right-0 flex pointer-events-none ${
+                            mm === 0 ? 'items-start top-0' : 'items-center -translate-y-1/2'
+                          }`}
                           style={{ top: `${posPx}px` }}
                         >
-                          {is10mm && (
+                          {is10mm && mm > 0 && (
                             <span className="text-[8px] font-mono text-zinc-400 leading-none mr-1 select-none">
                               {mm}
                             </span>
@@ -1747,7 +1760,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
 
                   {/* WHITE PAPER / SUBSTRATE CANVAS */}
                   <div 
-                    className="relative bg-white text-black border border-zinc-300 shadow-xl select-none overflow-hidden cursor-crosshair shrink-0"
+                    className="relative bg-white text-black border border-zinc-400 shadow-xl select-none overflow-hidden cursor-crosshair shrink-0"
                     style={{
                       width: `${displayWidthMm * zoomLevel}px`,
                       minWidth: `${displayWidthMm * zoomLevel}px`,
@@ -1770,6 +1783,18 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                       <rect width="100%" height="100%" fill="url(#grid5mm)" />
                     </svg>
 
+                    {/* 1.0mm Swath Safe Margin Guide */}
+                    <div 
+                      className="absolute pointer-events-none border border-dashed border-amber-500/35 z-20"
+                      style={{
+                        top: `${1.0 * zoomLevel}px`,
+                        left: `${1.0 * zoomLevel}px`,
+                        right: `${1.0 * zoomLevel}px`,
+                        bottom: `${1.0 * zoomLevel}px`,
+                      }}
+                      title="1.0mm Calibrated Safe Margin"
+                    />
+
                     {viewMode === 'printer' ? (
                       /* SMOOTH CRISP TRANSFORMED DIRECT CANVAS (NO PIXELATED DOWNSCALING) */
                       <div className="relative w-full h-full bg-white flex items-center justify-center pointer-events-none overflow-hidden">
@@ -1789,10 +1814,10 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                         const hPx = obj.height * zoomLevel;
 
                         let displayText = obj.content || '';
-                        if (obj.fieldKey && previewValues[obj.fieldKey]) {
+                        if (displayText.includes('{')) {
+                          displayText = displayText.replace(/\{(\w+)\}/g, (_, k) => previewValues[k] !== undefined ? previewValues[k] : `{${k}}`);
+                        } else if (obj.fieldKey && previewValues[obj.fieldKey]) {
                           displayText = previewValues[obj.fieldKey];
-                        } else {
-                          displayText = displayText.replace(/\{(\w+)\}/g, (_, k) => previewValues[k] || `{${k}}`);
                         }
 
                         const rot = obj.rotation || 0;
@@ -1806,6 +1831,10 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                             onClick={e => {
                               e.stopPropagation();
                               selectObject(obj.id);
+                            }}
+                            onDoubleClick={e => {
+                              e.stopPropagation();
+                              handleObjectDoubleClick(obj.id);
                             }}
                             className={`absolute flex items-center transition-shadow select-none whitespace-nowrap overflow-hidden ${
                               isSelected 
@@ -1879,7 +1908,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
         </div>
 
         {/* Right Properties & Orientation Panel */}
-        <div className="w-80 bg-zinc-900 border-l border-zinc-800 flex flex-col overflow-y-auto p-4 space-y-5 text-xs shrink-0">
+        <div className="w-80 bg-zinc-900 border-l border-zinc-800 flex flex-col overflow-y-auto industrial-scrollbar p-4 space-y-5 text-xs shrink-0">
           {viewMode === 'printer' ? (
             /* PRINTER 1-BIT RASTER DIAGNOSTICS & HARDWARE CONTROLS */
             <div className="space-y-4">
@@ -2166,6 +2195,127 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                   </button>
                 </div>
               </div>
+
+              {/* OBJECT CONTENT & DATA EDITOR */}
+              {selectedObject.type !== 'line' && selectedObject.type !== 'rectangle' && (
+                <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400">
+                      Object Content & Data
+                    </span>
+                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-400 uppercase">
+                      {selectedObject.type}
+                    </span>
+                  </div>
+
+                  {/* If dynamic field: selector for key */}
+                  {selectedObject.type === 'field' && (
+                    <div>
+                      <label className="text-[10px] text-zinc-400 block mb-0.5">Linked Dynamic Field</label>
+                      <select
+                        value={selectedObject.fieldKey || 'batch'}
+                        onChange={e => {
+                          const newKey = e.target.value;
+                          commitPendingSession();
+                          updateTemplateWithHistory(prev => ({
+                            ...prev,
+                            objects: prev.objects.map(o => o.id === selectedObject.id ? { 
+                              ...o, 
+                              fieldKey: newKey,
+                              content: `{${newKey}}`
+                            } : o)
+                          }));
+                        }}
+                        className="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs text-amber-300 font-mono focus:outline-hidden"
+                      >
+                        <option value="batch">Batch ID ({previewValues.batch || 'ADTP013'})</option>
+                        <option value="mrp">MRP ({previewValues.mrp || '₹50'})</option>
+                        <option value="net_wt">Net Weight ({previewValues.net_wt || '100 G'})</option>
+                        <option value="mfd">Mfg Date ({previewValues.mfd || '01/03/26'})</option>
+                        <option value="best_before">Best Before ({previewValues.best_before || '28/02/27'})</option>
+                        <option value="rate_per_gm">Rate / gm ({previewValues.rate_per_gm || '₹0.50'})</option>
+                        <option value="product">Product Name ({activeProduct.name})</option>
+                        <option value="custom">Custom Dynamic Field</option>
+                      </select>
+                    </div>
+                  )}
+
+                  {/* If barcode: format selector */}
+                  {selectedObject.type === 'barcode' && (
+                    <div>
+                      <label className="text-[10px] text-zinc-400 block mb-0.5">Barcode Symbology</label>
+                      <select
+                        value={selectedObject.barcodeFormat || 'CODE128'}
+                        onChange={e => {
+                          const fmt = e.target.value as 'CODE128' | 'EAN13';
+                          commitPendingSession();
+                          updateTemplateWithHistory(prev => ({
+                            ...prev,
+                            objects: prev.objects.map(o => o.id === selectedObject.id ? { ...o, barcodeFormat: fmt } : o)
+                          }));
+                        }}
+                        className="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-200 font-mono focus:outline-hidden"
+                      >
+                        <option value="CODE128">Code 128 (Alphanumeric - Batch / SKU)</option>
+                        <option value="EAN13">EAN-13 (Standard Retail GTIN)</option>
+                      </select>
+                    </div>
+                  )}
+
+                  {/* Content / Data Text Input */}
+                  <div>
+                    <div className="flex items-center justify-between mb-0.5">
+                      <label className="text-[10px] text-zinc-400">
+                        {selectedObject.type === 'qr' ? 'QR Code URL / Content' : selectedObject.type === 'barcode' ? 'Barcode Value' : 'Text / Template Value'}
+                      </label>
+                      <span className="text-[9px] text-zinc-500 font-mono">{(selectedObject.content || '').length} chars</span>
+                    </div>
+                    <input
+                      ref={contentInputRef}
+                      type="text"
+                      value={selectedObject.content || ''}
+                      onChange={e => {
+                        const val = e.target.value;
+                        updateObjectCoalesced(selectedObject.id, { content: val }, 'property_tweak');
+                      }}
+                      onBlur={commitPendingSession}
+                      placeholder={selectedObject.type === 'qr' ? 'https://adalaj.in/b/{batch}' : selectedObject.type === 'barcode' ? 'ADTP014' : 'Enter text...'}
+                      className="w-full bg-zinc-900 border border-zinc-700 focus:border-amber-500 rounded px-2.5 py-1.5 text-xs text-zinc-100 font-mono focus:outline-hidden"
+                    />
+                  </div>
+
+                  {/* Dynamic Token Chips */}
+                  <div>
+                    <span className="text-[9px] text-zinc-500 block mb-1">Insert Dynamic Tokens:</span>
+                    <div className="flex flex-wrap gap-1">
+                      {[
+                        { token: '{mrp}', label: 'MRP' },
+                        { token: '{batch}', label: 'Batch' },
+                        { token: '{net_wt}', label: 'Net Wt' },
+                        { token: '{mfd}', label: 'MFD' },
+                        { token: '{best_before}', label: 'Exp' },
+                        { token: '{rate_per_gm}', label: 'Rate/g' },
+                        { token: '{product}', label: 'Product' }
+                      ].map(chip => (
+                        <button
+                          key={chip.token}
+                          type="button"
+                          onClick={() => {
+                            const current = selectedObject.content || '';
+                            const updated = current ? `${current} ${chip.token}` : chip.token;
+                            updateObjectCoalesced(selectedObject.id, { content: updated }, 'property_tweak');
+                            commitPendingSession();
+                          }}
+                          className="px-1.5 py-0.5 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 hover:border-amber-500/50 text-[10px] font-mono text-amber-300 transition-colors cursor-pointer"
+                          title={`Insert dynamic token: ${chip.token}`}
+                        >
+                          + {chip.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Coordinates: X, Y, W, H with 0.1 mm step & Directional Nudges */}
               <div className="grid grid-cols-2 gap-2 text-xs">
