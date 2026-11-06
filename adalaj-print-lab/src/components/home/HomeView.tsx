@@ -28,11 +28,14 @@ import {
 import type { Batch, Product, SKU, MachineProfile, Template, PackProfile } from '../../types';
 import { renderTemplateToCanvas } from '../../services/printTransform';
 import { parseDateInput, calculateBestBeforeDate, formatCalendarDateDMY } from '../../domain/dates';
+import { resolveLayout } from '../../services/layoutRegistry';
 
 interface HomeViewProps {
   batches: Batch[];
   products: Product[];
   skus: SKU[];
+  templates?: Template[];
+  packProfiles?: PackProfile[];
   template?: Template | null;
   activeBatch?: Batch | null;
   activeProduct?: Product | null;
@@ -46,6 +49,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
   batches,
   products,
   skus,
+  templates = [],
+  packProfiles = [],
   template,
   activeBatch,
   activeProduct,
@@ -125,11 +130,20 @@ export const HomeView: React.FC<HomeViewProps> = ({
     };
   }, [activeSku, currentBatch, currentProduct]);
 
+  // Resolve truthful layout matching Pack View Designer ground-truth
+  const effectiveTemplate = useMemo(() => {
+    if (currentProduct && activeSku && templates && templates.length > 0) {
+      const resolved = resolveLayout(currentProduct.id, activeSku.packSize, templates, packProfiles);
+      return resolved.template;
+    }
+    return template;
+  }, [currentProduct?.id, activeSku?.packSize, templates, packProfiles, template]);
+
   // Update canvas/raster preview
   useEffect(() => {
-    if (!template || !activeMachine) return;
+    if (!effectiveTemplate || !activeMachine) return;
     try {
-      const canvas = renderTemplateToCanvas(template, activeMachine, liveValues, {
+      const canvas = renderTemplateToCanvas(effectiveTemplate, activeMachine, liveValues, {
         forPrinterView: previewMode === 'raster'
       });
       setRasterDataUrl(canvas.toDataURL('image/png'));
@@ -147,7 +161,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
     } catch (err) {
       console.error(err);
     }
-  }, [template, activeMachine, liveValues, previewMode]);
+  }, [effectiveTemplate, activeMachine, liveValues, previewMode]);
 
   // Compute loose stock summary across products
   const looseStockSummary = products.map(prod => {
@@ -419,7 +433,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
             {/* Travel / Orientation Footer Tag */}
             <div className="absolute bottom-3 left-4 text-[10px] font-mono text-zinc-500 bg-zinc-900/90 px-2.5 py-1 rounded border border-zinc-800">
-              Sweep: <strong>{template?.travel || 'Vertical'} + {template?.layout || 'Stack'}</strong> • 150 px Head Band @ {machineDpi} DPI
+              Sweep: <strong>{effectiveTemplate?.travel || 'Vertical'} + {effectiveTemplate?.layout || 'Stack'}</strong> • 150 px Head Band @ {machineDpi} DPI
             </div>
           </div>
 

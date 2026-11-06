@@ -4,6 +4,7 @@ import {
   parseUniversalSyncString,
   type UniversalDatabaseSnapshot 
 } from '../../src/services/db';
+import { default500gTemplate } from '../../src/services/layoutRegistry';
 
 describe('Universal Dual-Layer Persistence & Cross-Device Sync', () => {
   beforeEach(() => {
@@ -181,5 +182,16 @@ describe('Universal Dual-Layer Persistence & Cross-Device Sync', () => {
     expect(restored?.tables.templates[0].objects[0].fontSizeMm).toBe(6.5);
     expect(restored?.tables.templates[0].objects[0].x).toBe(0.5);
     expect(restored?.tables.skus[0].mrp).toBe(305);
+  });
+
+  it('guarantees default 500g template has high-impact enlarged MRP typography and 45mm travel length', () => {
+    expect(default500gTemplate.customLengthMm).toBe(45);
+    expect(default500gTemplate.packSizeScope).toBe('500g');
+    
+    const mrpObj = default500gTemplate.objects.find((o: any) => o.fieldKey === 'mrp');
+    expect(mrpObj).toBeDefined();
+    expect(mrpObj?.fontSizeMm).toBeGreaterThanOrEqual(6.0);
+    expect(mrpObj?.height).toBeGreaterThanOrEqual(7.0);
+    expect(mrpObj?.fontWeight).toBe('bold');
   });
 });

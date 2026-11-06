@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import bwipjs from 'bwip-js';
+import { renderBarcodeSvgString } from '../../src/services/printTransform';
 
 describe('Barcode & QR Code Real Encoding (P0-02, RENDER-07)', () => {
   it('generates valid SVG for CODE128', () => {
@@ -48,5 +49,20 @@ describe('Barcode & QR Code Real Encoding (P0-02, RENDER-07)', () => {
         text: 'INVALID_NON_NUMERIC',
       });
     }).toThrow();
+  });
+
+  it('safely handles QR code and EAN-13 through renderBarcodeSvgString without throwing', () => {
+    const qrSvg = renderBarcodeSvgString('qr', 'https://adalaj.in/b/ADRC001');
+    expect(qrSvg).toContain('<svg');
+    expect(qrSvg).toContain('viewBox');
+    expect(qrSvg).toContain('path');
+
+    const eanSvg = renderBarcodeSvgString('barcode', 'ADRC001', 'EAN13');
+    expect(eanSvg).toContain('<svg');
+    expect(eanSvg).toContain('viewBox');
+
+    const code128Svg = renderBarcodeSvgString('barcode', 'ADRC001', 'CODE128');
+    expect(code128Svg).toContain('<svg');
+    expect(code128Svg).toContain('viewBox');
   });
 });

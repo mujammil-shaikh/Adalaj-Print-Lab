@@ -25,6 +25,7 @@ import {
   generateUniversalSyncString, 
   parseUniversalSyncString 
 } from '../../services/db';
+import { renderBarcodeSvgString } from '../../services/printTransform';
 
 interface UniversalSyncModalProps {
   isOpen: boolean;
@@ -40,6 +41,7 @@ export const UniversalSyncModal: React.FC<UniversalSyncModalProps> = ({
   const [copiedSyncCode, setCopiedSyncCode] = useState(false);
   const [copiedShareLink, setCopiedShareLink] = useState(false);
   const [syncCodeInput, setSyncCodeInput] = useState('');
+  const [shareUrl, setShareUrl] = useState<string>('');
   const [lastSavedTime, setLastSavedTime] = useState<string>('Just now');
   const [isProcessing, setIsProcessing] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -50,6 +52,12 @@ export const UniversalSyncModal: React.FC<UniversalSyncModalProps> = ({
       if (savedTime) {
         setLastSavedTime(new Date(savedTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
       }
+      saveUniversalSnapshot().then(snapshot => {
+        if (snapshot) {
+          const syncStr = generateUniversalSyncString(snapshot);
+          setShareUrl(`${window.location.origin}${window.location.pathname}#sync=${syncStr}`);
+        }
+      });
     }
   }, [isOpen]);
 
@@ -209,6 +217,22 @@ export const UniversalSyncModal: React.FC<UniversalSyncModalProps> = ({
             <p className="text-[11px] text-zinc-400 leading-relaxed">
               Generates a universal web link containing your complete current design, pricing, and batch database. Send it via WhatsApp, email, or open on your phone/tablet to immediately load the exact same data.
             </p>
+
+            {/* Instant Camera Scan QR Code */}
+            <div className="flex items-center gap-3 pt-2 border-t border-zinc-850">
+              <div className="shrink-0 bg-white p-1 rounded-lg border border-zinc-700 w-20 h-20 flex items-center justify-center overflow-hidden">
+                <div 
+                  className="w-full h-full flex items-center justify-center"
+                  dangerouslySetInnerHTML={{
+                    __html: renderBarcodeSvgString('qr', shareUrl || (typeof window !== 'undefined' ? window.location.href : 'https://adalaj-print-lab.vercel.app'))
+                  }}
+                />
+              </div>
+              <div className="text-[11px] text-zinc-400 space-y-1">
+                <span className="font-bold text-amber-400 block">Instant Camera Scan:</span>
+                <p>Point any smartphone or tablet camera at this QR code to immediately clone and sync your workspace across devices with 0 configuration.</p>
+              </div>
+            </div>
           </div>
 
           {/* Action 2: Portable Universal Sync Code */}

@@ -18,6 +18,7 @@ import type {
   AuditLogEntry,
   LooseStockRecord
 } from '../types';
+import { default500gTemplate } from './layoutRegistry';
 
 export class LabelStudioDatabase extends Dexie {
   businesses!: Table<Business, string>;
@@ -87,10 +88,29 @@ export interface UniversalDatabaseSnapshot {
   };
 }
 
+export const universalSyncChannel = typeof BroadcastChannel !== 'undefined'
+  ? new BroadcastChannel('adalaj_universal_persistence_channel')
+  : null;
+
+if (universalSyncChannel) {
+  universalSyncChannel.onmessage = async (evt) => {
+    if (evt.data?.type === 'UNIVERSAL_SNAPSHOT_BROADCAST' && evt.data?.snapshot) {
+      try {
+        await restoreFromUniversalSnapshot(evt.data.snapshot);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('als_storage_synced', { detail: evt.data.snapshot.timestamp }));
+        }
+      } catch (e) {
+        console.warn('Universal sync broadcast error:', e);
+      }
+    }
+  };
+}
+
 /**
  * Universal Dual-Layer Snapshot Mirror
- * Persists the entire database into localStorage as a bulletproof secondary layer
- * guaranteeing 100% data retention across browser refreshes, restarts, and sessions.
+ * Persists the entire database into localStorage and broadcasts across all tabs/windows
+ * guaranteeing 100% data retention and real-time cross-tab synchronization.
  */
 export async function saveUniversalSnapshot(): Promise<UniversalDatabaseSnapshot | null> {
   try {
@@ -115,6 +135,15 @@ export async function saveUniversalSnapshot(): Promise<UniversalDatabaseSnapshot
     };
     localStorage.setItem('als_universal_db_snapshot', JSON.stringify(snapshot));
     localStorage.setItem('als_universal_last_saved', snapshot.timestamp);
+
+    if (universalSyncChannel) {
+      try {
+        universalSyncChannel.postMessage({ type: 'UNIVERSAL_SNAPSHOT_BROADCAST', snapshot });
+      } catch {
+        // ignore
+      }
+    }
+
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('als_storage_synced', { detail: snapshot.timestamp }));
     }
@@ -137,6 +166,14 @@ export async function restoreFromUniversalSnapshot(snapshotObj?: UniversalDataba
       snapshot = JSON.parse(raw);
     }
     if (!snapshot || !snapshot.tables) return false;
+
+    // Keep localStorage synchronized with latest restored state
+    try {
+      localStorage.setItem('als_universal_db_snapshot', JSON.stringify(snapshot));
+      localStorage.setItem('als_universal_last_saved', snapshot.timestamp || new Date().toISOString());
+    } catch {
+      // ignore quota errors
+    }
 
     const t = snapshot.tables;
     await db.transaction('rw', [
@@ -377,12 +414,30 @@ async function doInitializeDatabase() {
     { id: 'prod_adkc', brandId: 'brand_adalaj', name: 'Kashmiri Red Chilli Powder', shortCode: 'ADKC', batchPrefix: 'ADKC', defaultShelfLifeMonths: 12, allowedPackSizes: ['100 g', '200 g', '500 g', '1 kg', '2 kg', '5 kg'] }
   ];
 
-  // SKUs
+  // SKUs with realistic calibrated seed MRP values
   const skus: SKU[] = [];
   products.forEach(p => {
     p.allowedPackSizes.forEach(sz => {
-      const isTurmeric100g = p.shortCode === 'ADTP' && sz === '100 g';
       const netGrams = sz.includes('kg') ? parseFloat(sz) * 1000 : parseFloat(sz);
+      let seedMrp: number | undefined = undefined;
+      if (p.shortCode === 'ADRC') {
+        if (sz === '500 g') seedMrp = 305;
+        else if (sz === '100 g') seedMrp = 65;
+        else if (sz === '200 g') seedMrp = 125;
+        else if (sz === '1 kg') seedMrp = 590;
+      } else if (p.shortCode === 'ADTP') {
+        if (sz === '100 g') seedMrp = 50;
+        else if (sz === '500 g') seedMrp = 230;
+      } else if (p.shortCode === 'ADCP') {
+        if (sz === '100 g') seedMrp = 45;
+        else if (sz === '500 g') seedMrp = 210;
+      } else if (p.shortCode === 'ADGM') {
+        if (sz === '100 g') seedMrp = 85;
+        else if (sz === '500 g') seedMrp = 380;
+      } else if (p.shortCode === 'ADKC') {
+        if (sz === '100 g') seedMrp = 75;
+        else if (sz === '500 g') seedMrp = 340;
+      }
       skus.push({
         id: `sku_${p.shortCode.toLowerCase()}_${sz.replace(/\s+/g, '')}`,
         productId: p.id,
@@ -390,8 +445,8 @@ async function doInitializeDatabase() {
         packSize: sz,
         netWeightGrams: netGrams,
         unit: sz.includes('kg') ? 'kg' : 'g',
-        mrp: isTurmeric100g ? 50 : undefined, // Turmeric 100g = ₹50, all others empty "Needs MRP"
-        templateId: 'tmpl_adalaj_6line',
+        mrp: seedMrp,
+        templateId: sz === '500 g' ? 'tmpl_pack_default_500g' : 'tmpl_adalaj_6line',
         enabled: true
       });
     });
@@ -587,6 +642,35 @@ async function doInitializeDatabase() {
     updatedAt: new Date().toISOString()
   };
 
+  // Production Batch: ADRC001 (Red Chilli Powder 500 g, ₹305, Active Production Batch)
+  const redChilliBatch: Batch = {
+    id: 'ADRC001',
+    productId: 'prod_adrc',
+    rawMaterialKg: 50,
+    lotDate: '2026-03-05',
+    status: 'Open',
+    notes: 'Active production batch for Red Chilli Powder 500 g (M.R.P. ₹305)',
+    allocations: [
+      {
+        id: 'alloc_adrc001_500g',
+        batchId: 'ADRC001',
+        skuId: 'sku_adrc_500g',
+        productId: 'prod_adrc',
+        packSize: '500 g',
+        allocatedKg: 50,
+        expectedPacks: 100,
+        mfd: '05/03/26',
+        bestBefore: '04/03/27',
+        mrpSnapshot: 305,
+        ratePerGmSnapshot: 0.61,
+        templateVersionSnapshot: 1,
+        printStatus: 'Pending',
+        packsPrinted: 0
+      }
+    ],
+    createdAt: '2026-03-05T08:00:00.000Z'
+  };
+
   // Historical Batch: ADTP013 (Turmeric 100 g, MFD 01/03/26)
   const historicalBatch: Batch = {
     id: 'ADTP013',
@@ -668,23 +752,13 @@ async function doInitializeDatabase() {
       description: 'General visual layout default for all 100 g packaging across all products'
     };
     const pack500gDefaultTmpl: Template = {
-      ...defaultTemplate,
+      ...default500gTemplate,
       id: 'tmpl_pack_default_500g',
       name: 'Default 500 g Layout',
-      description: 'General visual layout default for all 500 g packaging across all products (45 mm travel length, 12.5 mm nozzle band, 5.0 mm line pitch)',
-      customLengthMm: 45,
-      customBandMm: 12.5,
-      lineGapMm: 1.0,
+      description: 'General visual layout default for all 500 g packaging across all products (45 mm travel length, 12.5 mm nozzle band, enlarged high-impact MRP typography)',
       packSizeScope: '500g',
       isPackSizeDefault: true,
-      objects: [
-        { ...defaultTemplate.objects[0], id: 'obj_500g_line_1', y: 0.5, height: 3.8, fontSizeMm: 3.8 },
-        { ...defaultTemplate.objects[1], id: 'obj_500g_line_2', y: 5.5, height: 3.5, fontSizeMm: 3.5 },
-        { ...defaultTemplate.objects[2], id: 'obj_500g_line_3', y: 10.5, height: 3.2, fontSizeMm: 3.2 },
-        { ...defaultTemplate.objects[3], id: 'obj_500g_line_4', y: 15.2, height: 3.2, fontSizeMm: 3.2 },
-        { ...defaultTemplate.objects[4], id: 'obj_500g_line_5', y: 19.8, height: 3.0, fontSizeMm: 3.0 },
-        { ...defaultTemplate.objects[5], id: 'obj_500g_line_6', y: 24.2, height: 2.6, fontSizeMm: 2.6 }
-      ]
+      isSkuOverride: false
     };
     const turmeric100gTmpl: Template = {
       ...pack100gDefaultTmpl,
@@ -694,16 +768,8 @@ async function doInitializeDatabase() {
       isPackSizeDefault: false,
       skuOverrideKey: 'prod_adtp_100g'
     };
-    const turmeric500gTmpl: Template = {
-      ...pack500gDefaultTmpl,
-      id: 'tmpl_sku_override_prod_adtp_500g',
-      name: 'Turmeric Powder (500 g) Custom Override',
-      isSkuOverride: true,
-      isPackSizeDefault: false,
-      skuOverrideKey: 'prod_adtp_500g'
-    };
-    await db.templates.bulkPut([defaultTemplate, pack100gDefaultTmpl, pack500gDefaultTmpl, turmeric100gTmpl, turmeric500gTmpl]);
-    await db.batches.put(historicalBatch);
+    await db.templates.bulkPut([defaultTemplate, pack100gDefaultTmpl, pack500gDefaultTmpl, turmeric100gTmpl]);
+    await db.batches.bulkPut([redChilliBatch, historicalBatch]);
 
     const seedLooseStock: LooseStockRecord = {
       id: 'loose_ADTP013_residual',

@@ -96,6 +96,7 @@ interface DesignerViewProps {
   onSavePackDefault?: (t: Template, packSize: string, currentProductId?: string) => Promise<void>;
   onSaveSkuOverride?: (t: Template, productId: string, productName: string, packSize: string) => Promise<void>;
   onRevertSkuOverride?: (productId: string, packSize: string) => Promise<void>;
+  onTemplateChange?: (t: Template) => void;
   onNavigateToPrint: () => void;
 }
 
@@ -118,6 +119,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
   onSavePackDefault,
   onSaveSkuOverride,
   onRevertSkuOverride,
+  onTemplateChange,
   onNavigateToPrint
 }) => {
   const [template, setTemplate] = useState<Template>(initialTemplate);
@@ -150,6 +152,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
     autoSaveTimerRef.current = setTimeout(async () => {
       try {
         await db.templates.put(template);
+        if (onTemplateChange) onTemplateChange(template);
         await saveUniversalSnapshot();
         const now = new Date();
         const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -162,7 +165,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
     return () => {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     };
-  }, [template]);
+  }, [template, onTemplateChange]);
   
   // Refs
   const canvasViewportRef = useRef<HTMLDivElement | null>(null);
@@ -836,24 +839,20 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
     ];
     const currentIndex = modes.findIndex(m => m.travel === template.travel && m.layout === template.layout);
     const nextMode = modes[(currentIndex + 1) % modes.length];
-    const next: Template = {
-      ...template,
+    updateTemplateWithHistory(prev => ({
+      ...prev,
       travel: nextMode.travel,
       layout: nextMode.layout
-    };
-    const res = fitObjectsToBand(next, machine, packProfile);
-    updateTemplateWithHistory(res.template);
+    }));
   };
 
-  // Switch specific orientation
+  // Switch specific orientation without destroying manual object coordinates and font sizes
   const handleSetOrientation = (travel: TravelDirection, layout: LayoutMode) => {
-    const next: Template = {
-      ...template,
+    updateTemplateWithHistory(prev => ({
+      ...prev,
       travel,
       layout
-    };
-    const res = fitObjectsToBand(next, machine, packProfile);
-    updateTemplateWithHistory(res.template);
+    }));
   };
 
   // Update single object property
@@ -896,6 +895,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       const packTmpl = buildPackDefaultTemplate(template, targetPackSize);
       // Immediately set the local template state so canvas retains all edits
       setTemplate(packTmpl);
+      if (onTemplateChange) onTemplateChange(packTmpl);
       if (onSavePackDefault) {
         await onSavePackDefault(template, targetPackSize, activeProduct.id);
       } else {
@@ -923,6 +923,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       const skuTmpl = buildSkuOverrideTemplate(template, activeProduct.id, activeProduct.name, targetPackSize);
       // Immediately set the local template state so canvas retains all edits
       setTemplate(skuTmpl);
+      if (onTemplateChange) onTemplateChange(skuTmpl);
       if (onSaveSkuOverride) {
         await onSaveSkuOverride(template, activeProduct.id, activeProduct.name, targetPackSize);
       } else {
@@ -954,6 +955,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       const remainingTemplates = (templates || []).filter(t => t.id !== overrideId && t.skuOverrideKey !== `${activeProduct.id}_${norm}`);
       const resolved = resolveLayout(activeProduct.id, targetPackSize, remainingTemplates, packProfiles);
       setTemplate(resolved.template);
+      if (onTemplateChange) onTemplateChange(resolved.template);
       setSelectedObjectId(resolved.template.objects[0]?.id || null);
       setHistory(h => [...h.slice(-24), JSON.parse(JSON.stringify(template))]);
       setRedoStack([]);

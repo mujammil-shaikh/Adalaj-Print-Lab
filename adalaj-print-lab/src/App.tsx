@@ -183,7 +183,7 @@ export default function App() {
     const savedBatchId = localStorage.getItem('als_active_batch_id');
     const savedMachineId = localStorage.getItem('als_active_machine_id');
 
-    const resolvedProd = prods.find(p => p.id === savedProdId) || prods.find(p => p.shortCode === 'ADTP') || prods[0];
+    const resolvedProd = prods.find(p => p.id === savedProdId) || prods.find(p => p.shortCode === 'ADRC') || prods.find(p => p.shortCode === 'ADTP') || prods[0];
     const resolvedSku = skuList.find(s => s.id === savedSkuId && s.productId === resolvedProd?.id) ||
       skuList.find(s => s.productId === resolvedProd?.id && s.packSize === '500 g') ||
       skuList.find(s => s.productId === resolvedProd?.id && s.packSize === '100 g') ||
@@ -192,6 +192,7 @@ export default function App() {
     const resolvedPack = packs.find(p => p.name === resolvedSku?.packSize) || packs[0];
     const resolvedBatch = bts.find(b => b.id === savedBatchId && b.productId === resolvedProd?.id) ||
       bts.find(b => b.productId === resolvedProd?.id) ||
+      bts.find(b => b.id === 'ADRC001') ||
       bts[0];
     const resolvedMachine = machs.find(m => m.id === savedMachineId) || machs[0] || null;
 
@@ -219,6 +220,33 @@ export default function App() {
       }
     }
   }, [loadDatabase]);
+
+  // Real-time Cross-Tab & Cross-Window State Synchronization
+  useEffect(() => {
+    const handleStorageSynced = () => {
+      loadDatabase();
+    };
+    window.addEventListener('als_storage_synced', handleStorageSynced);
+    window.addEventListener('storage', handleStorageSynced);
+    return () => {
+      window.removeEventListener('als_storage_synced', handleStorageSynced);
+      window.removeEventListener('storage', handleStorageSynced);
+    };
+  }, [loadDatabase]);
+
+  // Handle immediate in-memory template changes from Designer View
+  const handleTemplateChange = useCallback((updatedTmpl: Template) => {
+    setActiveTemplate(updatedTmpl);
+    setTemplates(prev => {
+      const idx = prev.findIndex(t => t.id === updatedTmpl.id);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = updatedTmpl;
+        return next;
+      }
+      return [updatedTmpl, ...prev];
+    });
+  }, []);
 
   // Toggle Theme
   const handleToggleTheme = useCallback(() => {
@@ -752,6 +780,8 @@ export default function App() {
             batches={batches}
             products={products}
             skus={skus}
+            templates={templates}
+            packProfiles={packProfiles}
             template={activeTemplate || templates[0]}
             activeBatch={activeBatch || batches[0]}
             activeProduct={activeProduct || products[0]}
@@ -867,6 +897,7 @@ export default function App() {
             onSavePackDefault={(tmpl, packSize, currentProdId) => handleSavePackSizeDefault(tmpl, packSize, currentProdId || activeProduct?.id)}
             onSaveSkuOverride={handleSaveSkuOverride}
             onRevertSkuOverride={handleRevertSkuOverride}
+            onTemplateChange={handleTemplateChange}
             onNavigateToPrint={() => navigateToRoute('print')}
           />
         )}
