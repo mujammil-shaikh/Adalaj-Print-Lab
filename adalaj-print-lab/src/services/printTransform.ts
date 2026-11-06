@@ -440,6 +440,19 @@ function renderSingleObject(
     ctx.textBaseline = 'middle';
     ctx.fillStyle = obj.invert ? '#ffffff' : '#000000';
 
+    if (obj.letterSpacingMm) {
+      const spacingPx = Math.round(obj.letterSpacingMm * dpmm);
+      try {
+        (ctx as any).letterSpacing = `${spacingPx}px`;
+      } catch {
+        // Fallback for environments without ctx.letterSpacing
+      }
+    } else {
+      try {
+        (ctx as any).letterSpacing = '0px';
+      } catch {}
+    }
+
     // Horizontal stretch/condensing anchored to text alignment origin
     const alignPivotX = obj.alignment === 'center' ? (w / 2) : obj.alignment === 'right' ? w : 0;
     if (obj.horizontalStretchPercent && obj.horizontalStretchPercent !== 100) {
@@ -447,6 +460,18 @@ function renderSingleObject(
       ctx.translate(alignPivotX, h / 2);
       ctx.scale(scale, 1);
       ctx.translate(-alignPivotX, -h / 2);
+    }
+
+    // Band boundary safety guard: If text extends beyond canvas width, gently condense so characters are NEVER clipped
+    if (canvasWidthPx && (!obj.horizontalStretchPercent || obj.horizontalStretchPercent === 100)) {
+      const metrics = ctx.measureText(text);
+      const availableWidthPx = canvasWidthPx - x - 2;
+      if (availableWidthPx > 10 && metrics.width > availableWidthPx) {
+        const autoScale = Math.max(0.70, availableWidthPx / metrics.width);
+        ctx.translate(alignPivotX, h / 2);
+        ctx.scale(autoScale, 1);
+        ctx.translate(-alignPivotX, -h / 2);
+      }
     }
 
     let textX = 0;

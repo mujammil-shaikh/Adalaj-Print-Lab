@@ -224,6 +224,10 @@ export const PrintView: React.FC<PrintViewProps> = ({
   const scaledPreviewWidthPx = Math.round(effectivePreviewWidthMm * previewBasePx * zoomScale);
   const scaledPreviewHeightPx = Math.round(effectivePreviewHeightMm * previewBasePx * zoomScale);
 
+  // Exact 1:1 hardware buffer resolution matching Pack View canvas
+  const bufferWidthPx = isRotated90or270 ? exportHeightPx : exportWidthPx;
+  const bufferHeightPx = isRotated90or270 ? exportWidthPx : exportHeightPx;
+
   // Pan-to-scroll support for physical preview viewport
   const printPreviewViewportRef = useRef<HTMLDivElement | null>(null);
   const isPreviewPanningRef = useRef(false);
@@ -940,7 +944,7 @@ export const PrintView: React.FC<PrintViewProps> = ({
               <div className="flex items-center gap-2">
                 <span className="text-[11px] font-mono bg-zinc-950 px-2.5 py-1 rounded-lg border border-zinc-800 text-zinc-300">
                   <span className="text-zinc-500">Buffer: </span>
-                  <strong className="text-amber-400">{scaledPreviewWidthPx}×{scaledPreviewHeightPx}px</strong>
+                  <strong className="text-amber-400">{bufferWidthPx}×{bufferHeightPx}px</strong>
                 </span>
                 <button
                   onClick={updatePreview}
@@ -1157,10 +1161,10 @@ export const PrintView: React.FC<PrintViewProps> = ({
                 }}
               >
                 <div 
-                  className="relative bg-white shadow-2xl rounded-xs border-2 border-zinc-400 p-2 m-auto shrink-0 transition-transform cursor-default"
+                  className="relative bg-white shadow-2xl rounded-xs border border-zinc-400 p-0 m-auto shrink-0 transition-transform cursor-default overflow-hidden"
                   style={{
-                    width: `${scaledPreviewWidthPx + 16}px`,
-                    height: `${scaledPreviewHeightPx + 16}px`
+                    width: `${scaledPreviewWidthPx}px`,
+                    height: `${scaledPreviewHeightPx}px`
                   }}
                 >
                   {/* Fallback direct canvas rendering */}

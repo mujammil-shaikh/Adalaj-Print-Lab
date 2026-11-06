@@ -1060,9 +1060,10 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
   const handleDownloadPng = () => {
     try {
       const canvas = renderTemplateToCanvas(template, machine, previewValues, {
-        forPrinterView: true,
+        forDownload: true,
         widthMm: canvasWidthMm,
         heightMm: canvasHeightMm,
+        downloadOrientation: template.customDownloadOrientation || '1to1',
         transform: {
           rotation: rasterRotation,
           mirrorX: rasterMirrorX,
@@ -1873,7 +1874,9 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                               e.stopPropagation();
                               handleObjectDoubleClick(obj.id);
                             }}
-                            className={`absolute flex items-center transition-shadow select-none whitespace-nowrap overflow-hidden ${
+                            className={`absolute flex items-center transition-shadow select-none whitespace-nowrap ${
+                              (obj.type === 'text' || obj.type === 'field') ? 'overflow-visible' : 'overflow-hidden'
+                            } ${
                               isSelected 
                                 ? 'outline outline-1.5 outline-amber-500 shadow-sm cursor-grab active:cursor-grabbing z-30' 
                                 : 'hover:bg-zinc-100/60 cursor-pointer z-10'
@@ -1881,12 +1884,15 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                             style={{
                               left: `${xPx}px`,
                               top: `${yPx}px`,
-                              width: `${wPx}px`,
+                              width: (obj.type === 'text' || obj.type === 'field')
+                                ? `${Math.max(wPx, (canvasWidthMm - obj.x - 0.2) * zoomLevel)}px`
+                                : `${wPx}px`,
                               height: `${hPx}px`,
                               fontFamily: `${obj.fontFamily}, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`,
                               fontSize: `${Math.max(6, Math.round(obj.fontSizeMm * zoomLevel))}px`,
                               fontWeight: obj.fontWeight === 'bold' ? 'bold' : 'normal',
                               fontStyle: obj.fontStyle === 'italic' ? 'italic' : 'normal',
+                              letterSpacing: `${(obj.letterSpacingMm || 0) * zoomLevel}px`,
                               transform: `rotate(${rot}deg) scale(${scaleX}, ${scaleY})`,
                               transformOrigin: `${obj.alignment === 'center' ? 'center' : obj.alignment === 'right' ? 'right' : 'left'} center`,
                               filter: obj.invert ? 'invert(1)' : 'none',

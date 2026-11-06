@@ -433,7 +433,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
             {/* Travel / Orientation Footer Tag */}
             <div className="absolute bottom-3 left-4 text-[10px] font-mono text-zinc-500 bg-zinc-900/90 px-2.5 py-1 rounded border border-zinc-800">
-              Sweep: <strong>{effectiveTemplate?.travel || 'Vertical'} + {effectiveTemplate?.layout || 'Stack'}</strong> • 150 px Head Band @ {machineDpi} DPI
+              Sweep: <strong>{effectiveTemplate?.travel || 'Vertical'} + {effectiveTemplate?.layout || 'Stack'}</strong> • {Math.round((effectiveTemplate?.customBandMm || activeMachine?.printBandMm || 12.5) * (machineDpi / 25.4))} px Head Band ({effectiveTemplate?.customBandMm || activeMachine?.printBandMm || 12.5} mm) @ {machineDpi} DPI
             </div>
           </div>
 

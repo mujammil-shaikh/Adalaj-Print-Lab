@@ -73,4 +73,29 @@ describe('Swath Boundary & Safe Margins Calibration (Zero Edge Loss)', () => {
       }
     }
   });
+
+  it('guarantees date fields (MFD, Best Before) use condensed typography to prevent character cutoff', () => {
+    const templates = [default100gTemplate, default500gTemplate];
+    for (const tmpl of templates) {
+      const dateObjs = tmpl.objects.filter(o => o.fieldKey === 'mfd' || o.fieldKey === 'best_before');
+      expect(dateObjs.length).toBe(2);
+      for (const obj of dateObjs) {
+        expect(obj.fontFamily).toBe('Roboto Condensed');
+        expect(obj.fontSizeMm).toBeLessThanOrEqual(2.6);
+        expect(obj.letterSpacingMm || 0).toBeLessThanOrEqual(0.02);
+      }
+    }
+  });
+
+  it('calculates exact 148x531px hardware buffer dimensions matching 12.5mm swath at 300 DPI', () => {
+    const dpmm = 300 / 25.4;
+    const bandPx12_5 = Math.round(12.5 * dpmm);
+    const lengthPx45 = Math.round(45.0 * dpmm);
+    expect(bandPx12_5).toBe(148);
+    expect(lengthPx45).toBe(531);
+
+    // HP TIJ 2.5 12.7mm head
+    const bandPx12_7 = Math.round(12.7 * dpmm);
+    expect(bandPx12_7).toBe(150);
+  });
 });

@@ -9,7 +9,8 @@ import {
   saveUniversalSnapshot, 
   restoreFromUniversalSnapshot, 
   parseUniversalSyncString, 
-  generateUniversalSyncString 
+  generateUniversalSyncString,
+  sanitizeTemplatesForCutoff
 } from './services/db';
 import { actionRegistry } from './services/actionRegistry';
 import type { 
@@ -166,6 +167,13 @@ export default function App() {
       await saveUniversalSnapshot();
     }
 
+    // Auto-heal cut-off letters in previously cached/saved templates
+    const { updated: sanitizedTmpls, changed } = sanitizeTemplatesForCutoff(currentTmpls);
+    if (changed) {
+      await db.templates.bulkPut(sanitizedTmpls);
+      await saveUniversalSnapshot();
+    }
+
     setBusiness(bizzes[0] || null);
     setBrand(brandsList[0] || null);
     setProducts(prods);
@@ -173,7 +181,7 @@ export default function App() {
     setPackProfiles(packs);
     setMachines(machs);
     setMediaProfiles(medias);
-    setTemplates(currentTmpls);
+    setTemplates(sanitizedTmpls);
     setBatches(bts);
     setAuditLogs(audits);
 

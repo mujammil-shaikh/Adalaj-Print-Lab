@@ -240,6 +240,40 @@ export function initializeDatabase(): Promise<void> {
   return initPromise;
 }
 
+export function sanitizeTemplatesForCutoff(templates: Template[]): { updated: Template[]; changed: boolean } {
+  let changed = false;
+  const updated = templates.map(t => {
+    let tChanged = false;
+    const is100g = t.packSizeScope === '100g' || t.id.includes('100g') || t.id === 'tmpl_adalaj_6line';
+    const targetX = is100g ? 1.0 : 0.5;
+    const targetW = is100g ? 10.5 : 11.5;
+
+    const newObjects = t.objects.map(obj => {
+      if (obj.type === 'field' && (obj.fieldKey === 'mfd' || obj.fieldKey === 'best_before')) {
+        if (obj.fontFamily === 'Roboto Mono' || obj.fontSizeMm > 2.8 || (obj.letterSpacingMm && obj.letterSpacingMm > 0.02)) {
+          tChanged = true;
+          return {
+            ...obj,
+            fontFamily: 'Roboto Condensed',
+            fontSizeMm: 2.5,
+            fontSizePt: 7.5,
+            width: targetW,
+            letterSpacingMm: 0,
+            x: targetX
+          };
+        }
+      }
+      return obj;
+    });
+    if (tChanged) {
+      changed = true;
+      return { ...t, objects: newObjects, updatedAt: new Date().toISOString() };
+    }
+    return t;
+  });
+  return { updated, changed };
+}
+
 async function doInitializeDatabase() {
   const [businessCount, machCount, tmplCount, looseCount] = await Promise.all([
     db.businesses.count(),
@@ -252,12 +286,25 @@ async function doInitializeDatabase() {
   if (businessCount === 0 || tmplCount === 0) {
     const restored = await restoreFromUniversalSnapshot();
     if (restored) {
+      const current = await db.templates.toArray();
+      const { updated, changed } = sanitizeTemplatesForCutoff(current);
+      if (changed) {
+        await db.templates.bulkPut(updated);
+        await saveUniversalSnapshot();
+      }
       return;
     }
   }
 
   // Ensure incomplete databases are healed rather than skipping on businessCount alone
   if (businessCount > 0 && machCount > 0 && tmplCount > 0) {
+    const current = await db.templates.toArray();
+    const { updated, changed } = sanitizeTemplatesForCutoff(current);
+    if (changed) {
+      await db.templates.bulkPut(updated);
+      await saveUniversalSnapshot();
+    }
+
     if (looseCount === 0) {
       await db.looseStock.put({
         id: 'loose_ADTP013_residual',
@@ -564,14 +611,14 @@ async function doInitializeDatabase() {
         x: 1.0,
         y: 12.3,
         width: 10.5,
-        height: 2.4,
+        height: 2.5,
         rotation: 0,
-        fontFamily: 'Roboto Mono',
+        fontFamily: 'Roboto Condensed',
         fontSizePt: 7.5,
-        fontSizeMm: 2.4,
+        fontSizeMm: 2.5,
         fontWeight: 'bold',
         fontStyle: 'normal',
-        letterSpacingMm: 0.1,
+        letterSpacingMm: 0,
         lineHeightMultiplier: 1.0,
         horizontalStretchPercent: 100,
         alignment: 'left',
@@ -591,14 +638,14 @@ async function doInitializeDatabase() {
         x: 1.0,
         y: 16.1,
         width: 10.5,
-        height: 2.4,
+        height: 2.5,
         rotation: 0,
-        fontFamily: 'Roboto Mono',
+        fontFamily: 'Roboto Condensed',
         fontSizePt: 7.5,
-        fontSizeMm: 2.4,
+        fontSizeMm: 2.5,
         fontWeight: 'normal',
         fontStyle: 'normal',
-        letterSpacingMm: 0.1,
+        letterSpacingMm: 0,
         lineHeightMultiplier: 1.0,
         horizontalStretchPercent: 100,
         alignment: 'left',
@@ -620,12 +667,12 @@ async function doInitializeDatabase() {
         width: 10.5,
         height: 2.2,
         rotation: 0,
-        fontFamily: 'Noto Sans',
+        fontFamily: 'Roboto Condensed',
         fontSizePt: 7,
         fontSizeMm: 2.2,
         fontWeight: 'normal',
         fontStyle: 'normal',
-        letterSpacingMm: 0.05,
+        letterSpacingMm: 0,
         lineHeightMultiplier: 1.0,
         horizontalStretchPercent: 100,
         alignment: 'left',
