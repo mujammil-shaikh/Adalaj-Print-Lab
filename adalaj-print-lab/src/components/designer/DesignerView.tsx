@@ -1340,7 +1340,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
             <span className="text-[10px] text-zinc-500 font-mono pr-1">mm</span>
 
             <div className="flex items-center gap-0.5 pl-1 border-l border-zinc-800">
-              {[35, 45].map(len => (
+              {[20, 25, 35, 45, 55].map(len => (
                 <button
                   key={len}
                   type="button"
@@ -1874,9 +1874,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                               e.stopPropagation();
                               handleObjectDoubleClick(obj.id);
                             }}
-                            className={`absolute flex items-center transition-shadow select-none whitespace-nowrap ${
-                              (obj.type === 'text' || obj.type === 'field') ? 'overflow-visible' : 'overflow-hidden'
-                            } ${
+                            className={`absolute flex items-center transition-shadow select-none whitespace-nowrap overflow-hidden ${
                               isSelected 
                                 ? 'outline outline-1.5 outline-amber-500 shadow-sm cursor-grab active:cursor-grabbing z-30' 
                                 : 'hover:bg-zinc-100/60 cursor-pointer z-10'
@@ -1884,9 +1882,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                             style={{
                               left: `${xPx}px`,
                               top: `${yPx}px`,
-                              width: (obj.type === 'text' || obj.type === 'field')
-                                ? `${Math.max(wPx, (canvasWidthMm - obj.x - 0.2) * zoomLevel)}px`
-                                : `${wPx}px`,
+                              width: `${wPx}px`,
                               height: `${hPx}px`,
                               fontFamily: `${obj.fontFamily}, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`,
                               fontSize: `${Math.max(6, Math.round(obj.fontSizeMm * zoomLevel))}px`,

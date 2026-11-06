@@ -420,6 +420,12 @@ function renderSingleObject(
 
   ctx.translate(-w / 2, -h / 2);
 
+  // Exact 1:1 clipping matching Pack View DOM container's overflow-hidden:
+  // If anything is clipped or cut off in Pack View, it is cut off identically in canvas/raster/preview
+  ctx.beginPath();
+  ctx.rect(0, 0, w, h);
+  ctx.clip();
+
   if (obj.type === 'text' || obj.type === 'field') {
     let text = obj.content || '';
     if (text.includes('{')) {
@@ -460,18 +466,6 @@ function renderSingleObject(
       ctx.translate(alignPivotX, h / 2);
       ctx.scale(scale, 1);
       ctx.translate(-alignPivotX, -h / 2);
-    }
-
-    // Band boundary safety guard: If text extends beyond canvas width, gently condense so characters are NEVER clipped
-    if (canvasWidthPx && (!obj.horizontalStretchPercent || obj.horizontalStretchPercent === 100)) {
-      const metrics = ctx.measureText(text);
-      const availableWidthPx = canvasWidthPx - x - 2;
-      if (availableWidthPx > 10 && metrics.width > availableWidthPx) {
-        const autoScale = Math.max(0.70, availableWidthPx / metrics.width);
-        ctx.translate(alignPivotX, h / 2);
-        ctx.scale(autoScale, 1);
-        ctx.translate(-alignPivotX, -h / 2);
-      }
     }
 
     let textX = 0;

@@ -202,7 +202,11 @@ export default function App() {
       bts.find(b => b.productId === resolvedProd?.id) ||
       bts.find(b => b.id === 'ADRC001') ||
       bts[0];
-    const resolvedMachine = machs.find(m => m.id === savedMachineId) || machs[0] || null;
+    const resolvedMachine = (savedMachineId && machs.find(m => m.id === savedMachineId)) ||
+      machs.find(m => m.id === 'mach_r2d2') ||
+      machs.find(m => m.technology === 'TIJ Inkjet') ||
+      machs[0] ||
+      null;
 
     const initialResolved = resolveLayout(resolvedProd?.id || '', resolvedSku?.packSize || '100 g', currentTmpls, packs);
     const defaultTemplate = initialResolved.template;
@@ -748,6 +752,12 @@ export default function App() {
     setAuditLogs(newLogs);
   };
 
+  const handleSelectMachine = async (mach: MachineProfile) => {
+    setActiveMachine(mach);
+    localStorage.setItem('als_active_machine_id', mach.id);
+    await saveUniversalSnapshot();
+  };
+
   if (isLoading || !activeMachine) {
     return (
       <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center text-zinc-300 gap-3 font-sans">
@@ -770,6 +780,9 @@ export default function App() {
         onNavigate={navigateToRoute}
         activeBatch={activeBatch}
         activeProduct={activeProduct}
+        machines={machines}
+        activeMachine={activeMachine}
+        onSelectMachine={handleSelectMachine}
         theme={theme}
         onToggleTheme={handleToggleTheme}
         isAdvancedMode={isAdvancedMode}

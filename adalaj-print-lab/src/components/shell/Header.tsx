@@ -22,13 +22,16 @@ import {
   Cloud
 } from 'lucide-react';
 import { PWAInstallButton } from './PWAInstallButton';
-import type { Batch, Product } from '../../types';
+import type { Batch, Product, MachineProfile } from '../../types';
 
 interface HeaderProps {
   currentRoute: string;
   onNavigate: (route: string) => void;
   activeBatch: Batch | null;
   activeProduct?: Product | null;
+  machines?: MachineProfile[];
+  activeMachine?: MachineProfile | null;
+  onSelectMachine?: (m: MachineProfile) => void;
   theme: 'dark' | 'light';
   onToggleTheme: () => void;
   isAdvancedMode: boolean;
@@ -45,6 +48,9 @@ export const Header: React.FC<HeaderProps> = ({
   onNavigate,
   activeBatch,
   activeProduct,
+  machines,
+  activeMachine,
+  onSelectMachine,
   theme,
   onToggleTheme,
   isAdvancedMode,
@@ -102,6 +108,30 @@ export const Header: React.FC<HeaderProps> = ({
             {activeBatch ? activeBatch.id : 'ADTP014'}
           </span>
         </div>
+
+        {/* Active Machine Switcher Chip */}
+        {activeMachine && machines && machines.length > 0 && (
+          <div 
+            className="hidden lg:flex items-center gap-1.5 px-2 py-1 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-zinc-300"
+            title="Active Hardware Machine Profile"
+          >
+            <Printer className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+            <select
+              value={activeMachine.id}
+              onChange={e => {
+                const target = machines.find(m => m.id === e.target.value);
+                if (target && onSelectMachine) onSelectMachine(target);
+              }}
+              className="bg-transparent text-amber-300 font-bold focus:outline-hidden cursor-pointer text-xs"
+            >
+              {machines.map(m => (
+                <option key={m.id} value={m.id} className="bg-zinc-950 text-white font-mono">
+                  {m.name} ({m.printBandMm}mm)
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       {/* Main Workspace Switcher (Segmented Control - Fits Comfortably, No Sprawl) */}

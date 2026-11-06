@@ -24,11 +24,22 @@ import {
   Radio,
   Wifi,
   Terminal,
-  Send
+  Send,
+  Copy,
+  CheckCheck,
+  Database,
+  Key
 } from 'lucide-react';
 import type { MachineProfile, PackProfile, MediaProfile, Business, Brand } from '../../types';
 import { actionRegistry } from '../../services/actionRegistry';
-import { db, saveUniversalSnapshot } from '../../services/db';
+import { 
+  db, 
+  saveUniversalSnapshot, 
+  generateUniversalSyncString, 
+  parseUniversalSyncString, 
+  restoreFromUniversalSnapshot,
+  type UniversalDatabaseSnapshot 
+} from '../../services/db';
 import { hardwareManager, type HardwareLogEntry } from '../../services/hardwareAdapters';
 
 interface SettingsViewProps {
@@ -88,16 +99,56 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   // Keyboard shortcut editor state
   const [shortcutFilter, setShortcutFilter] = useState('');
+  const [shortcutCategory, setShortcutCategory] = useState<string>('all');
   const [editingActionId, setEditingActionId] = useState<string | null>(null);
   const [capturedKey, setCapturedKey] = useState('');
   const [conflictWarning, setConflictWarning] = useState<string | null>(null);
+  const [keyboardFeedback, setKeyboardFeedback] = useState<string | null>(null);
+
+  // Backup & sync state
+  const [tableCounts, setTableCounts] = useState<Record<string, number>>({});
+  const [syncStringInput, setSyncStringInput] = useState<string>('');
+  const [copiedSync, setCopiedSync] = useState(false);
+
+  useEffect(() => {
+    const loadCounts = async () => {
+      try {
+        const [prods, skus, bts, tmpls, machs, jobs, loose, audits] = await Promise.all([
+          db.products.count(),
+          db.skus.count(),
+          db.batches.count(),
+          db.templates.count(),
+          db.machineProfiles.count(),
+          db.printJobs.count(),
+          db.looseStock.count(),
+          db.auditLogs.count()
+        ]);
+        setTableCounts({
+          Products: prods,
+          SKUs: skus,
+          Batches: bts,
+          Templates: tmpls,
+          Machines: machs,
+          PrintJobs: jobs,
+          LooseStock: loose,
+          AuditLogs: audits
+        });
+      } catch (err) {
+        console.error('Failed to load table counts:', err);
+      }
+    };
+    loadCounts();
+  }, [activeTab]);
 
   const registeredActions = actionRegistry.getAll();
-  const filteredActions = registeredActions.filter(a => 
-    !shortcutFilter || 
-    a.label.toLowerCase().includes(shortcutFilter.toLowerCase()) ||
-    (a.shortcut && a.shortcut.toLowerCase().includes(shortcutFilter.toLowerCase()))
-  );
+  const filteredActions = registeredActions.filter(a => {
+    const matchesCategory = shortcutCategory === 'all' || a.area.toLowerCase() === shortcutCategory.toLowerCase();
+    const matchesSearch = !shortcutFilter || 
+      a.label.toLowerCase().includes(shortcutFilter.toLowerCase()) ||
+      (a.shortcut && a.shortcut.toLowerCase().includes(shortcutFilter.toLowerCase())) ||
+      a.area.toLowerCase().includes(shortcutFilter.toLowerCase());
+    return matchesCategory && matchesSearch;
+  });
 
   const handleSaveCalibration = () => {
     localStorage.setItem('als_screen_scale_factor', String(100 / calibratedMm));
@@ -136,6 +187,62 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       setConflictWarning(null);
       setEditingActionId(null);
       setCapturedKey('');
+      setKeyboardFeedback(`✓ Shortcut for "${actionId}" updated to "${capturedKey}".`);
+      setTimeout(() => setKeyboardFeedback(null), 3000);
+    }
+  };
+
+  const handleCopyUniversalSyncString = async () => {
+    try {
+      const snapshot: UniversalDatabaseSnapshot = {
+        version: 2,
+        timestamp: new Date().toISOString(),
+        appVersion: '1.0.0',
+        tables: {
+          businesses: await db.businesses.toArray(),
+          brands: await db.brands.toArray(),
+          products: await db.products.toArray(),
+          skus: await db.skus.toArray(),
+          packProfiles: await db.packProfiles.toArray(),
+          machineProfiles: await db.machineProfiles.toArray(),
+          mediaProfiles: await db.mediaProfiles.toArray(),
+          templates: await db.templates.toArray(),
+          batches: await db.batches.toArray(),
+          printJobs: await db.printJobs.toArray(),
+          looseStock: await db.looseStock.toArray(),
+          auditLogs: await db.auditLogs.toArray()
+        }
+      };
+      const syncStr = generateUniversalSyncString(snapshot);
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(syncStr);
+        setCopiedSync(true);
+        setTimeout(() => setCopiedSync(false), 3000);
+        setBackupFeedback('✓ Universal Sync Code copied to clipboard! Paste into any other device/browser to sync completely.');
+      }
+    } catch (err: any) {
+      setBackupFeedback(`❌ Failed to generate sync code: ${err.message}`);
+    }
+  };
+
+  const handleImportUniversalSyncString = async () => {
+    if (!syncStringInput.trim()) return;
+    try {
+      const snapshot = parseUniversalSyncString(syncStringInput.trim());
+      if (!snapshot || !snapshot.tables) {
+        setBackupFeedback('❌ Invalid sync code format. Please verify the copied string.');
+        return;
+      }
+      const success = await restoreFromUniversalSnapshot(snapshot);
+      if (success) {
+        setBackupFeedback('✓ Universal Database snapshot applied successfully! Reloading data...');
+        setSyncStringInput('');
+        onRestoreBackup();
+      } else {
+        setBackupFeedback('❌ Failed to restore from sync string.');
+      }
+    } catch (err: any) {
+      setBackupFeedback(`❌ Error applying sync string: ${err.message || 'Corrupted string'}`);
     }
   };
 
@@ -643,24 +750,38 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
       {/* Tab Content: Keyboard Remapping */}
       {activeTab === 'keyboard' && (
-        <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-6 space-y-4">
+        <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-6 space-y-4 shadow-sm">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-800 pb-4">
             <div>
-              <h3 className="text-base font-bold text-white">Keyboard Shortcut Manager</h3>
-              <p className="text-xs text-zinc-400">
-                Remap any action, resolve key conflicts, or restore standard factory defaults.
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <Key className="w-4 h-4 text-amber-400" />
+                <span>Keyboard Shortcut Manager</span>
+              </h3>
+              <p className="text-xs text-zinc-400 mt-0.5">
+                Keyboard-first industrial control. Remap any action, filter by workspace, or restore factory key bindings.
               </p>
             </div>
 
             <div className="flex items-center gap-2">
               <button
-                onClick={() => actionRegistry.resetAllShortcuts()}
-                className="px-3 py-1.5 text-xs font-semibold rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700"
+                onClick={() => {
+                  actionRegistry.resetAllShortcuts();
+                  setKeyboardFeedback('✓ All keyboard shortcuts reset to factory defaults.');
+                  setTimeout(() => setKeyboardFeedback(null), 3500);
+                }}
+                className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white border border-zinc-700 transition-colors cursor-pointer"
               >
                 Reset All Defaults
               </button>
             </div>
           </div>
+
+          {keyboardFeedback && (
+            <div className="p-3 rounded-lg bg-emerald-950/40 border border-emerald-500/50 text-emerald-300 text-xs flex items-center gap-2">
+              <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>{keyboardFeedback}</span>
+            </div>
+          )}
 
           {conflictWarning && (
             <div className="p-3 rounded-lg bg-rose-950/40 border border-rose-500 text-rose-200 text-xs flex items-center gap-2">
@@ -669,133 +790,231 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
           )}
 
-          <div className="p-2.5 rounded-lg bg-zinc-950 border border-zinc-800">
-            <input
-              id="settings-shortcut-search"
-              name="shortcutFilter"
-              aria-label="Search keyboard shortcuts"
-              type="text"
-              placeholder="Search shortcuts..."
-              value={shortcutFilter}
-              onChange={e => setShortcutFilter(e.target.value)}
-              className="w-full bg-transparent text-xs text-zinc-200 placeholder-zinc-500 focus:outline-hidden"
-            />
+          {/* Category Filter Pills & Search */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
+            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5">
+              {[
+                { id: 'all', label: 'All Actions' },
+                { id: 'canvas', label: 'Canvas' },
+                { id: 'navigation', label: 'Navigation' },
+                { id: 'print', label: 'Print' },
+                { id: 'workflow', label: 'Workflow' }
+              ].map(cat => (
+                <button
+                  key={cat.id}
+                  onClick={() => setShortcutCategory(cat.id)}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+                    shortcutCategory === cat.id
+                      ? 'bg-amber-500 text-black font-bold shadow-xs'
+                      : 'bg-zinc-950 text-zinc-400 hover:text-zinc-200 border border-zinc-800'
+                  }`}
+                >
+                  {cat.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="p-2 rounded-lg bg-zinc-950 border border-zinc-800 flex-1 sm:max-w-xs">
+              <input
+                id="settings-shortcut-search"
+                name="shortcutFilter"
+                aria-label="Search keyboard shortcuts"
+                type="text"
+                placeholder="Search shortcuts..."
+                value={shortcutFilter}
+                onChange={e => setShortcutFilter(e.target.value)}
+                className="w-full bg-transparent text-xs text-zinc-200 placeholder-zinc-500 focus:outline-hidden"
+              />
+            </div>
           </div>
 
           <div className="divide-y divide-zinc-800 border border-zinc-800 rounded-lg overflow-hidden max-h-96 overflow-y-auto">
-            {filteredActions.map(action => (
-              <div key={action.id} className="p-3 flex items-center justify-between text-xs hover:bg-zinc-800/40">
-                <div>
-                  <span className="font-semibold text-zinc-200 block">{action.label}</span>
-                  <span className="text-[10px] text-zinc-500 font-mono uppercase">{action.area}</span>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  {editingActionId === action.id ? (
-                    <div className="flex items-center gap-1">
-                      <input
-                        id="settings-captured-key-input"
-                        name="capturedKey"
-                        aria-label="Capture key combo"
-                        type="text"
-                        placeholder="Press key combo..."
-                        value={capturedKey}
-                        readOnly
-                        onKeyDown={e => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          const parts: string[] = [];
-                          if (e.ctrlKey || e.metaKey) parts.push('Ctrl');
-                          if (e.altKey) parts.push('Alt');
-                          if (e.shiftKey) parts.push('Shift');
-                          if (e.key && !['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) {
-                            parts.push(e.key.length === 1 ? e.key.toUpperCase() : e.key);
-                          }
-                          if (parts.length > 0) {
-                            setCapturedKey(parts.join('+'));
-                          }
-                        }}
-                        className="w-32 bg-zinc-950 border border-amber-500 rounded px-2 py-0.5 text-xs text-amber-300 font-mono font-bold"
-                      />
-                      <button
-                        onClick={() => handleAssignShortcut(action.id)}
-                        className="px-2 py-0.5 rounded bg-emerald-500 text-black font-bold text-xs"
-                      >
-                        Save
-                      </button>
-                      <button
-                        onClick={() => {
-                          setEditingActionId(null);
-                          setConflictWarning(null);
-                        }}
-                        className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 text-xs"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  ) : (
-                    <>
-                      {action.shortcut ? (
-                        <kbd className="px-2 py-0.5 text-xs font-mono rounded bg-zinc-950 text-amber-400 border border-zinc-700">
-                          {action.shortcut}
-                        </kbd>
-                      ) : (
-                        <span className="text-[10px] text-zinc-600 font-mono">None</span>
-                      )}
-                      <button
-                        onClick={() => {
-                          setEditingActionId(action.id);
-                          setCapturedKey(action.shortcut || '');
-                          setConflictWarning(null);
-                        }}
-                        className="px-2 py-1 text-[11px] font-semibold rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
-                      >
-                        Change
-                      </button>
-                    </>
-                  )}
-                </div>
+            {filteredActions.length === 0 ? (
+              <div className="p-6 text-center text-xs text-zinc-500">
+                No matching keyboard shortcuts found.
               </div>
-            ))}
+            ) : (
+              filteredActions.map(action => (
+                <div key={action.id} className="p-3 flex items-center justify-between text-xs hover:bg-zinc-800/40">
+                  <div>
+                    <span className="font-semibold text-zinc-200 block">{action.label}</span>
+                    <span className="text-[10px] text-zinc-500 font-mono uppercase">{action.area}</span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {editingActionId === action.id ? (
+                      <div className="flex items-center gap-1">
+                        <input
+                          id="settings-captured-key-input"
+                          name="capturedKey"
+                          aria-label="Capture key combo"
+                          type="text"
+                          placeholder="Press key combo..."
+                          value={capturedKey}
+                          readOnly
+                          onKeyDown={e => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            const parts: string[] = [];
+                            if (e.ctrlKey || e.metaKey) parts.push('Ctrl');
+                            if (e.altKey) parts.push('Alt');
+                            if (e.shiftKey) parts.push('Shift');
+                            if (e.key && !['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) {
+                              parts.push(e.key.length === 1 ? e.key.toUpperCase() : e.key);
+                            }
+                            if (parts.length > 0) {
+                              setCapturedKey(parts.join('+'));
+                            }
+                          }}
+                          className="w-32 bg-zinc-950 border border-amber-500 rounded px-2 py-0.5 text-xs text-amber-300 font-mono font-bold"
+                        />
+                        <button
+                          onClick={() => handleAssignShortcut(action.id)}
+                          className="px-2 py-0.5 rounded bg-emerald-500 text-black font-bold text-xs cursor-pointer"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => {
+                            setEditingActionId(null);
+                            setConflictWarning(null);
+                          }}
+                          className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 text-xs cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        {action.shortcut ? (
+                          <kbd className="px-2 py-0.5 text-xs font-mono rounded bg-zinc-950 text-amber-400 border border-zinc-700">
+                            {action.shortcut}
+                          </kbd>
+                        ) : (
+                          <span className="text-[10px] text-zinc-600 font-mono">None</span>
+                        )}
+                        <button
+                          onClick={() => {
+                            setEditingActionId(action.id);
+                            setCapturedKey(action.shortcut || '');
+                            setConflictWarning(null);
+                          }}
+                          className="px-2 py-1 text-[11px] font-semibold rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 cursor-pointer"
+                        >
+                          Change
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
       )}
 
       {/* Tab Content: Backup & Restore */}
       {activeTab === 'backup' && (
-        <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-6 space-y-5 max-w-xl">
-          <div>
-            <h3 className="text-base font-bold text-white">Local-First Database Backup & Restore</h3>
-            <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
-              Export all local catalogs, templates, historical batches, and machine configurations to a portable JSON backup file.
-            </p>
-          </div>
-
-          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-            <button
-              onClick={handleExportBackup}
-              className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs shadow-sm"
-            >
-              <Download className="w-4 h-4" />
-              <span>Export Complete Backup (.JSON)</span>
-            </button>
-
-            <label className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold text-xs border border-zinc-700 cursor-pointer">
-              <Upload className="w-4 h-4" />
-              <span>Restore from File</span>
-              <input type="file" accept=".json" onChange={handleImportBackup} className="hidden" />
-            </label>
-          </div>
-
-          {backupFeedback && (
-            <div className={`p-3 rounded-lg text-xs ${
-              backupFeedback.startsWith('✓') || backupFeedback.includes('successfully')
-                ? 'bg-emerald-950/40 border border-emerald-500/50 text-emerald-300'
-                : 'bg-rose-950/40 border border-rose-500/50 text-rose-300'
-            }`}>
-              {backupFeedback}
+        <div className="space-y-6">
+          {/* Table Counts Overview */}
+          <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-5 space-y-3 shadow-sm">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-300 flex items-center gap-2">
+              <Database className="w-4 h-4 text-amber-400" />
+              <span>Universal Database Overview & Status</span>
+            </h3>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono">
+              {Object.entries(tableCounts).map(([tbl, cnt]) => (
+                <div key={tbl} className="bg-zinc-950 border border-zinc-800/80 p-2.5 rounded-lg">
+                  <span className="text-[10px] text-zinc-500 uppercase block">{tbl}</span>
+                  <span className="text-sm font-bold text-amber-400">{cnt} records</span>
+                </div>
+              ))}
             </div>
-          )}
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Left: Universal Sync Code (Instant Cross-Device Transfer) */}
+            <div className="rounded-xl bg-zinc-900 border border-amber-500/50 p-6 space-y-4 shadow-md">
+              <div>
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Copy className="w-4 h-4 text-amber-400" />
+                  <span>Universal Sync Code (Instant Device Transfer)</span>
+                </h3>
+                <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
+                  Transfer your entire workspace state (all designs, MRPs, batches, machines, and settings) to any device or browser by copying a portable base64 string.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <button
+                  onClick={handleCopyUniversalSyncString}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs shadow-sm transition-all cursor-pointer"
+                >
+                  {copiedSync ? <CheckCheck className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                  <span>{copiedSync ? 'Copied to Clipboard!' : 'Copy Universal Sync Code'}</span>
+                </button>
+              </div>
+
+              <div className="pt-3 border-t border-zinc-800 space-y-2">
+                <label className="text-[11px] font-semibold text-zinc-300 block">
+                  Paste Sync Code to Restore:
+                </label>
+                <textarea
+                  value={syncStringInput}
+                  onChange={e => setSyncStringInput(e.target.value)}
+                  placeholder="Paste base64 sync code string here..."
+                  rows={2}
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg p-2 font-mono text-[11px] text-zinc-200 focus:outline-hidden focus:border-amber-500"
+                />
+                <button
+                  onClick={handleImportUniversalSyncString}
+                  disabled={!syncStringInput.trim()}
+                  className="w-full py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 text-amber-300 font-bold text-xs border border-zinc-700 transition-colors cursor-pointer"
+                >
+                  Apply Universal Sync Code
+                </button>
+              </div>
+            </div>
+
+            {/* Right: Traditional JSON File Export & Import */}
+            <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-6 space-y-4 shadow-sm flex flex-col justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Download className="w-4 h-4 text-amber-400" />
+                  <span>Complete JSON Backup & Restore</span>
+                </h3>
+                <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
+                  Export complete database to an immutable JSON backup file for cold archive, compliance, or offline storage.
+                </p>
+              </div>
+
+              <div className="space-y-3 pt-2">
+                <button
+                  onClick={handleExportBackup}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white font-bold text-xs border border-zinc-700 shadow-sm transition-colors cursor-pointer"
+                >
+                  <Download className="w-4 h-4 text-amber-400" />
+                  <span>Export Complete JSON Backup</span>
+                </button>
+
+                <label className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-zinc-950 hover:bg-zinc-800 text-zinc-200 font-semibold text-xs border border-zinc-700 cursor-pointer transition-colors">
+                  <Upload className="w-4 h-4 text-emerald-400" />
+                  <span>Restore from JSON File</span>
+                  <input type="file" accept=".json" onChange={handleImportBackup} className="hidden" />
+                </label>
+              </div>
+
+              {backupFeedback && (
+                <div className={`p-3 rounded-lg text-xs mt-3 ${
+                  backupFeedback.startsWith('✓') || backupFeedback.includes('successfully')
+                    ? 'bg-emerald-950/40 border border-emerald-500/50 text-emerald-300'
+                    : 'bg-rose-950/40 border border-rose-500/50 text-rose-300'
+                }`}>
+                  {backupFeedback}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
