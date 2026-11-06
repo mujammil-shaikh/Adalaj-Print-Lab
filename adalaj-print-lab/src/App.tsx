@@ -758,6 +758,49 @@ export default function App() {
     await saveUniversalSnapshot();
   };
 
+  const handleCreateMachine = async (newMach: MachineProfile, makeActive: boolean = true) => {
+    await db.machineProfiles.put(newMach);
+    setMachines(prev => [...prev.filter(m => m.id !== newMach.id), newMach]);
+    if (makeActive) {
+      setActiveMachine(newMach);
+      localStorage.setItem('als_active_machine_id', newMach.id);
+    }
+    await saveUniversalSnapshot();
+  };
+
+  const handleUpdateMachine = async (updated: MachineProfile) => {
+    await db.machineProfiles.put(updated);
+    setMachines(prev => prev.map(m => m.id === updated.id ? updated : m));
+    if (activeMachine?.id === updated.id) {
+      setActiveMachine(updated);
+    }
+    await saveUniversalSnapshot();
+  };
+
+  const handleDeleteMachine = async (machineId: string) => {
+    if (machines.length <= 1) return;
+    await db.machineProfiles.delete(machineId);
+    const remaining = machines.filter(m => m.id !== machineId);
+    setMachines(remaining);
+    if (activeMachine?.id === machineId) {
+      const nextActive = remaining[0];
+      setActiveMachine(nextActive);
+      localStorage.setItem('als_active_machine_id', nextActive.id);
+    }
+    await saveUniversalSnapshot();
+  };
+
+  const handleDuplicateMachine = async (source: MachineProfile) => {
+    const cloned: MachineProfile = {
+      ...source,
+      id: `mach_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      name: `${source.name} (Copy)`
+    };
+    await db.machineProfiles.put(cloned);
+    setMachines(prev => [...prev, cloned]);
+    await saveUniversalSnapshot();
+  };
+
   if (isLoading || !activeMachine) {
     return (
       <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center text-zinc-300 gap-3 font-sans">
@@ -1001,16 +1044,11 @@ export default function App() {
             activeMachine={activeMachine}
             packProfiles={packProfiles}
             mediaProfiles={mediaProfiles}
-            onSelectMachine={m => {
-              setActiveMachine(m);
-              localStorage.setItem('als_active_machine_id', m.id);
-            }}
-            onUpdateMachine={async m => {
-              await db.machineProfiles.put(m);
-              setMachines(prev => prev.map(mach => mach.id === m.id ? m : mach));
-              setActiveMachine(m);
-              await saveUniversalSnapshot();
-            }}
+            onSelectMachine={handleSelectMachine}
+            onUpdateMachine={handleUpdateMachine}
+            onCreateMachine={handleCreateMachine}
+            onDeleteMachine={handleDeleteMachine}
+            onDuplicateMachine={handleDuplicateMachine}
             onUpdatePackProfile={async p => {
               await db.packProfiles.put(p);
               setPackProfiles(prev => prev.map(pack => pack.id === p.id ? p : pack));

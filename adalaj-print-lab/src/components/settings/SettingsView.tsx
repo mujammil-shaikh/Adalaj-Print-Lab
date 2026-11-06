@@ -28,9 +28,12 @@ import {
   Copy,
   CheckCheck,
   Database,
-  Key
+  Key,
+  Trash2,
+  AlertCircle,
+  CheckCircle
 } from 'lucide-react';
-import type { MachineProfile, PackProfile, MediaProfile, Business, Brand } from '../../types';
+import type { MachineProfile, PackProfile, MediaProfile, Business, Brand, MachineType } from '../../types';
 import { actionRegistry } from '../../services/actionRegistry';
 import { 
   db, 
@@ -51,9 +54,135 @@ interface SettingsViewProps {
   mediaProfiles: MediaProfile[];
   onSelectMachine: (m: MachineProfile) => void;
   onUpdateMachine: (m: MachineProfile) => void;
+  onCreateMachine?: (m: MachineProfile, makeActive?: boolean) => void;
+  onDeleteMachine?: (machineId: string) => void;
+  onDuplicateMachine?: (m: MachineProfile) => void;
   onUpdatePackProfile: (p: PackProfile) => void;
   onRestoreBackup: () => void;
 }
+
+const DEFAULT_NEW_MACHINE: MachineProfile = {
+  id: '',
+  name: 'Adalaj TIJ Pro 12.7mm',
+  manufacturer: 'Adalaj TIJ Systems',
+  model: 'SX-100 Handheld',
+  technology: 'TIJ Inkjet',
+  headWidthMm: 12.7,
+  printBandMm: 12.5,
+  defaultDpi: 300,
+  edgeBufferMm: 0.1,
+  contentPaddingTopMm: 0.2,
+  contentPaddingBottomMm: 0.2,
+  contentPaddingLeftMm: 0.2,
+  contentPaddingRightMm: 0.2,
+  maxTravelLengthMm: 150.0,
+  minimumLegibleTextHeightMm: 1.8,
+  exportRotation: 0,
+  mirrorX: false,
+  mirrorY: false,
+  feedOrigin: 'Top -> Bottom',
+  inkSpreadCompensationPx: 0,
+  supportedChannels: ['Black'],
+  notes: 'Standard 12.7mm handheld TIJ cartridge printer.'
+};
+
+const MACHINE_PRESETS: { label: string; description: string; profile: Partial<MachineProfile> }[] = [
+  {
+    label: '12.7mm (0.5") TIJ Handheld Standard',
+    description: '12.5mm usable band, 300 DPI, 148 px native swath',
+    profile: {
+      name: 'Adalaj TIJ Handheld 12.7mm',
+      manufacturer: 'Adalaj TIJ Systems',
+      model: 'SX100 Handheld',
+      technology: 'TIJ Inkjet',
+      headWidthMm: 12.7,
+      printBandMm: 12.5,
+      defaultDpi: 300,
+      edgeBufferMm: 0.1,
+      maxTravelLengthMm: 150,
+      feedOrigin: 'Top -> Bottom',
+      exportRotation: 0,
+      mirrorX: false,
+      notes: 'Standard 12.7mm TIJ cartridge (148-150 px usable swath).'
+    }
+  },
+  {
+    label: '25.4mm (1.0") Dual Head High-Swath TIJ',
+    description: '25.0mm usable band, 300 DPI, 295-300 px double height',
+    profile: {
+      name: 'Adalaj Dual Head TIJ 25.4mm',
+      manufacturer: 'Adalaj TIJ Systems',
+      model: 'DX-200 Dual',
+      technology: 'TIJ Inkjet',
+      headWidthMm: 25.4,
+      printBandMm: 25.0,
+      defaultDpi: 300,
+      edgeBufferMm: 0.2,
+      maxTravelLengthMm: 200,
+      feedOrigin: 'Top -> Bottom',
+      exportRotation: 0,
+      mirrorX: false,
+      notes: 'Dual-cartridge stitched head for 25mm high-swath batch coding (295-300 px).'
+    }
+  },
+  {
+    label: '100mm Galvo Fiber Laser Marker',
+    description: '95mm usable field, 600 DPI, indelible pouch/carton marking',
+    profile: {
+      name: 'Adalaj Fiber Laser 20W Galvo',
+      manufacturer: 'Industrial Marking Tech',
+      model: 'FL-20W Galvo',
+      technology: 'Laser Marker',
+      headWidthMm: 100.0,
+      printBandMm: 95.0,
+      defaultDpi: 600,
+      edgeBufferMm: 2.5,
+      maxTravelLengthMm: 100,
+      feedOrigin: 'Top -> Bottom',
+      exportRotation: 0,
+      mirrorX: false,
+      notes: 'Direct indelible laser etching on pouch laminate and cartons.'
+    }
+  },
+  {
+    label: 'Continuous Inkjet (CIJ 32-Dot)',
+    description: '18mm swath, 150 DPI high-speed conveyor coding',
+    profile: {
+      name: 'VideoJet CIJ Continuous Inkjet',
+      manufacturer: 'VideoJet Systems',
+      model: '1580 Ultra CIJ',
+      technology: 'CIJ Inkjet',
+      headWidthMm: 20.0,
+      printBandMm: 18.0,
+      defaultDpi: 150,
+      edgeBufferMm: 1.0,
+      maxTravelLengthMm: 300,
+      feedOrigin: 'Left -> Right',
+      exportRotation: 90,
+      mirrorX: false,
+      notes: 'Continuous high-speed coding for bottles, cans, and pouch conveyors.'
+    }
+  },
+  {
+    label: '53mm Thermal Transfer Overprinter (TTO)',
+    description: '53.0mm band, 300 DPI, flexible packaging roll web',
+    profile: {
+      name: 'Markem TTO SmartDate 53mm',
+      manufacturer: 'Markem-Imaje',
+      model: 'X65 SmartDate TTO',
+      technology: 'Thermal Transfer',
+      headWidthMm: 53.3,
+      printBandMm: 53.0,
+      defaultDpi: 300,
+      edgeBufferMm: 0.5,
+      maxTravelLengthMm: 120,
+      feedOrigin: 'Top -> Bottom',
+      exportRotation: 0,
+      mirrorX: false,
+      notes: 'Inline thermal transfer overprinter for flexible packaging film web.'
+    }
+  }
+];
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
   business,
@@ -64,6 +193,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   mediaProfiles,
   onSelectMachine,
   onUpdateMachine,
+  onCreateMachine,
+  onDeleteMachine,
+  onDuplicateMachine,
   onUpdatePackProfile,
   onRestoreBackup
 }) => {
@@ -84,6 +216,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   }, []);
 
   const [editingMachine, setEditingMachine] = useState<MachineProfile | null>(null);
+  const [isCreatingMachine, setIsCreatingMachine] = useState(false);
+  const [machineFormData, setMachineFormData] = useState<MachineProfile>(DEFAULT_NEW_MACHINE);
+  const [makeActiveOnCreate, setMakeActiveOnCreate] = useState(true);
+  const [machineToDelete, setMachineToDelete] = useState<MachineProfile | null>(null);
+  const [machineFeedback, setMachineFeedback] = useState<string | null>(null);
   const [backupFeedback, setBackupFeedback] = useState<string | null>(null);
 
   // Screen scale calibration state
@@ -176,6 +313,92 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     };
     onUpdatePackProfile(updated);
     setSelectedPackForWizard(null);
+  };
+
+  // Machine Profiles CRUD Handlers
+  const handleStartCreateMachine = () => {
+    const newId = `mach_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    setMachineFormData({
+      ...DEFAULT_NEW_MACHINE,
+      id: newId,
+      name: `Machine Profile #${machines.length + 1}`
+    });
+    setMakeActiveOnCreate(true);
+    setIsCreatingMachine(true);
+  };
+
+  const handleStartEditMachine = (m: MachineProfile) => {
+    setMachineFormData({ ...m });
+    setEditingMachine(m);
+  };
+
+  const handleApplyPreset = (preset: Partial<MachineProfile>) => {
+    setMachineFormData(prev => ({
+      ...prev,
+      ...preset
+    }));
+  };
+
+  const handleSaveMachineForm = async () => {
+    if (!machineFormData.name.trim()) return;
+
+    if (isCreatingMachine) {
+      if (onCreateMachine) {
+        onCreateMachine(machineFormData, makeActiveOnCreate);
+      } else {
+        await db.machineProfiles.put(machineFormData);
+        if (makeActiveOnCreate) {
+          onSelectMachine(machineFormData);
+        }
+        await saveUniversalSnapshot();
+      }
+      setMachineFeedback(`✓ Created profile "${machineFormData.name}" & synchronized universally across all app modules!`);
+      setIsCreatingMachine(false);
+    } else {
+      if (onUpdateMachine) {
+        onUpdateMachine(machineFormData);
+      } else {
+        await db.machineProfiles.put(machineFormData);
+        await saveUniversalSnapshot();
+      }
+      setMachineFeedback(`✓ Machine profile "${machineFormData.name}" updated & saved universally.`);
+      setEditingMachine(null);
+    }
+    setTimeout(() => setMachineFeedback(null), 3500);
+  };
+
+  const handleDuplicate = async (m: MachineProfile) => {
+    if (onDuplicateMachine) {
+      onDuplicateMachine(m);
+    } else {
+      const cloned: MachineProfile = {
+        ...m,
+        id: `mach_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        name: `${m.name} (Copy)`
+      };
+      await db.machineProfiles.put(cloned);
+      await saveUniversalSnapshot();
+    }
+    setMachineFeedback(`✓ Profile "${m.name}" cloned into a new profile and synchronized universally.`);
+    setTimeout(() => setMachineFeedback(null), 3500);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!machineToDelete) return;
+    if (machines.length <= 1) {
+      alert('Cannot delete the only remaining machine profile. Please add another profile first.');
+      setMachineToDelete(null);
+      return;
+    }
+    if (onDeleteMachine) {
+      onDeleteMachine(machineToDelete.id);
+    } else {
+      await db.machineProfiles.delete(machineToDelete.id);
+      await saveUniversalSnapshot();
+    }
+    setMachineFeedback(`✓ Profile "${machineToDelete.name}" deleted and synced universally.`);
+    setMachineToDelete(null);
+    setTimeout(() => setMachineFeedback(null), 3500);
   };
 
   const handleAssignShortcut = (actionId: string) => {
@@ -410,81 +633,158 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
       {/* Tab Content: Machines */}
       {activeTab === 'machine' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {machines.map(m => {
-            const isActive = activeMachine.id === m.id;
-            return (
-              <div 
-                key={m.id}
-                className={`p-5 rounded-xl border shadow-md space-y-4 ${
-                  isActive ? 'bg-zinc-900 border-amber-500/80 ring-1 ring-amber-500/50' : 'bg-zinc-900/60 border-zinc-800'
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2.5">
-                    <div className="p-2 rounded-lg bg-zinc-800 text-amber-400 border border-zinc-700">
-                      <Cpu className="w-5 h-5" />
+        <div className="space-y-4">
+          {/* Machine Header & Add Action Bar */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl bg-zinc-900 border border-zinc-800 shadow-xs">
+            <div>
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <Cpu className="w-4 h-4 text-amber-400" />
+                Industrial Marking Hardware Profiles ({machines.length})
+              </h3>
+              <p className="text-xs text-zinc-400 mt-0.5">
+                Configure nozzle pitch, usable band width, DPI, export rotation, and feed origins. Changes automatically synchronize across all views (Home, Products, Design, Batches, and Print).
+              </p>
+            </div>
+            <button
+              onClick={handleStartCreateMachine}
+              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold shadow-sm transition-colors cursor-pointer shrink-0"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Add Machine Profile</span>
+            </button>
+          </div>
+
+          {/* Feedback banner */}
+          {machineFeedback && (
+            <div className="p-3 rounded-xl bg-emerald-950/50 border border-emerald-500/50 text-emerald-300 text-xs flex items-center gap-2">
+              <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>{machineFeedback}</span>
+            </div>
+          )}
+
+          {/* Machine Cards Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {machines.map(m => {
+              const isActive = activeMachine.id === m.id;
+              const lockedSwathPx = Math.round((m.headWidthMm * m.defaultDpi) / 25.4);
+              return (
+                <div 
+                  key={m.id}
+                  className={`p-5 rounded-xl border shadow-md space-y-4 transition-all ${
+                    isActive ? 'bg-zinc-900 border-amber-500/80 ring-1 ring-amber-500/50' : 'bg-zinc-900/60 border-zinc-800'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className={`p-2.5 rounded-lg border ${
+                        m.technology === 'Laser Marker' 
+                          ? 'bg-cyan-950/60 text-cyan-400 border-cyan-800/80' 
+                          : m.technology === 'CIJ Inkjet'
+                          ? 'bg-emerald-950/60 text-emerald-400 border-emerald-800/80'
+                          : m.technology === 'Thermal Transfer'
+                          ? 'bg-purple-950/60 text-purple-400 border-purple-800/80'
+                          : 'bg-zinc-800 text-amber-400 border-zinc-700'
+                      }`}>
+                        <Cpu className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-sm font-bold text-white">{m.name}</h4>
+                          {isActive && (
+                            <span className="px-2 py-0.5 rounded text-[10px] uppercase font-bold bg-amber-500 text-black">
+                              Active
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-zinc-400">
+                          {m.manufacturer} • {m.model} • <span className="text-amber-400/90 font-medium">{m.technology}</span>
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {!isActive && (
+                        <button
+                          onClick={() => onSelectMachine(m)}
+                          className="px-2.5 py-1 text-xs font-semibold rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 cursor-pointer"
+                        >
+                          Make Active
+                        </button>
+                      )}
+                      <button
+                        onClick={() => handleStartEditMachine(m)}
+                        title="Edit machine specs"
+                        className="p-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-amber-300 border border-zinc-700 cursor-pointer"
+                      >
+                        <Sliders className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => handleDuplicate(m)}
+                        title="Duplicate profile"
+                        className="p-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 cursor-pointer"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => setMachineToDelete(m)}
+                        disabled={machines.length <= 1}
+                        title={machines.length <= 1 ? "Cannot delete the only remaining profile" : "Delete profile"}
+                        className="p-1.5 rounded bg-zinc-800 hover:bg-rose-950/60 text-zinc-400 hover:text-rose-400 border border-zinc-700 hover:border-rose-800 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Geometry Specs */}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs font-mono bg-zinc-950 p-3 rounded-lg border border-zinc-800/80">
+                    <div>
+                      <span className="text-[10px] text-zinc-500 block uppercase">Physical Head:</span>
+                      <span className="text-zinc-200 font-bold">{m.headWidthMm} mm</span>
                     </div>
                     <div>
-                      <h3 className="text-sm font-bold text-white">{m.name}</h3>
-                      <p className="text-[11px] text-zinc-400">{m.manufacturer} • {m.technology}</p>
+                      <span className="text-[10px] text-zinc-500 block uppercase">Usable Swath:</span>
+                      <span className="text-amber-400 font-bold">{m.printBandMm} mm</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-zinc-500 block uppercase">Resolution:</span>
+                      <span className="text-zinc-200 font-bold">{m.defaultDpi} DPI</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-zinc-500 block uppercase">Locked Swath Px:</span>
+                      <span className="text-amber-300 font-bold">{lockedSwathPx} px</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-zinc-500 block uppercase">Feed Origin:</span>
+                      <span className="text-zinc-300">{m.feedOrigin}</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-zinc-500 block uppercase">Rotation / Mirror:</span>
+                      <span className="text-zinc-300">{m.exportRotation}° / {m.mirrorX ? 'Mirror' : 'None'}</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-zinc-500 block uppercase">Edge Buffer:</span>
+                      <span className="text-zinc-400">{m.edgeBufferMm || 0.1} mm</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-zinc-500 block uppercase">Max Travel:</span>
+                      <span className="text-zinc-400">{m.maxTravelLengthMm || 150} mm</span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-zinc-500 block uppercase">Min Text Ht:</span>
+                      <span className="text-zinc-400">{m.minimumLegibleTextHeightMm || 1.8} mm</span>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setEditingMachine(m)}
-                      className="px-2.5 py-1 text-xs font-semibold rounded bg-zinc-800 hover:bg-zinc-700 text-amber-300 border border-zinc-700 inline-flex items-center gap-1"
-                    >
-                      <Sliders className="w-3 h-3" />
-                      Edit Specs
-                    </button>
-                    {isActive ? (
-                      <span className="px-2 py-0.5 rounded text-[10px] uppercase font-bold bg-amber-500 text-black">
-                        Active
-                      </span>
-                    ) : (
-                      <button
-                        onClick={() => onSelectMachine(m)}
-                        className="px-2.5 py-1 text-xs font-semibold rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700"
-                      >
-                        Make Active
-                      </button>
-                    )}
-                  </div>
-                </div>
 
-                {/* Geometry Specs */}
-                <div className="grid grid-cols-2 gap-2 text-xs font-mono bg-zinc-950 p-3 rounded-lg border border-zinc-800/80">
-                  <div>
-                    <span className="text-[10px] text-zinc-500 block uppercase">Physical Head:</span>
-                    <span className="text-zinc-200 font-bold">{m.headWidthMm} mm</span>
-                  </div>
-                  <div>
-                    <span className="text-[10px] text-zinc-500 block uppercase">Usable Print Band:</span>
-                    <span className="text-amber-400 font-bold">{m.printBandMm} mm</span>
-                  </div>
-                  <div>
-                    <span className="text-[10px] text-zinc-500 block uppercase">Resolution:</span>
-                    <span className="text-zinc-200 font-bold">{m.defaultDpi} DPI</span>
-                  </div>
-                  <div>
-                    <span className="text-[10px] text-zinc-500 block uppercase">Locked Axis Px:</span>
-                    <span className="text-zinc-200 font-bold">{Math.round((m.headWidthMm * m.defaultDpi) / 25.4)} px</span>
-                  </div>
-                  <div>
-                    <span className="text-[10px] text-zinc-500 block uppercase">Feed Origin:</span>
-                    <span className="text-zinc-300">{m.feedOrigin}</span>
-                  </div>
-                  <div>
-                    <span className="text-[10px] text-zinc-500 block uppercase">Rotation / Mirror:</span>
-                    <span className="text-zinc-300">{m.exportRotation}° / {m.mirrorX ? 'Mirror' : 'None'}</span>
-                  </div>
+                  {m.notes && (
+                    <p className="text-[11px] text-zinc-400 leading-relaxed italic border-t border-zinc-800/60 pt-2">
+                      {m.notes}
+                    </p>
+                  )}
                 </div>
-
-                <p className="text-[11px] text-zinc-400 leading-relaxed">{m.notes}</p>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
       )}
 
@@ -1095,28 +1395,65 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </div>
       )}
 
-      {/* Modal: Edit Machine Profile (SET-01) */}
-      {editingMachine && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
-          <div className="w-full max-w-xl rounded-2xl bg-zinc-900 border-2 border-zinc-700 p-6 shadow-2xl space-y-4">
-            <div className="border-b border-zinc-800 pb-2">
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <Cpu className="w-5 h-5 text-amber-400" />
-                Edit Machine Profile — {editingMachine.name}
-              </h3>
-              <p className="text-xs text-zinc-400">
-                Adjust nozzle band width, DPI, export rotation, and edge buffer constraints.
-              </p>
+      {/* Modal: Create or Edit Machine Profile */}
+      {(editingMachine || isCreatingMachine) && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="w-full max-w-2xl rounded-2xl bg-zinc-900 border-2 border-zinc-700 p-6 shadow-2xl space-y-4 my-8">
+            <div className="border-b border-zinc-800 pb-3 flex items-start justify-between">
+              <div>
+                <h3 className="text-base font-bold text-white flex items-center gap-2">
+                  <Cpu className="w-5 h-5 text-amber-400" />
+                  {isCreatingMachine ? 'Add New Machine Profile' : `Edit Machine Profile — ${machineFormData.name}`}
+                </h3>
+                <p className="text-xs text-zinc-400 mt-0.5">
+                  Configure hardware swath width, DPI resolution, feed origin, and universal printing constraints.
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setEditingMachine(null);
+                  setIsCreatingMachine(false);
+                }}
+                className="text-zinc-400 hover:text-white text-lg font-bold p-1 cursor-pointer"
+              >
+                &times;
+              </button>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 text-xs">
-              <div>
-                <label className="text-zinc-300 font-semibold block mb-1">Machine Name</label>
+            {/* Industrial Hardware Presets Quick Select */}
+            <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800 space-y-2">
+              <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider block">
+                Quick Industrial Presets:
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5">
+                {MACHINE_PRESETS.map((p, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => handleApplyPreset(p.profile)}
+                    className="p-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-amber-500/50 text-left transition-colors cursor-pointer group"
+                  >
+                    <div className="text-xs font-bold text-zinc-200 group-hover:text-amber-400 truncate">
+                      {p.label}
+                    </div>
+                    <div className="text-[10px] text-zinc-500 truncate mt-0.5">
+                      {p.description}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Form Fields */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              <div className="sm:col-span-2">
+                <label className="text-zinc-300 font-semibold block mb-1">Profile Name *</label>
                 <input
                   type="text"
-                  value={editingMachine.name}
-                  onChange={e => setEditingMachine({ ...editingMachine, name: e.target.value })}
-                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-zinc-200"
+                  value={machineFormData.name}
+                  onChange={e => setMachineFormData({ ...machineFormData, name: e.target.value })}
+                  placeholder="e.g. Adalaj TIJ Handheld 12.7mm"
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-zinc-200 focus:border-amber-500 focus:outline-hidden"
                 />
               </div>
 
@@ -1124,21 +1461,42 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <label className="text-zinc-300 font-semibold block mb-1">Manufacturer</label>
                 <input
                   type="text"
-                  value={editingMachine.manufacturer}
-                  onChange={e => setEditingMachine({ ...editingMachine, manufacturer: e.target.value })}
-                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-zinc-200"
+                  value={machineFormData.manufacturer}
+                  onChange={e => setMachineFormData({ ...machineFormData, manufacturer: e.target.value })}
+                  placeholder="e.g. Adalaj TIJ Systems"
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-zinc-200 focus:border-amber-500 focus:outline-hidden"
                 />
               </div>
 
               <div>
-                <label className="text-zinc-300 font-semibold block mb-1">Usable Print Band (mm)</label>
+                <label className="text-zinc-300 font-semibold block mb-1">Model</label>
                 <input
-                  type="number"
-                  step="0.1"
-                  value={editingMachine.printBandMm}
-                  onChange={e => setEditingMachine({ ...editingMachine, printBandMm: parseFloat(e.target.value) || 0 })}
-                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-amber-300 font-bold"
+                  type="text"
+                  value={machineFormData.model}
+                  onChange={e => setMachineFormData({ ...machineFormData, model: e.target.value })}
+                  placeholder="e.g. SX100 Handheld"
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-zinc-200 focus:border-amber-500 focus:outline-hidden"
                 />
+              </div>
+
+              <div>
+                <label className="text-zinc-300 font-semibold block mb-1">Marking Technology</label>
+                <select
+                  value={machineFormData.technology}
+                  onChange={e => setMachineFormData({ ...machineFormData, technology: e.target.value as MachineType })}
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-zinc-200 focus:border-amber-500 focus:outline-hidden"
+                >
+                  <option value="TIJ Inkjet">TIJ Inkjet (Thermal Inkjet 2.5 / 12.7mm)</option>
+                  <option value="CIJ Inkjet">CIJ Inkjet (Continuous Inkjet 32-dot)</option>
+                  <option value="Piezo Inkjet">Piezo Inkjet (Drop-on-demand)</option>
+                  <option value="Laser Marker">Laser Marker (Fiber / CO2 Galvo)</option>
+                  <option value="Thermal Transfer">Thermal Transfer (TTO Overprinter)</option>
+                  <option value="Direct Thermal">Direct Thermal (Label printer)</option>
+                  <option value="Hot Foil">Hot Foil (Mechanical stamping)</option>
+                  <option value="Pad Printing">Pad Printing</option>
+                  <option value="Screen Printing">Screen Printing</option>
+                  <option value="Digital Printing">Digital Printing</option>
+                </select>
               </div>
 
               <div>
@@ -1146,39 +1504,68 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <input
                   type="number"
                   step="0.1"
-                  value={editingMachine.headWidthMm}
-                  onChange={e => setEditingMachine({ ...editingMachine, headWidthMm: parseFloat(e.target.value) || 0 })}
-                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-zinc-200"
+                  value={machineFormData.headWidthMm}
+                  onChange={e => setMachineFormData({ ...machineFormData, headWidthMm: parseFloat(e.target.value) || 0 })}
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-zinc-200 focus:border-amber-500 focus:outline-hidden"
+                />
+              </div>
+
+              <div>
+                <label className="text-zinc-300 font-semibold block mb-1">
+                  Usable Print Band (mm)
+                </label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={machineFormData.printBandMm}
+                  onChange={e => setMachineFormData({ ...machineFormData, printBandMm: parseFloat(e.target.value) || 0 })}
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-amber-300 font-bold focus:border-amber-500 focus:outline-hidden"
                 />
               </div>
 
               <div>
                 <label className="text-zinc-300 font-semibold block mb-1">Resolution (DPI)</label>
-                <input
-                  type="number"
-                  value={editingMachine.defaultDpi}
-                  onChange={e => setEditingMachine({ ...editingMachine, defaultDpi: parseInt(e.target.value) || 300 })}
-                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-zinc-200"
-                />
+                <div className="flex gap-1.5">
+                  {[150, 300, 600].map(dpiVal => (
+                    <button
+                      key={dpiVal}
+                      type="button"
+                      onClick={() => setMachineFormData({ ...machineFormData, defaultDpi: dpiVal })}
+                      className={`flex-1 py-1.5 rounded-md font-mono text-xs font-bold border transition-colors cursor-pointer ${
+                        machineFormData.defaultDpi === dpiVal
+                          ? 'bg-amber-500 text-black border-amber-500'
+                          : 'bg-zinc-950 text-zinc-300 border-zinc-700 hover:border-zinc-500'
+                      }`}
+                    >
+                      {dpiVal}
+                    </button>
+                  ))}
+                  <input
+                    type="number"
+                    value={machineFormData.defaultDpi}
+                    onChange={e => setMachineFormData({ ...machineFormData, defaultDpi: parseInt(e.target.value) || 300 })}
+                    className="w-20 bg-zinc-950 border border-zinc-700 rounded-md px-2 py-1.5 font-mono text-zinc-200 text-center"
+                  />
+                </div>
               </div>
 
-              <div>
-                <label className="text-zinc-300 font-semibold block mb-1">Edge Buffer (mm)</label>
-                <input
-                  type="number"
-                  step="0.1"
-                  value={editingMachine.edgeBufferMm}
-                  onChange={e => setEditingMachine({ ...editingMachine, edgeBufferMm: parseFloat(e.target.value) || 0 })}
-                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-zinc-200"
-                />
+              {/* Live Computed Locked Axis Pixels */}
+              <div className="sm:col-span-2 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-between text-xs font-mono">
+                <span className="text-amber-400 font-bold">Computed Swath Pixels:</span>
+                <span className="text-white font-black text-sm">
+                  {Math.round((machineFormData.headWidthMm * machineFormData.defaultDpi) / 25.4)} px
+                  <span className="text-[11px] text-zinc-400 font-normal ml-2">
+                    ({machineFormData.headWidthMm} mm @ {machineFormData.defaultDpi} DPI)
+                  </span>
+                </span>
               </div>
 
               <div>
                 <label className="text-zinc-300 font-semibold block mb-1">Feed Origin</label>
                 <select
-                  value={editingMachine.feedOrigin}
-                  onChange={e => setEditingMachine({ ...editingMachine, feedOrigin: e.target.value as any })}
-                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-zinc-200"
+                  value={machineFormData.feedOrigin}
+                  onChange={e => setMachineFormData({ ...machineFormData, feedOrigin: e.target.value as any })}
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-zinc-200 focus:border-amber-500 focus:outline-hidden"
                 >
                   <option value="Top -> Bottom">Top &rarr; Bottom</option>
                   <option value="Bottom -> Top">Bottom &rarr; Top</option>
@@ -1190,43 +1577,145 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <div>
                 <label className="text-zinc-300 font-semibold block mb-1">Export Rotation (°)</label>
                 <select
-                  value={editingMachine.exportRotation}
-                  onChange={e => setEditingMachine({ ...editingMachine, exportRotation: parseInt(e.target.value) as any })}
-                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-zinc-200"
+                  value={machineFormData.exportRotation}
+                  onChange={e => setMachineFormData({ ...machineFormData, exportRotation: parseInt(e.target.value) as any })}
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-zinc-200 focus:border-amber-500 focus:outline-hidden"
                 >
-                  <option value="0">0°</option>
-                  <option value="90">90°</option>
-                  <option value="180">180°</option>
-                  <option value="270">270°</option>
+                  <option value="0">0° (Standard)</option>
+                  <option value="90">90° (Clockwise)</option>
+                  <option value="180">180° (Inverted)</option>
+                  <option value="270">270° (Counter-clockwise)</option>
                 </select>
               </div>
 
-              <div className="col-span-2">
+              <div>
+                <label className="text-zinc-300 font-semibold block mb-1">Edge Buffer (mm)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={machineFormData.edgeBufferMm}
+                  onChange={e => setMachineFormData({ ...machineFormData, edgeBufferMm: parseFloat(e.target.value) || 0 })}
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-zinc-200 focus:border-amber-500 focus:outline-hidden"
+                />
+              </div>
+
+              <div>
+                <label className="text-zinc-300 font-semibold block mb-1">Max Travel Length (mm)</label>
+                <input
+                  type="number"
+                  step="1"
+                  value={machineFormData.maxTravelLengthMm || 150}
+                  onChange={e => setMachineFormData({ ...machineFormData, maxTravelLengthMm: parseFloat(e.target.value) || 150 })}
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-zinc-200 focus:border-amber-500 focus:outline-hidden"
+                />
+              </div>
+
+              <div className="flex items-center gap-4 py-1">
+                <label className="inline-flex items-center gap-2 cursor-pointer text-xs text-zinc-300 font-semibold">
+                  <input
+                    type="checkbox"
+                    checked={machineFormData.mirrorX}
+                    onChange={e => setMachineFormData({ ...machineFormData, mirrorX: e.target.checked })}
+                    className="w-4 h-4 rounded text-amber-500 bg-zinc-950 border-zinc-700 focus:ring-0"
+                  />
+                  <span>Mirror X (Horizontal Flip)</span>
+                </label>
+                <label className="inline-flex items-center gap-2 cursor-pointer text-xs text-zinc-300 font-semibold">
+                  <input
+                    type="checkbox"
+                    checked={machineFormData.mirrorY}
+                    onChange={e => setMachineFormData({ ...machineFormData, mirrorY: e.target.checked })}
+                    className="w-4 h-4 rounded text-amber-500 bg-zinc-950 border-zinc-700 focus:ring-0"
+                  />
+                  <span>Mirror Y (Vertical Flip)</span>
+                </label>
+              </div>
+
+              {isCreatingMachine && (
+                <div className="flex items-center py-1">
+                  <label className="inline-flex items-center gap-2 cursor-pointer text-xs text-amber-300 font-bold">
+                    <input
+                      type="checkbox"
+                      checked={makeActiveOnCreate}
+                      onChange={e => setMakeActiveOnCreate(e.target.checked)}
+                      className="w-4 h-4 rounded text-amber-500 bg-zinc-950 border-zinc-700 focus:ring-0"
+                    />
+                    <span>Make this profile active immediately</span>
+                  </label>
+                </div>
+              )}
+
+              <div className="sm:col-span-2">
                 <label className="text-zinc-300 font-semibold block mb-1">Operator / Hardware Notes</label>
                 <textarea
                   rows={2}
-                  value={editingMachine.notes || ''}
-                  onChange={e => setEditingMachine({ ...editingMachine, notes: e.target.value })}
-                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-1.5 text-zinc-200 font-sans text-xs"
+                  value={machineFormData.notes || ''}
+                  onChange={e => setMachineFormData({ ...machineFormData, notes: e.target.value })}
+                  placeholder="Notes for production operators regarding cartridge, ink type, or nozzle cleaning..."
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-1.5 text-zinc-200 font-sans text-xs focus:border-amber-500 focus:outline-hidden"
                 />
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-zinc-800">
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-zinc-800">
               <button
-                onClick={() => setEditingMachine(null)}
-                className="px-3 py-1.5 text-xs font-semibold text-zinc-400 hover:text-zinc-200"
+                type="button"
+                onClick={() => {
+                  setEditingMachine(null);
+                  setIsCreatingMachine(false);
+                }}
+                className="px-3.5 py-2 text-xs font-semibold text-zinc-400 hover:text-zinc-200 cursor-pointer"
               >
                 Cancel
               </button>
               <button
-                onClick={() => {
-                  onUpdateMachine(editingMachine);
-                  setEditingMachine(null);
-                }}
-                className="px-4 py-2 text-xs font-bold rounded-lg bg-amber-500 hover:bg-amber-400 text-black shadow-sm"
+                type="button"
+                onClick={handleSaveMachineForm}
+                disabled={!machineFormData.name.trim()}
+                className="px-5 py-2 text-xs font-bold rounded-lg bg-amber-500 hover:bg-amber-400 text-black shadow-sm disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors"
               >
-                Save Machine Profile
+                {isCreatingMachine ? 'Create Machine Profile' : 'Save Machine Profile'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Delete Machine Profile Confirmation */}
+      {machineToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md rounded-2xl bg-zinc-900 border-2 border-rose-600/60 p-6 shadow-2xl space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="p-2.5 rounded-xl bg-rose-500/20 text-rose-400 border border-rose-500/30">
+                <AlertCircle className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Delete Machine Profile?</h3>
+                <p className="text-xs text-zinc-400 mt-1">
+                  Are you sure you want to delete <span className="text-white font-bold font-mono">"{machineToDelete.name}"</span>?
+                </p>
+                {activeMachine.id === machineToDelete.id && (
+                  <p className="text-xs text-amber-400 mt-2 p-2 rounded-lg bg-amber-500/10 border border-amber-500/30">
+                    ⚠️ Note: This is currently your active printer. Deleting it will automatically activate another available profile.
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-zinc-800">
+              <button
+                type="button"
+                onClick={() => setMachineToDelete(null)}
+                className="px-3.5 py-2 text-xs font-semibold text-zinc-400 hover:text-zinc-200 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDelete}
+                className="px-4 py-2 text-xs font-bold rounded-lg bg-rose-600 hover:bg-rose-500 text-white shadow-sm cursor-pointer transition-colors"
+              >
+                Delete Profile
               </button>
             </div>
           </div>
