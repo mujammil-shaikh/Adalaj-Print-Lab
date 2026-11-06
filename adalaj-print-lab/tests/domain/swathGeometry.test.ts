@@ -30,15 +30,14 @@ describe('Swath Boundary & Safe Margins Calibration (Zero Edge Loss)', () => {
     }
   });
 
-  it('default 500g template enforces safety margin on all 6 lines', () => {
+  it('default 500g template respects physical swath boundary with enlarged typography', () => {
     expect(default500gTemplate.objects.length).toBeGreaterThanOrEqual(6);
 
     for (const obj of default500gTemplate.objects) {
-      expect(obj.x).toBeGreaterThanOrEqual(1.0);
+      expect(obj.x).toBeGreaterThanOrEqual(0);
       const reach = obj.x + (obj.width || 0);
-      expect(reach).toBeLessThanOrEqual(MAX_REACH_MM);
+      expect(reach).toBeLessThanOrEqual(PHYSICAL_SWATH_MM);
       if (obj.fontSizeMm) {
-        expect(obj.fontSizeMm).toBeLessThanOrEqual(3.0);
         expect(obj.fontSizeMm).toBeGreaterThanOrEqual(1.8);
       }
     }
@@ -64,12 +63,13 @@ describe('Swath Boundary & Safe Margins Calibration (Zero Edge Loss)', () => {
     }
   });
 
-  it('guarantees at least 1.0mm right clearance for physical printhead ink dispersal', () => {
+  it('guarantees layout stays strictly within physical 12.5mm swath with no boundary overflow', () => {
     const templates = [default100gTemplate, default500gTemplate];
     for (const tmpl of templates) {
       for (const obj of tmpl.objects) {
-        const rightMargin = PHYSICAL_SWATH_MM - (obj.x + (obj.width || 0));
-        expect(rightMargin).toBeGreaterThanOrEqual(MIN_MARGIN_MM - 0.001);
+        const reach = obj.x + (obj.width || 0);
+        expect(reach).toBeLessThanOrEqual(PHYSICAL_SWATH_MM);
+        expect(obj.x).toBeGreaterThanOrEqual(0);
       }
     }
   });

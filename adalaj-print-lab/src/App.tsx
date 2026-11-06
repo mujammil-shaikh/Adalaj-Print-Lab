@@ -3,7 +3,14 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { db, initializeDatabase } from './services/db';
+import { 
+  db, 
+  initializeDatabase, 
+  saveUniversalSnapshot, 
+  restoreFromUniversalSnapshot, 
+  parseUniversalSyncString, 
+  generateUniversalSyncString 
+} from './services/db';
 import { actionRegistry } from './services/actionRegistry';
 import type { 
   Business, 
@@ -46,6 +53,7 @@ import { CommandPalette, CheatSheetModal } from './components/shell/KeyboardOver
 import { GuidedTour } from './components/shell/GuidedTour';
 import { OfflineIndicator } from './components/shell/PWAInstallButton';
 import { AICopilotDrawer } from './components/ai/AICopilotDrawer';
+import { UniversalSyncModal } from './components/shell/UniversalSyncModal';
 
 // Workspace Views
 import { HomeView } from './components/home/HomeView';
@@ -57,13 +65,16 @@ import { HistoryView } from './components/history/HistoryView';
 import { SettingsView } from './components/settings/SettingsView';
 
 export default function App() {
-  const [currentRoute, setCurrentRoute] = useState<string>('home');
+  const [currentRoute, setCurrentRoute] = useState<string>(() => {
+    return localStorage.getItem('als_active_route') || 'home';
+  });
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [isAdvancedMode, setIsAdvancedMode] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isCheatSheetOpen, setIsCheatSheetOpen] = useState(false);
   const [isAIDrawerOpen, setIsAIDrawerOpen] = useState(false);
   const [isTourOpen, setIsTourOpen] = useState(false);
+  const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
   // Core Domain State
@@ -88,8 +99,29 @@ export default function App() {
   const [printAllocId, setPrintAllocId] = useState<string>('');
   const [reprintJob, setReprintJob] = useState<PrintJob | null>(null);
 
+  // Safe navigation with persistence
+  const navigateToRoute = useCallback((route: string) => {
+    setCurrentRoute(route);
+    localStorage.setItem('als_active_route', route);
+  }, []);
+
   // Initialize DB and load all data
   const loadDatabase = useCallback(async () => {
+    // 1. Check for universal sync URL hash on startup (e.g. #sync=<base64>)
+    if (typeof window !== 'undefined' && window.location.hash.startsWith('#sync=')) {
+      try {
+        const encoded = window.location.hash.replace('#sync=', '');
+        const snapshot = parseUniversalSyncString(encoded);
+        if (snapshot) {
+          await restoreFromUniversalSnapshot(snapshot);
+          window.history.replaceState(null, '', window.location.pathname);
+          console.info('Universal workspace snapshot applied from share URL.');
+        }
+      } catch (err) {
+        console.error('Failed to parse universal sync URL hash:', err);
+      }
+    }
+
     await initializeDatabase();
 
     const [
@@ -116,11 +148,10 @@ export default function App() {
       db.auditLogs.toArray()
     ]);
 
-    // Ensure established templates (100g and 500g defaults, and Turmeric overrides) are active
+    // Ensure established default templates exist if completely missing
     const currentTmpls = [...tmpls];
     const templatesToEnsure: Template[] = [];
 
-    // Ensure clean pack-level general default templates exist if not yet created
     if (!currentTmpls.some(t => t.id === 'tmpl_pack_default_100g' || (t.packSizeScope === '100g' && t.isPackSizeDefault))) {
       templatesToEnsure.push(default100gTemplate);
       currentTmpls.push(default100gTemplate);
@@ -132,63 +163,7 @@ export default function App() {
 
     if (templatesToEnsure.length > 0) {
       await db.templates.bulkPut(templatesToEnsure);
-    }
-
-    // Seamlessly calibrate existing templates in IndexedDB to 1.0mm safe margin and non-clipped font bounds
-    let tmplsCalibrated = false;
-    const calibratedTmpls = currentTmpls.map(t => {
-      let changed = false;
-      const updatedObjs = t.objects.map(obj => {
-        if (t.travel === 'Vertical' && t.layout === 'Stack') {
-          let newX = obj.x;
-          let newW = obj.width;
-          let newFont = obj.fontSizeMm;
-          if (obj.x === 0.5) { newX = 1.0; changed = true; }
-          if (obj.width === 11.5) { newW = 10.5; changed = true; }
-          if (obj.fieldKey === 'mrp' && obj.fontSizeMm > 3.0) { newFont = 3.0; changed = true; }
-          if (obj.fieldKey === 'batch' && obj.fontSizeMm > 2.6) { newFont = 2.6; changed = true; }
-          if (obj.fieldKey === 'net_wt' && obj.fontSizeMm > 2.6) { newFont = 2.6; changed = true; }
-          if (obj.fieldKey === 'mfd' && obj.fontSizeMm > 2.4) { newFont = 2.4; changed = true; }
-          if (obj.fieldKey === 'best_before' && obj.fontSizeMm > 2.4) { newFont = 2.4; changed = true; }
-          if (obj.fieldKey === 'rate_per_gm' && obj.fontSizeMm > 2.2) { newFont = 2.2; changed = true; }
-          if (changed) {
-            return { ...obj, x: newX, width: newW, fontSizeMm: newFont };
-          }
-        }
-        return obj;
-      });
-      if (changed) {
-        tmplsCalibrated = true;
-        return { ...t, objects: updatedObjs };
-      }
-      return t;
-    });
-
-    if (tmplsCalibrated) {
-      await db.templates.bulkPut(calibratedTmpls);
-      currentTmpls.splice(0, currentTmpls.length, ...calibratedTmpls);
-    }
-
-    // Ensure realistic MRPs on seed SKUs so dynamic tags display correctly
-    let skusUpdated = false;
-    const verifiedSkus = skuList.map(s => {
-      if (s.productId === 'prod_adcp' && s.packSize === '100 g' && (!s.mrp || s.mrp !== 45)) {
-        skusUpdated = true;
-        return { ...s, mrp: 45 };
-      }
-      if (s.productId === 'prod_adgm' && s.packSize === '100 g' && (!s.mrp || s.mrp !== 75)) {
-        skusUpdated = true;
-        return { ...s, mrp: 75 };
-      }
-      if (s.productId === 'prod_adtp' && s.packSize === '100 g' && (!s.mrp || s.mrp !== 50)) {
-        skusUpdated = true;
-        return { ...s, mrp: 50 };
-      }
-      return s;
-    });
-
-    if (skusUpdated) {
-      await db.skus.bulkPut(verifiedSkus);
+      await saveUniversalSnapshot();
     }
 
     setBusiness(bizzes[0] || null);
@@ -197,24 +172,37 @@ export default function App() {
     setSkus(skuList);
     setPackProfiles(packs);
     setMachines(machs);
-    setActiveMachine(machs[0] || null);
     setMediaProfiles(medias);
     setTemplates(currentTmpls);
     setBatches(bts);
     setAuditLogs(audits);
 
-    // Default selections
-    const defaultProd = prods.find(p => p.shortCode === 'ADTP') || prods[0];
-    const defaultSku = skuList.find(s => s.productId === defaultProd?.id && s.packSize === '100 g') || skuList[0];
-    const defaultPack = packs.find(p => p.name === '100 g') || packs[0];
-    const defaultBatch = bts.find(b => b.id === 'ADTP013') || bts[0];
-    const initialResolved = resolveLayout(defaultProd?.id || '', defaultSku?.packSize || '100 g', currentTmpls, packs);
+    // Restore active selections from persistent user session, falling back gracefully
+    const savedProdId = localStorage.getItem('als_active_product_id');
+    const savedSkuId = localStorage.getItem('als_active_sku_id');
+    const savedBatchId = localStorage.getItem('als_active_batch_id');
+    const savedMachineId = localStorage.getItem('als_active_machine_id');
+
+    const resolvedProd = prods.find(p => p.id === savedProdId) || prods.find(p => p.shortCode === 'ADTP') || prods[0];
+    const resolvedSku = skuList.find(s => s.id === savedSkuId && s.productId === resolvedProd?.id) ||
+      skuList.find(s => s.productId === resolvedProd?.id && s.packSize === '500 g') ||
+      skuList.find(s => s.productId === resolvedProd?.id && s.packSize === '100 g') ||
+      skuList.find(s => s.productId === resolvedProd?.id) ||
+      skuList[0];
+    const resolvedPack = packs.find(p => p.name === resolvedSku?.packSize) || packs[0];
+    const resolvedBatch = bts.find(b => b.id === savedBatchId && b.productId === resolvedProd?.id) ||
+      bts.find(b => b.productId === resolvedProd?.id) ||
+      bts[0];
+    const resolvedMachine = machs.find(m => m.id === savedMachineId) || machs[0] || null;
+
+    const initialResolved = resolveLayout(resolvedProd?.id || '', resolvedSku?.packSize || '100 g', currentTmpls, packs);
     const defaultTemplate = initialResolved.template;
 
-    setActiveProduct(defaultProd || null);
-    setActiveSku(defaultSku || null);
-    setActivePackProfile(defaultPack || null);
-    setActiveBatch(defaultBatch || null);
+    setActiveProduct(resolvedProd || null);
+    setActiveSku(resolvedSku || null);
+    setActivePackProfile(resolvedPack || null);
+    setActiveBatch(resolvedBatch || null);
+    setActiveMachine(resolvedMachine);
     setActiveTemplate(defaultTemplate || null);
     setIsLoading(false);
   }, []);
@@ -255,7 +243,7 @@ export default function App() {
       scope: 'global',
       shortcut: 'Alt+1',
       enabled: true,
-      handler: () => setCurrentRoute('home'),
+      handler: () => navigateToRoute('home'),
       tooltip: 'Go to Home Workspace'
     });
 
@@ -266,7 +254,7 @@ export default function App() {
       scope: 'global',
       shortcut: 'Alt+2',
       enabled: true,
-      handler: () => setCurrentRoute('products'),
+      handler: () => navigateToRoute('products'),
       tooltip: 'Manage products and SKUs'
     });
 
@@ -277,7 +265,7 @@ export default function App() {
       scope: 'global',
       shortcut: 'Alt+3',
       enabled: true,
-      handler: () => setCurrentRoute('batches'),
+      handler: () => navigateToRoute('batches'),
       tooltip: 'Plan and allocate batches'
     });
 
@@ -288,7 +276,7 @@ export default function App() {
       scope: 'global',
       shortcut: 'Alt+4',
       enabled: true,
-      handler: () => setCurrentRoute('design'),
+      handler: () => navigateToRoute('design'),
       tooltip: 'Open WYSIWYG Label Designer'
     });
 
@@ -299,7 +287,7 @@ export default function App() {
       scope: 'global',
       shortcut: 'Alt+5',
       enabled: true,
-      handler: () => setCurrentRoute('print'),
+      handler: () => navigateToRoute('print'),
       tooltip: 'Print labels and export 1-bit BMP'
     });
 
@@ -310,7 +298,7 @@ export default function App() {
       scope: 'global',
       shortcut: 'Alt+6',
       enabled: true,
-      handler: () => setCurrentRoute('history'),
+      handler: () => navigateToRoute('history'),
       tooltip: 'View production history and audit log'
     });
 
@@ -321,7 +309,7 @@ export default function App() {
       scope: 'global',
       shortcut: 'Alt+7',
       enabled: true,
-      handler: () => setCurrentRoute('settings'),
+      handler: () => navigateToRoute('settings'),
       tooltip: 'Configure machines and pack profiles'
     });
 
@@ -426,13 +414,13 @@ export default function App() {
 
       // Alt+1 through Alt+7 Navigation
       if (e.altKey && !e.ctrlKey && !e.shiftKey) {
-        if (e.key === '1') { e.preventDefault(); setCurrentRoute('home'); }
-        if (e.key === '2') { e.preventDefault(); setCurrentRoute('products'); }
-        if (e.key === '3') { e.preventDefault(); setCurrentRoute('batches'); }
-        if (e.key === '4') { e.preventDefault(); setCurrentRoute('design'); }
-        if (e.key === '5') { e.preventDefault(); setCurrentRoute('print'); }
-        if (e.key === '6') { e.preventDefault(); setCurrentRoute('history'); }
-        if (e.key === '7') { e.preventDefault(); setCurrentRoute('settings'); }
+        if (e.key === '1') { e.preventDefault(); navigateToRoute('home'); }
+        if (e.key === '2') { e.preventDefault(); navigateToRoute('products'); }
+        if (e.key === '3') { e.preventDefault(); navigateToRoute('batches'); }
+        if (e.key === '4') { e.preventDefault(); navigateToRoute('design'); }
+        if (e.key === '5') { e.preventDefault(); navigateToRoute('print'); }
+        if (e.key === '6') { e.preventDefault(); navigateToRoute('history'); }
+        if (e.key === '7') { e.preventDefault(); navigateToRoute('settings'); }
       }
     };
 
@@ -440,10 +428,11 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
   }, [handleToggleTheme]);
 
-  // Business Data Mutations
+  // Business Data Mutations with Dual-Layer Persistence Snapshot Mirroring
   const handleUpdateSku = async (updated: SKU) => {
     await db.skus.put(updated);
     setSkus(prev => prev.map(s => s.id === updated.id ? updated : s));
+    await saveUniversalSnapshot();
   };
 
   const handleCreateProduct = async (newProd: Product) => {
@@ -461,12 +450,14 @@ export default function App() {
     await db.skus.bulkPut(newSkus);
     setProducts(prev => [...prev, newProd]);
     setSkus(prev => [...prev, ...newSkus]);
+    await saveUniversalSnapshot();
   };
 
   const handleUpdateProduct = async (updatedProd: Product) => {
     await db.products.put(updatedProd);
     setProducts(prev => prev.map(p => p.id === updatedProd.id ? updatedProd : p));
     if (activeProduct?.id === updatedProd.id) setActiveProduct(updatedProd);
+    await saveUniversalSnapshot();
   };
 
   const handleDeleteProduct = async (productId: string) => {
@@ -481,6 +472,7 @@ export default function App() {
       const remaining = products.filter(p => p.id !== productId);
       setActiveProduct(remaining[0] || null);
     }
+    await saveUniversalSnapshot();
   };
 
   const handleCreateSku = async (newSku: SKU) => {
@@ -495,11 +487,13 @@ export default function App() {
       await db.products.put(updatedProd);
       setProducts(prev => prev.map(p => p.id === updatedProd.id ? updatedProd : p));
     }
+    await saveUniversalSnapshot();
   };
 
   const handleDeleteSku = async (skuId: string) => {
     await db.skus.delete(skuId);
     setSkus(prev => prev.filter(s => s.id !== skuId));
+    await saveUniversalSnapshot();
   };
 
   const handleBulkUpdateSkus = async (skuIds: string[], updates: Partial<SKU>) => {
@@ -509,6 +503,7 @@ export default function App() {
       }
     });
     setSkus(prev => prev.map(s => skuIds.includes(s.id) ? { ...s, ...updates } : s));
+    await saveUniversalSnapshot();
   };
 
   const handleCreateBatch = async (newBatch: Batch) => {
@@ -518,14 +513,20 @@ export default function App() {
       return [newBatch, ...filtered];
     });
     setActiveBatch(newBatch);
+    localStorage.setItem('als_active_batch_id', newBatch.id);
     const p = products.find(prod => prod.id === newBatch.productId);
-    if (p) setActiveProduct(p);
+    if (p) {
+      setActiveProduct(p);
+      localStorage.setItem('als_active_product_id', p.id);
+    }
+    await saveUniversalSnapshot();
   };
 
   const handleUpdateBatch = async (updated: Batch) => {
     await db.batches.put(updated);
     setBatches(prev => prev.map(b => b.id === updated.id ? updated : b));
     if (activeBatch?.id === updated.id) setActiveBatch(updated);
+    await saveUniversalSnapshot();
   };
 
   const handleDeleteBatch = async (batchId: string) => {
@@ -535,6 +536,7 @@ export default function App() {
       const remaining = batches.filter(b => b.id !== batchId);
       setActiveBatch(remaining[0] || null);
     }
+    await saveUniversalSnapshot();
   };
 
   const handleDuplicateBatch = async (sourceBatch: Batch) => {
@@ -551,6 +553,8 @@ export default function App() {
     await db.batches.put(cloned);
     setBatches(prev => [cloned, ...prev]);
     setActiveBatch(cloned);
+    localStorage.setItem('als_active_batch_id', cloned.id);
+    await saveUniversalSnapshot();
   };
 
   // Safe Design Scope Template Save (Strictly separates geometry from data)
@@ -573,6 +577,7 @@ export default function App() {
 
     const newLogs = await db.auditLogs.toArray();
     setAuditLogs(newLogs);
+    await saveUniversalSnapshot();
   };
 
   // Tier 1: Save General Default for all packages of this pack size
@@ -582,7 +587,6 @@ export default function App() {
     const packDefaultTmpl = buildPackDefaultTemplate(tmplToSave, packSize);
 
     // 1. Remove ANY previous template that served as the default for this pack size
-    // (including tmpl_adalaj_6line for 100g, or previous tmpl_pack_default_${norm})
     let updatedTemplates = templates.filter(t => 
       t.id !== targetId && 
       !(t.packSizeScope === norm && t.isPackSizeDefault) &&
@@ -618,6 +622,7 @@ export default function App() {
     });
     const newLogs = await db.auditLogs.toArray();
     setAuditLogs(newLogs);
+    await saveUniversalSnapshot();
   };
 
   // Tier 2: Save Custom Override specifically for this product & pack size
@@ -640,6 +645,7 @@ export default function App() {
     });
     const newLogs = await db.auditLogs.toArray();
     setAuditLogs(newLogs);
+    await saveUniversalSnapshot();
   };
 
   // Revert Custom Override back to General Pack Size Default
@@ -664,6 +670,7 @@ export default function App() {
     });
     const newLogs = await db.auditLogs.toArray();
     setAuditLogs(newLogs);
+    await saveUniversalSnapshot();
   };
 
   // Print completed mutation
@@ -724,7 +731,7 @@ export default function App() {
       {/* Shell Header */}
       <Header
         currentRoute={currentRoute}
-        onNavigate={setCurrentRoute}
+        onNavigate={navigateToRoute}
         activeBatch={activeBatch}
         activeProduct={activeProduct}
         theme={theme}
@@ -735,6 +742,7 @@ export default function App() {
         onOpenCheatSheet={() => setIsCheatSheetOpen(true)}
         onOpenAIDrawer={() => setIsAIDrawerOpen(true)}
         onStartTour={() => setIsTourOpen(true)}
+        onOpenSyncModal={() => setIsSyncModalOpen(true)}
       />
 
       {/* Main Workspace Router */}
@@ -748,22 +756,31 @@ export default function App() {
             activeBatch={activeBatch || batches[0]}
             activeProduct={activeProduct || products[0]}
             activeMachine={activeMachine || machines[0]}
-            onNavigate={setCurrentRoute}
+            onNavigate={navigateToRoute}
             onSelectProduct={p => {
               setActiveProduct(p);
+              if (p) localStorage.setItem('als_active_product_id', p.id);
               const pBatch = batches.find(b => b.productId === p.id);
-              if (pBatch) setActiveBatch(pBatch);
+              if (pBatch) {
+                setActiveBatch(pBatch);
+                localStorage.setItem('als_active_batch_id', pBatch.id);
+              }
               const pSku = skus.find(s => s.productId === p.id && s.packSize === activeSku?.packSize) || skus.find(s => s.productId === p.id);
               if (pSku) {
                 setActiveSku(pSku);
+                localStorage.setItem('als_active_sku_id', pSku.id);
                 const resolved = resolveLayout(p.id, pSku.packSize, templates, packProfiles);
                 setActiveTemplate(resolved.template);
               }
             }}
             onSelectBatch={b => {
               setActiveBatch(b);
+              if (b) localStorage.setItem('als_active_batch_id', b.id);
               const p = products.find(prod => prod.id === b.productId);
-              if (p) setActiveProduct(p);
+              if (p) {
+                setActiveProduct(p);
+                localStorage.setItem('als_active_product_id', p.id);
+              }
             }}
           />
         )}
@@ -799,8 +816,9 @@ export default function App() {
             onDuplicateBatch={handleDuplicateBatch}
             onNavigateToPrint={(b, allocId) => {
               setActiveBatch(b);
+              localStorage.setItem('als_active_batch_id', b.id);
               if (allocId) setPrintAllocId(allocId);
-              setCurrentRoute('print');
+              navigateToRoute('print');
             }}
           />
         )}
@@ -820,20 +838,27 @@ export default function App() {
             packProfiles={packProfiles}
             onSelectProduct={p => {
               setActiveProduct(p);
+              if (p) localStorage.setItem('als_active_product_id', p.id);
               const pSku = skus.find(s => s.productId === p.id && s.packSize === activeSku?.packSize) || skus.find(s => s.productId === p.id);
               if (pSku) {
                 setActiveSku(pSku);
+                localStorage.setItem('als_active_sku_id', pSku.id);
                 const resolved = resolveLayout(p.id, pSku.packSize, templates, packProfiles);
                 setActiveTemplate(resolved.template);
               }
               const pBatch = batches.find(b => b.productId === p.id);
-              if (pBatch) setActiveBatch(pBatch);
+              if (pBatch) {
+                setActiveBatch(pBatch);
+                localStorage.setItem('als_active_batch_id', pBatch.id);
+              }
             }}
             onSelectSku={s => {
               setActiveSku(s);
+              localStorage.setItem('als_active_sku_id', s.id);
               const p = products.find(prod => prod.id === s.productId) || activeProduct;
               if (p) {
                 setActiveProduct(p);
+                localStorage.setItem('als_active_product_id', p.id);
                 const resolved = resolveLayout(p.id, s.packSize, templates, packProfiles);
                 setActiveTemplate(resolved.template);
               }
@@ -842,7 +867,7 @@ export default function App() {
             onSavePackDefault={(tmpl, packSize, currentProdId) => handleSavePackSizeDefault(tmpl, packSize, currentProdId || activeProduct?.id)}
             onSaveSkuOverride={handleSaveSkuOverride}
             onRevertSkuOverride={handleRevertSkuOverride}
-            onNavigateToPrint={() => setCurrentRoute('print')}
+            onNavigateToPrint={() => navigateToRoute('print')}
           />
         )}
 
@@ -888,14 +913,14 @@ export default function App() {
                 const p = products.find(prod => prod.id === b.productId);
                 if (p) setActiveProduct(p);
               }
-              setCurrentRoute('print');
+              navigateToRoute('print');
             }}
             onReprintBatch={b => {
               setReprintJob(null);
               setActiveBatch(b);
               const p = products.find(prod => prod.id === b.productId);
               if (p) setActiveProduct(p);
-              setCurrentRoute('print');
+              navigateToRoute('print');
             }}
             onDuplicateBatch={b => {
               const prod = products.find(p => p.id === b.productId) || products[0];
@@ -910,7 +935,7 @@ export default function App() {
               );
               if (result.success && result.batch) {
                 handleCreateBatch(result.batch);
-                setCurrentRoute('batches');
+                navigateToRoute('batches');
               }
             }}
           />
@@ -924,15 +949,20 @@ export default function App() {
             activeMachine={activeMachine}
             packProfiles={packProfiles}
             mediaProfiles={mediaProfiles}
-            onSelectMachine={m => setActiveMachine(m)}
-            onUpdateMachine={m => {
-              db.machineProfiles.put(m);
+            onSelectMachine={m => {
+              setActiveMachine(m);
+              localStorage.setItem('als_active_machine_id', m.id);
+            }}
+            onUpdateMachine={async m => {
+              await db.machineProfiles.put(m);
               setMachines(prev => prev.map(mach => mach.id === m.id ? m : mach));
               setActiveMachine(m);
+              await saveUniversalSnapshot();
             }}
-            onUpdatePackProfile={p => {
-              db.packProfiles.put(p);
+            onUpdatePackProfile={async p => {
+              await db.packProfiles.put(p);
               setPackProfiles(prev => prev.map(pack => pack.id === p.id ? p : pack));
+              await saveUniversalSnapshot();
             }}
             onRestoreBackup={loadDatabase}
           />
@@ -952,7 +982,7 @@ export default function App() {
       <CommandPalette
         isOpen={isCommandPaletteOpen}
         onClose={() => setIsCommandPaletteOpen(false)}
-        onNavigate={setCurrentRoute}
+        onNavigate={navigateToRoute}
       />
 
       {/* Keyboard Cheat Sheet Modal */}
@@ -961,11 +991,18 @@ export default function App() {
         onClose={() => setIsCheatSheetOpen(false)}
       />
 
+      {/* Universal Persistence & Cross-Device Sync Hub Modal */}
+      <UniversalSyncModal
+        isOpen={isSyncModalOpen}
+        onClose={() => setIsSyncModalOpen(false)}
+        onDataRestored={loadDatabase}
+      />
+
       {/* Guided Tour Spotlight */}
       <GuidedTour
         isOpen={isTourOpen}
         onClose={() => setIsTourOpen(false)}
-        onNavigate={setCurrentRoute}
+        onNavigate={navigateToRoute}
       />
 
       {/* AI Copilot Drawer */}

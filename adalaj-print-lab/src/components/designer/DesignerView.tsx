@@ -75,6 +75,7 @@ import {
   type LayoutSource, 
   type ResolvedLayout 
 } from '../../services/layoutRegistry';
+import { db, saveUniversalSnapshot } from '../../services/db';
 
 interface DesignerViewProps {
   template: Template;
@@ -138,6 +139,30 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
   const [rasterRotation, setRasterRotation] = useState<0 | 90 | 180 | 270>(0);
   const [rasterMirrorX, setRasterMirrorX] = useState<boolean>(false);
   const [rasterMirrorY, setRasterMirrorY] = useState<boolean>(false);
+  
+  // Real-time Auto-Save for in-progress draft persistence
+  const autoSaveTimerRef = useRef<any>(null);
+  const [autoSaveStatus, setAutoSaveStatus] = useState<string>('Saved');
+
+  useEffect(() => {
+    if (!template || !template.id) return;
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(async () => {
+      try {
+        await db.templates.put(template);
+        await saveUniversalSnapshot();
+        const now = new Date();
+        const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        setAutoSaveStatus(`Auto-saved ${timeStr}`);
+      } catch (err) {
+        console.error('Auto-save error:', err);
+      }
+    }, 400);
+
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, [template]);
   
   // Refs
   const canvasViewportRef = useRef<HTMLDivElement | null>(null);
@@ -1330,6 +1355,12 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
             <span className="text-[10px] font-mono text-zinc-400 bg-zinc-900 px-1.5 h-7 flex items-center rounded border border-zinc-800" title="1:1 Pixel Dimensions">
               {Math.round(canvasWidthMm * (300 / 25.4))}×{Math.round(canvasHeightMm * (300 / 25.4))}px
             </span>
+
+            {/* Live Auto-Save Indicator */}
+            <div className="flex items-center gap-1.5 px-2 h-7 rounded bg-zinc-900 border border-zinc-800 text-[10px] font-mono text-emerald-400 select-none" title="Every canvas adjustment is continuously auto-saved">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+              <span>{autoSaveStatus}</span>
+            </div>
           </div>
         </div>
 
@@ -1798,18 +1829,6 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                       </defs>
                       <rect width="100%" height="100%" fill="url(#grid5mm)" />
                     </svg>
-
-                    {/* 1.0mm Swath Safe Margin Guide */}
-                    <div 
-                      className="absolute pointer-events-none border border-dashed border-amber-500/35 z-20"
-                      style={{
-                        top: `${1.0 * zoomLevel}px`,
-                        left: `${1.0 * zoomLevel}px`,
-                        right: `${1.0 * zoomLevel}px`,
-                        bottom: `${1.0 * zoomLevel}px`,
-                      }}
-                      title="1.0mm Calibrated Safe Margin"
-                    />
 
                     {viewMode === 'printer' ? (
                       /* SMOOTH CRISP TRANSFORMED DIRECT CANVAS (NO PIXELATED DOWNSCALING) */

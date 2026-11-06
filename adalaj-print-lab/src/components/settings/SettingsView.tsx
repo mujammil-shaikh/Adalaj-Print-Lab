@@ -28,7 +28,7 @@ import {
 } from 'lucide-react';
 import type { MachineProfile, PackProfile, MediaProfile, Business, Brand } from '../../types';
 import { actionRegistry } from '../../services/actionRegistry';
-import { db } from '../../services/db';
+import { db, saveUniversalSnapshot } from '../../services/db';
 import { hardwareManager, type HardwareLogEntry } from '../../services/hardwareAdapters';
 
 interface SettingsViewProps {
@@ -226,6 +226,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           if (auditLogs.length) await db.auditLogs.bulkPut(auditLogs);
         });
 
+        await saveUniversalSnapshot();
         setBackupFeedback(`✓ Backup restored: ${products.length} products, ${batches.length} batches, ${printJobs.length} print jobs, ${looseStock.length} loose stock items.`);
         onRestoreBackup();
       } catch (err: any) {

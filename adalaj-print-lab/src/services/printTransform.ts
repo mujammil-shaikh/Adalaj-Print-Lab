@@ -271,23 +271,9 @@ export function renderTemplateToCanvas(
   const effDpmmY = heightPx / Math.max(0.1, docHeightMm);
   const effDpmm = template.travel === 'Vertical' ? effDpmmX : effDpmmY;
 
-  // Edge-to-edge auto-fit calculation if requested
+  // Respect exact canvas coordinates: zero artificial offset or margins
   let edgeScaleX = 1.0;
   let edgeOffsetX = 0;
-  if (options.fitEdgeToEdge) {
-    // Find rightmost extent of objects
-    let maxObjRightMm = 1.0;
-    template.objects.forEach(o => {
-      const right = o.x + (o.width || 10);
-      if (right > maxObjRightMm) maxObjRightMm = right;
-    });
-    // Target 96% of swath width leaving 2% safety margins
-    const targetWidthMm = docWidthMm * 0.96;
-    if (maxObjRightMm > 0) {
-      edgeScaleX = Math.min(1.25, Math.max(0.75, targetWidthMm / maxObjRightMm));
-      edgeOffsetX = (docWidthMm * 0.02) * effDpmmX;
-    }
-  }
 
   const docCanvas = document.createElement('canvas');
   docCanvas.width = widthPx;
@@ -415,26 +401,14 @@ function renderSingleObject(
   canvasWidthPx?: number,
   canvasHeightPx?: number
 ) {
-  const dpmmSafe = Math.max(1, dpmm);
-  // Guarantee physical margin from canvas edges: 1.0mm (~12px @ 300 DPI)
-  const safetyMarginX = Math.max(8, Math.round(1.0 * dpmmSafe));
-
-  const rawX = obj.x * dpmm;
-  const rawY = obj.y * dpmm;
-  const rawW = obj.width * dpmm;
+  // Exact 1:1 ground-truth positioning matching Pack View canvas with zero artificial offsets or margins
+  const x = obj.x * dpmm;
+  const y = obj.y * dpmm;
+  const w = obj.width * dpmm;
   const h = obj.height * dpmm;
 
-  // Enforce left safe coordinate so characters never touch or cut off on the left
-  const x = Math.max(safetyMarginX, rawX);
-  
-  // Calculate maximum allowed width to guarantee ink never reaches right safety margin
-  const maxSafeWidthPx = canvasWidthPx 
-    ? Math.max(20, canvasWidthPx - x - safetyMarginX) 
-    : rawW;
-  const w = Math.min(rawW, maxSafeWidthPx);
-
   ctx.save();
-  ctx.translate(x + w / 2, rawY + h / 2);
+  ctx.translate(x + w / 2, y + h / 2);
 
   if (obj.rotation !== 0) {
     ctx.rotate((obj.rotation * Math.PI) / 180);
@@ -458,8 +432,8 @@ function renderSingleObject(
       text = text.toUpperCase();
     }
 
-    // Font calculation with robust system fallbacks matching Pack View mm scale exactly
-    let fontSizePx = Math.max(6, Math.round(obj.fontSizeMm * dpmm));
+    // Exact 1:1 font size matching Pack View mm scale exactly - no artificial reduction or shrinking
+    const fontSizePx = Math.max(4, Math.round(obj.fontSizeMm * dpmm));
     const fontStyle = obj.fontStyle === 'italic' ? 'italic ' : '';
     const fontWeight = obj.fontWeight === 'bold' ? 'bold ' : '';
     ctx.font = `${fontStyle}${fontWeight}${fontSizePx}px ${obj.fontFamily}, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
@@ -487,44 +461,8 @@ function renderSingleObject(
       textX = 0;
     }
 
-    // Ink measurement including advance width and right glyph overhang
-    const metrics = ctx.measureText(text);
-    const measuredAdvance = metrics.width;
-    const inkRightOverhang = Math.max(0, (metrics.actualBoundingBoxRight ?? measuredAdvance) - measuredAdvance);
-    const totalInkWidth = measuredAdvance + inkRightOverhang;
-
-    // Auto-fit text if it exceeds width so it NEVER cuts off
-    if (totalInkWidth > w && w > 0) {
-      // Proportionally reduce font size first so glyph proportions remain natural and balanced
-      const overflowRatio = w / totalInkWidth;
-      if (overflowRatio < 0.95) {
-        fontSizePx = Math.max(6, Math.floor(fontSizePx * overflowRatio * 0.96));
-        ctx.font = `${fontStyle}${fontWeight}${fontSizePx}px ${obj.fontFamily}, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
-      }
-
-      const remeasured = ctx.measureText(text);
-      const remeasuredAdvance = remeasured.width;
-      const remeasuredOverhang = Math.max(0, (remeasured.actualBoundingBoxRight ?? remeasuredAdvance) - remeasuredAdvance);
-      const remeasuredTotal = remeasuredAdvance + remeasuredOverhang;
-      const scaleX = remeasuredTotal > w ? (w / remeasuredTotal) : 1.0;
-
-      ctx.save();
-      if (obj.alignment === 'center') {
-        ctx.translate(w / 2, 0);
-        ctx.scale(scaleX, 1);
-        ctx.translate(-w / 2, 0);
-      } else if (obj.alignment === 'right') {
-        ctx.translate(w, 0);
-        ctx.scale(scaleX, 1);
-        ctx.translate(-w, 0);
-      } else {
-        ctx.scale(scaleX, 1);
-      }
-      ctx.fillText(text, textX, h / 2);
-      ctx.restore();
-    } else {
-      ctx.fillText(text, textX, h / 2);
-    }
+    // Direct 1:1 text rendering identical to Pack View canvas
+    ctx.fillText(text, textX, h / 2);
   } else if (obj.type === 'line') {
     ctx.strokeStyle = '#000000';
     ctx.lineWidth = Math.max(1, (obj.strokeWidthMm || obj.height || 0.4) * dpmm);

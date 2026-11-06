@@ -18,7 +18,8 @@ import {
   Sun, 
   Moon, 
   HelpCircle,
-  Sliders
+  Sliders,
+  Cloud
 } from 'lucide-react';
 import { PWAInstallButton } from './PWAInstallButton';
 import type { Batch, Product } from '../../types';
@@ -36,6 +37,7 @@ interface HeaderProps {
   onOpenCheatSheet: () => void;
   onOpenAIDrawer: () => void;
   onStartTour: () => void;
+  onOpenSyncModal?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -50,7 +52,8 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenCommandPalette,
   onOpenCheatSheet,
   onOpenAIDrawer,
-  onStartTour
+  onStartTour,
+  onOpenSyncModal
 }) => {
   const navItems = [
     { id: 'home', label: 'Home', icon: Home, shortcut: 'Alt+1' },
@@ -141,6 +144,16 @@ export const Header: React.FC<HeaderProps> = ({
         </button>
 
         <PWAInstallButton />
+
+        {/* Universal Cloud Sync Trigger */}
+        <button
+          onClick={onOpenSyncModal}
+          className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-emerald-400 hover:border-emerald-500/40 transition-colors cursor-pointer"
+          title="Universal Persistence & Device Sync"
+        >
+          <Cloud className="w-3.5 h-3.5 text-emerald-400" />
+          <span className="hidden lg:inline text-[11px] font-semibold">Sync</span>
+        </button>
 
         {/* Command Palette Trigger */}
         <button
