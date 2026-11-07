@@ -461,12 +461,13 @@ export const PrintView: React.FC<PrintViewProps> = ({
     setExportCompleteMsg(`Exported ${svgFileName} (Crisp Vector SVG: 100% mathematical precision & sharp curves)`);
   };
 
-  // Standard Windows BMP Download (Exact 1:1 Pixel Match - No forced rotation)
+  // Standard Windows BMP Download (Crisp HD 24-bit with Anti-Aliasing)
   const handleDownloadBmp = () => {
     if (values.mrp === '[Needs MRP]') {
       setExportCompleteMsg('❌ Export blocked: Missing authorized MRP for this pack size.');
       return;
     }
+    const mult = exportQuality === '4x' ? 4 : exportQuality === '2x' ? 2 : 1;
     const targetDocW = isRotated90or270 ? exportHeightPx : exportWidthPx;
     const targetDocH = isRotated90or270 ? exportWidthPx : exportHeightPx;
 
@@ -474,14 +475,16 @@ export const PrintView: React.FC<PrintViewProps> = ({
       forDownload: true,
       widthMm: previewWidthMm,
       heightMm: previewHeightMm,
-      targetWidthPx: targetDocW,
-      targetHeightPx: targetDocH,
+      targetWidthPx: targetDocW * mult,
+      targetHeightPx: targetDocH * mult,
       downloadOrientation: exportOrientation,
       contentScale: contentScale,
-      fitEdgeToEdge: isFitEdgeToEdge
+      fitEdgeToEdge: isFitEdgeToEdge,
+      scaleMultiplier: mult
     });
-    const bmpBlob = canvasToStandardBmp(canvas);
-    const fileName = bmpFileName;
+    const effectiveDpi = (machine.defaultDpi || 300) * mult;
+    const bmpBlob = canvasToStandardBmp(canvas, effectiveDpi);
+    const fileName = mult > 1 ? `${baseDownloadPrefix}_${exportQuality.toUpperCase()}_HD.BMP` : bmpFileName;
 
     const url = URL.createObjectURL(bmpBlob);
     const a = document.createElement('a');
@@ -489,15 +492,16 @@ export const PrintView: React.FC<PrintViewProps> = ({
     a.download = fileName;
     a.click();
     URL.revokeObjectURL(url);
-    setExportCompleteMsg(`Exported ${fileName} (Standard 300 DPI BMP - exact 1:1 match: ${canvas.width}px × ${canvas.height}px, ${exportOrientation === '1to1' ? '0° upright' : exportOrientation})`);
+    setExportCompleteMsg(`Exported ${fileName} (HD ${effectiveDpi} DPI Canvas BMP: ${canvas.width}px × ${canvas.height}px, ${exportOrientation === '1to1' ? '0° upright' : exportOrientation})`);
   };
 
-  // Direct 1-bit Raw Industrial BMP Download (Exact 1:1 Pixel Match)
+  // Direct 1-bit Raw Industrial BMP Download
   const handleDownload1BitBmp = () => {
     if (values.mrp === '[Needs MRP]') {
       setExportCompleteMsg('❌ Export blocked: Missing authorized MRP for this pack size.');
       return;
     }
+    const mult = exportQuality === '4x' ? 4 : exportQuality === '2x' ? 2 : 1;
     const targetDocW = isRotated90or270 ? exportHeightPx : exportWidthPx;
     const targetDocH = isRotated90or270 ? exportWidthPx : exportHeightPx;
 
@@ -505,14 +509,16 @@ export const PrintView: React.FC<PrintViewProps> = ({
       forDownload: true,
       widthMm: previewWidthMm,
       heightMm: previewHeightMm,
-      targetWidthPx: targetDocW,
-      targetHeightPx: targetDocH,
+      targetWidthPx: targetDocW * mult,
+      targetHeightPx: targetDocH * mult,
       downloadOrientation: exportOrientation,
       contentScale: contentScale,
-      fitEdgeToEdge: isFitEdgeToEdge
+      fitEdgeToEdge: isFitEdgeToEdge,
+      scaleMultiplier: mult
     });
-    const bmpBlob = canvasTo1BitBmp(canvas);
-    const fileName = raw1BitFileName;
+    const effectiveDpi = (machine.defaultDpi || 300) * mult;
+    const bmpBlob = canvasTo1BitBmp(canvas, effectiveDpi);
+    const fileName = mult > 1 ? `${baseDownloadPrefix}_1BIT_${exportQuality.toUpperCase()}_HD.BMP` : raw1BitFileName;
 
     const url = URL.createObjectURL(bmpBlob);
     const a = document.createElement('a');
@@ -520,7 +526,7 @@ export const PrintView: React.FC<PrintViewProps> = ({
     a.download = fileName;
     a.click();
     URL.revokeObjectURL(url);
-    setExportCompleteMsg(`Exported ${fileName} (Pure 1-bit monochrome BMP - exact 1:1 match: ${canvas.width}px × ${canvas.height}px, ${exportOrientation === '1to1' ? '0° upright' : exportOrientation})`);
+    setExportCompleteMsg(`Exported ${fileName} (HD ${effectiveDpi} DPI 1-Bit BMP: ${canvas.width}px × ${canvas.height}px, ${exportOrientation === '1to1' ? '0° upright' : exportOrientation})`);
   };
 
   // Direct High-Resolution Canvas PNG Download with HD Super-Sampling
@@ -1309,19 +1315,19 @@ export const PrintView: React.FC<PrintViewProps> = ({
                   type="button"
                   onClick={handleDownloadBmp}
                   className="h-8 px-2.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-amber-300 font-bold text-xs border border-zinc-700 flex items-center gap-1 transition-colors cursor-pointer shadow-xs"
-                  title="Download direct 1:1 Windows BMP"
+                  title={`Download Windows BMP in ${exportQuality.toUpperCase()} HD (Anti-aliased, Photos/Paint compatible)`}
                 >
                   <Download className="w-3.5 h-3.5" />
-                  <span>Canvas BMP</span>
+                  <span>Canvas BMP ({exportQuality})</span>
                 </button>
                 <button
                   type="button"
                   onClick={handleDownload1BitBmp}
                   className="h-8 px-2.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 font-semibold text-xs border border-zinc-700 flex items-center gap-1 transition-colors cursor-pointer"
-                  title="Download pure 1-bit monochrome BMP for TIJ head"
+                  title={`Download pure 1-bit monochrome BMP in ${exportQuality.toUpperCase()} HD`}
                 >
                   <Download className="w-3.5 h-3.5" />
-                  <span>1-Bit BMP</span>
+                  <span>1-Bit BMP ({exportQuality})</span>
                 </button>
                 <button
                   type="button"
@@ -1676,29 +1682,29 @@ export const PrintView: React.FC<PrintViewProps> = ({
 
                 <button
                   onClick={handleDownloadBmp}
-                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-amber-300 font-bold text-xs border border-zinc-700 shadow-sm transition-colors"
-                  title="Download standard Windows BMP (Compatible with Windows Photos, MS Paint, Word, Photoshop)"
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-amber-300 font-bold text-xs border border-zinc-700 shadow-sm transition-colors cursor-pointer"
+                  title={`Download standard Windows BMP in ${exportQuality.toUpperCase()} HD (Compatible with Windows Photos, MS Paint, Word, Photoshop)`}
                 >
                   <Download className="w-3.5 h-3.5" />
-                  <span>Download .BMP (Photos/Paint)</span>
+                  <span>Download .BMP ({exportQuality} HD)</span>
                 </button>
 
                 <button
                   onClick={handleDownload1BitBmp}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-zinc-850 hover:bg-zinc-800 text-zinc-300 font-semibold text-xs border border-zinc-700 transition-colors"
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-zinc-850 hover:bg-zinc-800 text-zinc-300 font-semibold text-xs border border-zinc-700 transition-colors cursor-pointer"
                   title="Download pure 1-bit monochrome raw BMP for direct TIJ controller SD/USB"
                 >
                   <Download className="w-3.5 h-3.5" />
-                  <span>Raw 1-Bit .BMP</span>
+                  <span>Raw 1-Bit .BMP ({exportQuality})</span>
                 </button>
 
                 <button
                   onClick={handleDownloadPng}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-750 text-amber-300 font-semibold text-xs border border-zinc-700 transition-colors"
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-750 text-amber-300 font-semibold text-xs border border-zinc-700 transition-colors cursor-pointer"
                   title="Download direct high-resolution PNG image"
                 >
                   <Download className="w-3.5 h-3.5" />
-                  <span>Direct PNG</span>
+                  <span>Direct PNG ({exportQuality})</span>
                 </button>
 
                 <button

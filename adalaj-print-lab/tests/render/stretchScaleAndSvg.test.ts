@@ -1,12 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { renderTemplateToSvgString } from '../../src/services/printTransform';
+import { renderTemplateToSvgString, canvasToStandardBmp, canvasTo1BitBmp } from '../../src/services/printTransform';
 import type { Template, MachineProfile } from '../../src/types';
 
 describe('Dual-Axis Scale, Condense & SVG Vector Engine', () => {
   const mockMachine: MachineProfile = {
     id: 'mach-1',
     name: 'TIJ 12.7mm Handheld',
-    technology: 'TIJ',
+    technology: 'TIJ Handheld',
     printBandMm: 12.5,
     maxSpeedMpm: 30,
     supportedOrientations: ['Normal', 'Rotated 90°'],
@@ -20,7 +20,7 @@ describe('Dual-Axis Scale, Condense & SVG Vector Engine', () => {
     edgeBufferMm: 0,
     status: 'Ready',
     maintenanceIntervalDays: 30
-  };
+  } as any;
 
   const mockTemplate: Template = {
     id: 'tmpl-test',
@@ -30,7 +30,7 @@ describe('Dual-Axis Scale, Condense & SVG Vector Engine', () => {
     packSizeScope: '100g',
     version: 1,
     travel: 'Vertical',
-    layout: 'Single Band',
+    layout: 'Stack',
     canvasWidthMm: 12.5,
     canvasHeightMm: 35.0,
     densityDpi: 300,
@@ -107,7 +107,7 @@ describe('Dual-Axis Scale, Condense & SVG Vector Engine', () => {
         locked: false
       }
     ]
-  };
+  } as any;
 
   const mockValues: Record<string, string> = {
     mfg: 'NOV 2026',
@@ -164,5 +164,47 @@ describe('Dual-Axis Scale, Condense & SVG Vector Engine', () => {
       downloadOrientation: 'rotate180'
     });
     expect(svg180).toContain('rotate(180)');
+  });
+
+  it('generates 24-bit Standard BMP with HD DPI header preserving color depth', async () => {
+    const mockCanvas = {
+      width: 100,
+      height: 100,
+      getContext: () => ({
+        getImageData: (_x: number, _y: number, w: number, h: number) => ({
+          data: new Uint8ClampedArray(w * h * 4).fill(255)
+        })
+      })
+    } as any;
+
+    const blob = canvasToStandardBmp(mockCanvas, 600);
+    expect(blob).toBeInstanceOf(Blob);
+    expect(blob.type).toBe('image/bmp');
+    const buffer = await blob.arrayBuffer();
+    const view = new DataView(buffer);
+    // biXPelsPerMeter at offset 38: 600 * 39.3701 ≈ 23622
+    expect(view.getInt32(38, true)).toBe(23622);
+    expect(view.getUint16(28, true)).toBe(24); // 24-bit color depth
+  });
+
+  it('generates 1-bit BMP with HD DPI header', async () => {
+    const mockCanvas = {
+      width: 100,
+      height: 100,
+      getContext: () => ({
+        getImageData: (_x: number, _y: number, w: number, h: number) => ({
+          data: new Uint8ClampedArray(w * h * 4).fill(255)
+        })
+      })
+    } as any;
+
+    const blob = canvasTo1BitBmp(mockCanvas, 1200);
+    expect(blob).toBeInstanceOf(Blob);
+    expect(blob.type).toBe('image/bmp');
+    const buffer = await blob.arrayBuffer();
+    const view = new DataView(buffer);
+    // biXPelsPerMeter at offset 38: 1200 * 39.3701 ≈ 47244
+    expect(view.getInt32(38, true)).toBe(47244);
+    expect(view.getUint16(28, true)).toBe(1); // 1-bit color depth
   });
 });

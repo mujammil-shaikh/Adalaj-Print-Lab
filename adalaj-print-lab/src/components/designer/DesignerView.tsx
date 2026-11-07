@@ -66,7 +66,7 @@ import type {
 } from '../../types';
 import { fitObjectsToBand, validateTemplateQuality, type QualityIssue } from '../../services/fitEngine';
 import { getLayoutAdvice, buildPassPlan } from '../../services/passPlanner';
-import { renderTemplateToCanvas, canvasTo1BitBmp, canvasToStandardBmp, renderBarcodeSvgString } from '../../services/printTransform';
+import { renderTemplateToCanvas, canvasTo1BitBmp, canvasToStandardBmp, renderBarcodeSvgString, renderTemplateToSvgString } from '../../services/printTransform';
 import { 
   resolveLayout, 
   buildPackDefaultTemplate, 
@@ -130,6 +130,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
   const [viewMode, setViewMode] = useState<'pack' | 'printer'>('pack');
   const [zoomLevel, setZoomLevel] = useState<number>(8.0); // px per mm
   const [zoomMode, setZoomMode] = useState<'fit' | '100' | '200' | 'custom'>('fit');
+  const [designerQuality, setDesignerQuality] = useState<'1x' | '2x' | '4x'>('2x');
   const [activeTool, setActiveTool] = useState<'select' | 'text' | 'field' | 'line' | 'rectangle' | 'barcode' | 'qr'>('select');
   const [scope, setScope] = useState<DesignScope>('This SKU');
   const [showScopeConfirmModal, setShowScopeConfirmModal] = useState(false);
@@ -1014,24 +1015,33 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
     setShowDiagnosticModal(true);
   };
 
-  // Download Standard Windows BMP (Fully compatible with Windows Photos, Paint, Word, etc.)
+  // Download Standard Windows BMP (Crisp Anti-Aliased HD BMP matching Pack View)
   const handleDownloadStandardBmp = () => {
     try {
+      const mult = designerQuality === '4x' ? 4 : designerQuality === '2x' ? 2 : 1;
+      const baseW = Math.round(canvasWidthMm * ((machine.defaultDpi || 300) / 25.4));
+      const baseH = Math.round(canvasHeightMm * ((machine.defaultDpi || 300) / 25.4));
+
       const canvas = renderTemplateToCanvas(template, machine, previewValues, {
         forDownload: true,
         widthMm: canvasWidthMm,
         heightMm: canvasHeightMm,
+        targetWidthPx: baseW * mult,
+        targetHeightPx: baseH * mult,
+        scaleMultiplier: mult,
         transform: {
           rotation: rasterRotation,
           mirrorX: rasterMirrorX,
           mirrorY: rasterMirrorY
         }
       });
-      const bmpBlob = canvasToStandardBmp(canvas);
+      const effectiveDpi = (machine.defaultDpi || 300) * mult;
+      const bmpBlob = canvasToStandardBmp(canvas, effectiveDpi);
       const url = URL.createObjectURL(bmpBlob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${template.name.toLowerCase().replace(/\s+/g, '_')}_300dpi.bmp`;
+      const cleanName = template.name.toLowerCase().replace(/\s+/g, '_');
+      a.download = mult > 1 ? `${cleanName}_${designerQuality.toUpperCase()}_HD.bmp` : `${cleanName}_300dpi.bmp`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (err) {
@@ -1042,21 +1052,30 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
   // Download 1-bit Raw Industrial BMP
   const handleDownload1BitBmp = () => {
     try {
+      const mult = designerQuality === '4x' ? 4 : designerQuality === '2x' ? 2 : 1;
+      const baseW = Math.round(canvasWidthMm * ((machine.defaultDpi || 300) / 25.4));
+      const baseH = Math.round(canvasHeightMm * ((machine.defaultDpi || 300) / 25.4));
+
       const canvas = renderTemplateToCanvas(template, machine, previewValues, {
         forDownload: true,
         widthMm: canvasWidthMm,
         heightMm: canvasHeightMm,
+        targetWidthPx: baseW * mult,
+        targetHeightPx: baseH * mult,
+        scaleMultiplier: mult,
         transform: {
           rotation: rasterRotation,
           mirrorX: rasterMirrorX,
           mirrorY: rasterMirrorY
         }
       });
-      const bmpBlob = canvasTo1BitBmp(canvas);
+      const effectiveDpi = (machine.defaultDpi || 300) * mult;
+      const bmpBlob = canvasTo1BitBmp(canvas, effectiveDpi);
       const url = URL.createObjectURL(bmpBlob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${template.name.toLowerCase().replace(/\s+/g, '_')}_1bit_raw_300dpi.bmp`;
+      const cleanName = template.name.toLowerCase().replace(/\s+/g, '_');
+      a.download = mult > 1 ? `${cleanName}_1bit_${designerQuality.toUpperCase()}_HD.bmp` : `${cleanName}_1bit_raw_300dpi.bmp`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (err) {
@@ -1067,10 +1086,17 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
   // Download High-Res PNG
   const handleDownloadPng = () => {
     try {
+      const mult = designerQuality === '4x' ? 4 : designerQuality === '2x' ? 2 : 1;
+      const baseW = Math.round(canvasWidthMm * ((machine.defaultDpi || 300) / 25.4));
+      const baseH = Math.round(canvasHeightMm * ((machine.defaultDpi || 300) / 25.4));
+
       const canvas = renderTemplateToCanvas(template, machine, previewValues, {
         forDownload: true,
         widthMm: canvasWidthMm,
         heightMm: canvasHeightMm,
+        targetWidthPx: baseW * mult,
+        targetHeightPx: baseH * mult,
+        scaleMultiplier: mult,
         downloadOrientation: template.customDownloadOrientation || '1to1',
         transform: {
           rotation: rasterRotation,
@@ -1081,8 +1107,30 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       const url = canvas.toDataURL('image/png');
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${template.name.toLowerCase().replace(/\s+/g, '_')}_300dpi.png`;
+      const cleanName = template.name.toLowerCase().replace(/\s+/g, '_');
+      a.download = mult > 1 ? `${cleanName}_${designerQuality.toUpperCase()}_HD.png` : `${cleanName}_300dpi.png`;
       a.click();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // Download Clean Vector SVG
+  const handleDownloadSvg = () => {
+    try {
+      const svgString = renderTemplateToSvgString(template, machine, previewValues, {
+        widthMm: canvasWidthMm,
+        heightMm: canvasHeightMm,
+        downloadOrientation: template.customDownloadOrientation || '1to1'
+      });
+      const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const cleanName = template.name.toLowerCase().replace(/\s+/g, '_');
+      a.download = `${cleanName}.svg`;
+      a.click();
+      URL.revokeObjectURL(url);
     } catch (err) {
       console.error(err);
     }
@@ -2087,37 +2135,67 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
 
               {/* Quick Raster Operations */}
               <div className="space-y-2 pt-1">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-400 block mb-1">
-                  Download & Inspect
-                </span>
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-400 block">
+                    Download & Inspect
+                  </span>
+                  {/* HD Quality Toggle */}
+                  <div className="flex items-center bg-zinc-900 border border-zinc-800 rounded p-0.5 text-[10px] font-mono">
+                    <span className="text-zinc-500 px-1 text-[9px] uppercase font-bold">HD</span>
+                    {(['1x', '2x', '4x'] as const).map(q => (
+                      <button
+                        key={q}
+                        type="button"
+                        onClick={() => setDesignerQuality(q)}
+                        className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition-colors cursor-pointer ${
+                          designerQuality === q
+                            ? 'bg-amber-500 text-black shadow-xs'
+                            : 'text-zinc-400 hover:text-zinc-200'
+                        }`}
+                        title={q === '1x' ? '1x Standard 300 DPI' : q === '2x' ? '2x HD 600 DPI' : '4x Ultra HD 1200 DPI'}
+                      >
+                        {q}
+                      </button>
+                    ))}
+                  </div>
+                </div>
 
                 {/* Standard BMP button (Windows Photos compatible) */}
                 <button
                   onClick={handleDownloadStandardBmp}
-                  className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs shadow-sm transition-colors"
-                  title="Download Windows BMP (Compatible with Windows Photos, Paint, and all viewers)"
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs shadow-sm transition-colors cursor-pointer"
+                  title={`Download Windows BMP in ${designerQuality.toUpperCase()} HD (Anti-aliased, Photos/Paint compatible)`}
                 >
                   <Download className="w-3.5 h-3.5" />
-                  <span>Download Windows BMP (300 DPI)</span>
+                  <span>Download Windows BMP ({designerQuality} HD)</span>
                 </button>
 
-                <div className="grid grid-cols-2 gap-1.5">
+                <div className="grid grid-cols-3 gap-1.5">
                   <button
                     onClick={handleDownload1BitBmp}
-                    className="flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-semibold text-[11px] border border-zinc-700 transition-colors"
-                    title="Download Raw 1-Bit Indexed BMP for direct industrial controllers"
+                    className="flex items-center justify-center gap-1 px-1 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-semibold text-[10px] border border-zinc-700 transition-colors cursor-pointer"
+                    title={`Download Raw 1-Bit Indexed BMP (${designerQuality})`}
                   >
                     <Download className="w-3 h-3" />
-                    <span>Raw 1-Bit BMP</span>
+                    <span>1-Bit ({designerQuality})</span>
                   </button>
 
                   <button
                     onClick={handleDownloadPng}
-                    className="flex items-center justify-center gap-1 px-2 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-semibold text-[11px] border border-zinc-700 transition-colors"
-                    title="Download High-Resolution PNG"
+                    className="flex items-center justify-center gap-1 px-1 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-semibold text-[10px] border border-zinc-700 transition-colors cursor-pointer"
+                    title={`Download Canvas PNG (${designerQuality})`}
                   >
                     <Download className="w-3 h-3" />
-                    <span>PNG (300 DPI)</span>
+                    <span>PNG ({designerQuality})</span>
+                  </button>
+
+                  <button
+                    onClick={handleDownloadSvg}
+                    className="flex items-center justify-center gap-1 px-1 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 font-semibold text-[10px] border border-emerald-500/40 transition-colors cursor-pointer"
+                    title="Download Clean Vector SVG (Infinite sharpness & smooth curves)"
+                  >
+                    <Download className="w-3 h-3" />
+                    <span>SVG</span>
                   </button>
                 </div>
 

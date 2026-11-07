@@ -32,7 +32,7 @@ export interface RenderRasterResult {
  * Generates an official 1-bit Windows Bitmap (BMP) binary ArrayBuffer
  * biBitCount = 1, 2 color entries (0x000000 and 0xFFFFFF), row bytes padded to 4-byte boundaries.
  */
-export function canvasTo1BitBmp(canvas: HTMLCanvasElement): Blob {
+export function canvasTo1BitBmp(canvas: HTMLCanvasElement, dpi = 300): Blob {
   const width = canvas.width;
   const height = canvas.height;
   const ctx = canvas.getContext('2d');
@@ -62,6 +62,8 @@ export function canvasTo1BitBmp(canvas: HTMLCanvasElement): Blob {
   view.setUint16(8, 0, true);       // Reserved 2
   view.setUint32(10, offsetToPixelData, true);
 
+  const ppm = Math.round(dpi * 39.3701);
+
   // BITMAPINFOHEADER
   view.setUint32(14, infoHeaderSize, true);
   view.setInt32(18, width, true);
@@ -70,8 +72,8 @@ export function canvasTo1BitBmp(canvas: HTMLCanvasElement): Blob {
   view.setUint16(28, 1, true);        // biBitCount = 1 bit per pixel
   view.setUint32(30, 0, true);        // BI_RGB (uncompressed)
   view.setUint32(34, pixelArraySize, true);
-  view.setInt32(38, 11811, true);     // biXPelsPerMeter (300 DPI ≈ 11811 ppm)
-  view.setInt32(42, 11811, true);     // biYPelsPerMeter
+  view.setInt32(38, ppm, true);       // biXPelsPerMeter (scaled according to target DPI)
+  view.setInt32(42, ppm, true);       // biYPelsPerMeter
   view.setUint32(46, 2, true);        // biClrUsed (2 colors)
   view.setUint32(50, 0, true);        // biClrImportant
 
@@ -121,7 +123,7 @@ export function canvasTo1BitBmp(canvas: HTMLCanvasElement): Blob {
  * Fully compatible with Windows Photos app, Paint, macOS Preview, Word, and all image viewers.
  * Pixel rows are padded to 4-byte boundaries, pure monochrome 300 DPI pixels.
  */
-export function canvasToStandardBmp(canvas: HTMLCanvasElement): Blob {
+export function canvasToStandardBmp(canvas: HTMLCanvasElement, dpi = 300): Blob {
   const width = canvas.width;
   const height = canvas.height;
   const ctx = canvas.getContext('2d');
@@ -150,6 +152,8 @@ export function canvasToStandardBmp(canvas: HTMLCanvasElement): Blob {
   view.setUint16(8, 0, true);
   view.setUint32(10, offsetToPixelData, true);
 
+  const ppm = Math.round(dpi * 39.3701);
+
   // BITMAPINFOHEADER
   view.setUint32(14, infoHeaderSize, true);
   view.setInt32(18, width, true);
@@ -158,12 +162,13 @@ export function canvasToStandardBmp(canvas: HTMLCanvasElement): Blob {
   view.setUint16(28, 24, true);       // biBitCount = 24 bits per pixel (RGB)
   view.setUint32(30, 0, true);        // BI_RGB (uncompressed)
   view.setUint32(34, pixelArraySize, true);
-  view.setInt32(38, 11811, true);     // biXPelsPerMeter (300 DPI ≈ 11811 ppm)
-  view.setInt32(42, 11811, true);     // biYPelsPerMeter
+  view.setInt32(38, ppm, true);       // biXPelsPerMeter (scaled according to target DPI)
+  view.setInt32(42, ppm, true);       // biYPelsPerMeter
   view.setUint32(46, 0, true);        // biClrUsed
   view.setUint32(50, 0, true);        // biClrImportant
 
   // Pixel Data: BMP stores rows from bottom to top, in BGR order
+  // Preserve full anti-aliasing and smooth glyph edges composited over white substrate
   const uint8 = new Uint8Array(buffer);
   for (let y = 0; y < height; y++) {
     const srcY = height - 1 - y; // flip Y for bottom-up BMP
@@ -176,16 +181,16 @@ export function canvasToStandardBmp(canvas: HTMLCanvasElement): Blob {
       const b = data[srcIdx + 2];
       const a = data[srcIdx + 3];
 
-      // Pure monochrome thresholding:
-      // ink (black = 0,0,0) vs substrate (white = 255,255,255)
-      const lum = (0.299 * r + 0.587 * g + 0.114 * b);
-      const isWhite = a < 128 || lum > 128;
-      const val = isWhite ? 255 : 0;
+      // Alpha composite over pure white background to maintain smooth anti-aliased curves
+      const alpha = a / 255;
+      const rComp = Math.round(r * alpha + 255 * (1 - alpha));
+      const gComp = Math.round(g * alpha + 255 * (1 - alpha));
+      const bComp = Math.round(b * alpha + 255 * (1 - alpha));
 
       const pxOffset = rowOffset + x * 3;
-      uint8[pxOffset] = val;     // Blue
-      uint8[pxOffset + 1] = val; // Green
-      uint8[pxOffset + 2] = val; // Red
+      uint8[pxOffset] = bComp;     // Blue (BGR)
+      uint8[pxOffset + 1] = gComp; // Green
+      uint8[pxOffset + 2] = rComp; // Red
     }
   }
 
