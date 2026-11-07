@@ -450,17 +450,65 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
     }
   }, [template.travel, currentBandMm, currentLengthMm]);
 
-  // Set Printhead Band (12.5mm or 12.7mm)
-  const handleSetBandMm = (band: number) => {
-    updateTemplateWithHistory(prev => ({
-      ...prev,
-      customBandMm: band
-    }));
+  // Aspect Ratio Lock for Canvas Resizing (default ON for proportional scaling)
+  const [lockAspectRatio, setLockAspectRatio] = useState<boolean>(true);
+
+  // Active Printhead Swath in Pixels (e.g. 148px for 12.5mm, 150px for 12.7mm, 295px for 25.4mm dual head)
+  const currentBandPx = Math.round((currentBandMm * 300) / 25.4);
+
+  // Local input state for smooth typing without cursor jumping or mid-stroke recalculation
+  const [swathInputVal, setSwathInputVal] = useState<string>(() => String(currentBandPx));
+  const [lenInputVal, setLenInputVal] = useState<string>(() => String(currentLengthMm));
+
+  useEffect(() => {
+    setSwathInputVal(String(currentBandPx));
+  }, [currentBandPx]);
+
+  useEffect(() => {
+    setLenInputVal(String(currentLengthMm));
+  }, [currentLengthMm]);
+
+  // Set Printhead Band (mm) with proportional aspect ratio resizing when locked
+  const handleSetBandMm = (band: number, maintainRatio: boolean = lockAspectRatio) => {
+    const val = Math.max(5, Math.min(150, Math.round(band * 10) / 10));
+    const oldBand = currentBandMm || 12.5;
+    const ratio = val / oldBand;
+
+    updateTemplateWithHistory(prev => {
+      if (maintainRatio && Math.abs(ratio - 1) > 0.01) {
+        const newLen = Math.max(10, Math.round(currentLengthMm * ratio * 10) / 10);
+        const updatedObjects = (prev.objects || []).map(obj => ({
+          ...obj,
+          x: Math.round(obj.x * ratio * 10) / 10,
+          y: Math.round(obj.y * ratio * 10) / 10,
+          width: Math.max(1, Math.round(obj.width * ratio * 10) / 10),
+          height: Math.max(0.5, Math.round(obj.height * ratio * 10) / 10),
+          fontSizeMm: obj.fontSizeMm ? Math.max(1, Math.round(obj.fontSizeMm * ratio * 10) / 10) : obj.fontSizeMm
+        }));
+        return {
+          ...prev,
+          customBandMm: val,
+          customLengthMm: newLen,
+          objects: updatedObjects
+        };
+      }
+      return {
+        ...prev,
+        customBandMm: val
+      };
+    });
   };
 
-  // Set Endless / Custom Travel Length (e.g. 80, 100, 150 mm)
+  // Set Swath directly by pixel count (e.g. 148, 150, 295, 300)
+  const handleSetBandPx = (px: number, maintainRatio: boolean = lockAspectRatio) => {
+    const mm = Number(((px * 25.4) / 300).toFixed(1));
+    handleSetBandMm(mm, maintainRatio);
+  };
+
+  // Set Endless / Custom Travel Length (e.g. 20, 25, 35, 45, 55 mm)
+  // Travel length defines pouch print window; swath remains locked to machine sensor
   const handleSetLengthMm = (len: number) => {
-    const val = Math.max(10, Math.round(len * 10) / 10);
+    const val = Math.max(10, Math.min(500, Math.round(len * 10) / 10));
     updateTemplateWithHistory(prev => ({
       ...prev,
       customLengthMm: val
@@ -1356,62 +1404,144 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
           </div>
         </div>
 
-        {/* Center: Printhead Band Selector & Travel Length */}
+        {/* Center: Dynamic Canvas Resizing Section (Swath Nozzles & Conveyor Travel Length) */}
         <div className="hidden lg:flex items-center gap-2 shrink-0">
-          <div className="flex items-center gap-1 bg-zinc-950 border border-zinc-800 rounded-lg p-0.5 h-8">
-            <span className="text-[10px] text-zinc-500 px-1 font-medium">Head:</span>
-            {[
-              { mm: 12.5, label: '12.5mm' },
-              { mm: 12.7, label: '12.7mm' }
-            ].map(b => (
-              <button
-                key={b.mm}
-                type="button"
-                onClick={() => handleSetBandMm(b.mm)}
-                className={`h-7 px-2 rounded text-[10px] font-mono font-bold transition-colors cursor-pointer ${
-                  Math.abs(currentBandMm - b.mm) < 0.15 ? 'bg-amber-500 text-black shadow-xs' : 'text-zinc-400 hover:text-white'
-                }`}
-                title={`Head swath width: ${b.label}`}
-              >
-                {b.label}
-              </button>
-            ))}
-          </div>
+          <div className="flex items-center gap-1.5 bg-zinc-950 border border-zinc-800 rounded-lg p-0.5 h-8">
+            {/* Swath Axis (Width in Vertical, Height in Horizontal) */}
+            <div className="flex items-center gap-1 pl-1">
+              <span className="text-[10px] text-zinc-400 font-medium whitespace-nowrap" title={template.travel === 'Vertical' ? 'Printhead swath width (nozzles)' : 'Printhead swath height (nozzles)'}>
+                {template.travel === 'Vertical' ? 'W (Swath):' : 'H (Swath):'}
+              </span>
+              <input
+                id="designer-swath-px-input"
+                name="designerSwathPx"
+                aria-label="Printhead swath width in pixels"
+                type="number"
+                step="1"
+                min="50"
+                max="1200"
+                value={swathInputVal}
+                onChange={e => setSwathInputVal(e.target.value)}
+                onBlur={() => {
+                  const val = parseInt(swathInputVal);
+                  if (!isNaN(val) && val >= 50 && val <= 1200) {
+                    handleSetBandPx(val);
+                  } else {
+                    setSwathInputVal(String(currentBandPx));
+                  }
+                }}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    const val = parseInt(swathInputVal);
+                    if (!isNaN(val) && val >= 50 && val <= 1200) {
+                      handleSetBandPx(val);
+                    } else {
+                      setSwathInputVal(String(currentBandPx));
+                    }
+                  }
+                }}
+                className="w-12 bg-zinc-900 border border-zinc-700 rounded h-7 px-1 font-mono text-[11px] font-bold text-amber-400 text-center focus:outline-hidden"
+                title={`Swath pixel resolution (Default 148px for 12.5mm, 295px for 25.4mm dual-head)`}
+              />
+              <span className="text-[10px] text-zinc-500 font-mono">px</span>
 
-          <div className="flex items-center gap-1 bg-zinc-950 border border-zinc-800 rounded-lg p-0.5 h-8">
-            <label htmlFor="designer-length-input" className="text-[10px] text-zinc-500 px-1 font-medium cursor-pointer">Len:</label>
-            <input
-              id="designer-length-input"
-              name="designerLengthMm"
-              aria-label="Travel length in millimeters"
-              type="number"
-              step="1"
-              min="10"
-              max="1000"
-              value={currentLengthMm}
-              onChange={e => handleSetLengthMm(parseFloat(e.target.value) || 35)}
-              className="w-10 bg-zinc-900 border border-zinc-700 rounded h-7 px-1 font-mono text-[11px] font-bold text-amber-400 text-center focus:outline-hidden"
-              title="Travel length in mm"
-            />
-            <span className="text-[10px] text-zinc-500 font-mono pr-1">mm</span>
-
-            <div className="flex items-center gap-0.5 pl-1 border-l border-zinc-800">
-              {[20, 25, 35, 45, 55].map(len => (
-                <button
-                  key={len}
-                  type="button"
-                  onClick={() => handleSetLengthMm(len)}
-                  className={`h-7 px-1.5 rounded text-[10px] font-mono transition-colors cursor-pointer ${
-                    currentLengthMm === len ? 'bg-amber-500/30 text-amber-300 font-bold border border-amber-500/50' : 'text-zinc-400 hover:text-white'
-                  }`}
-                  title={`Preset: ${len}mm`}
-                >
-                  {len}
-                </button>
-              ))}
+              {/* Quick Swath Presets */}
+              <div className="flex items-center gap-0.5 pl-0.5">
+                {[
+                  { px: 148, mm: 12.5, label: '148' },
+                  { px: 150, mm: 12.7, label: '150' },
+                  { px: 295, mm: 25.0, label: '295' }
+                ].map(p => (
+                  <button
+                    key={p.px}
+                    type="button"
+                    onClick={() => handleSetBandPx(p.px)}
+                    className={`h-7 px-1.5 rounded text-[10px] font-mono transition-colors cursor-pointer ${
+                      Math.abs(currentBandMm - p.mm) < 0.1
+                        ? 'bg-amber-500 text-black font-bold shadow-xs'
+                        : 'text-zinc-400 hover:text-white'
+                    }`}
+                    title={`${p.px}px swath (~${p.mm}mm)`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            <span className="text-[10px] font-mono text-zinc-400 bg-zinc-900 px-1.5 h-7 flex items-center rounded border border-zinc-800" title="1:1 Pixel Dimensions">
+            {/* Proportional Aspect Ratio Lock Toggle */}
+            <button
+              type="button"
+              onClick={() => setLockAspectRatio(!lockAspectRatio)}
+              className={`h-7 px-1.5 rounded border transition-colors flex items-center gap-1 cursor-pointer ${
+                lockAspectRatio
+                  ? 'bg-amber-500/20 border-amber-500/50 text-amber-300'
+                  : 'bg-zinc-900 border-zinc-800 text-zinc-500 hover:text-zinc-300'
+              }`}
+              title={lockAspectRatio ? 'Aspect Ratio Locked: Swath resize scales length & objects proportionally' : 'Aspect Ratio Unlocked: Swath resize independent'}
+            >
+              {lockAspectRatio ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
+            </button>
+
+            {/* Travel Length Axis (Height in Vertical, Width in Horizontal) */}
+            <div className="flex items-center gap-1 pl-1 border-l border-zinc-800">
+              <label htmlFor="designer-length-input" className="text-[10px] text-zinc-400 font-medium cursor-pointer whitespace-nowrap" title={template.travel === 'Vertical' ? 'Conveyor travel length (height)' : 'Conveyor travel length (width)'}>
+                {template.travel === 'Vertical' ? 'H (Len):' : 'W (Len):'}
+              </label>
+              <input
+                id="designer-length-input"
+                name="designerLengthMm"
+                aria-label="Travel length in millimeters"
+                type="number"
+                step="1"
+                min="10"
+                max="1000"
+                value={lenInputVal}
+                onChange={e => setLenInputVal(e.target.value)}
+                onBlur={() => {
+                  const val = parseFloat(lenInputVal);
+                  if (!isNaN(val) && val >= 10 && val <= 1000) {
+                    handleSetLengthMm(val);
+                  } else {
+                    setLenInputVal(String(currentLengthMm));
+                  }
+                }}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    const val = parseFloat(lenInputVal);
+                    if (!isNaN(val) && val >= 10 && val <= 1000) {
+                      handleSetLengthMm(val);
+                    } else {
+                      setLenInputVal(String(currentLengthMm));
+                    }
+                  }
+                }}
+                className="w-10 bg-zinc-900 border border-zinc-700 rounded h-7 px-1 font-mono text-[11px] font-bold text-amber-400 text-center focus:outline-hidden"
+                title="Conveyor travel length in mm"
+              />
+              <span className="text-[10px] text-zinc-500 font-mono pr-0.5">mm</span>
+
+              <div className="flex items-center gap-0.5 pl-0.5 border-l border-zinc-800">
+                {[20, 25, 35, 45, 55].map(len => (
+                  <button
+                    key={len}
+                    type="button"
+                    onClick={() => handleSetLengthMm(len)}
+                    className={`h-7 px-1.5 rounded text-[10px] font-mono transition-colors cursor-pointer ${
+                      Math.abs(currentLengthMm - len) < 0.5
+                        ? 'bg-amber-500/30 text-amber-300 font-bold border border-amber-500/50'
+                        : 'text-zinc-400 hover:text-white'
+                    }`}
+                    title={`Preset: ${len}mm`}
+                  >
+                    {len}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 1:1 Pixel Dimensions Badge */}
+            <span className="text-[10px] font-mono text-zinc-400 bg-zinc-900 px-1.5 h-7 flex items-center rounded border border-zinc-800" title="1:1 Physical & Pixel Dimensions">
               {Math.round(canvasWidthMm * (300 / 25.4))}×{Math.round(canvasHeightMm * (300 / 25.4))}px
             </span>
 
@@ -3656,40 +3786,100 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                 </label>
               </div>
 
-              {/* Printhead Band & Endless Travel Length Controls */}
+              {/* Dynamic Canvas Resizing & Swath Geometry Section */}
               <div className="space-y-3 pt-3 border-t border-zinc-800">
-                <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider block">
-                  Printhead & Substrate Length
-                </span>
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider block">
+                    Canvas Resizing & Swath
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setLockAspectRatio(!lockAspectRatio)}
+                    className={`px-2 py-0.5 rounded text-[10px] font-mono border transition-colors flex items-center gap-1 cursor-pointer ${
+                      lockAspectRatio
+                        ? 'bg-amber-500/20 border-amber-500/50 text-amber-300'
+                        : 'bg-zinc-950 border-zinc-800 text-zinc-500 hover:text-zinc-300'
+                    }`}
+                    title={lockAspectRatio ? 'Aspect Ratio Locked (proportional scaling)' : 'Aspect Ratio Unlocked (free scaling)'}
+                  >
+                    {lockAspectRatio ? <Lock className="w-2.5 h-2.5" /> : <Unlock className="w-2.5 h-2.5" />}
+                    <span>{lockAspectRatio ? 'Ratio Locked' : 'Free Resize'}</span>
+                  </button>
+                </div>
 
-                {/* Printhead Band: 12.5mm vs 12.7mm */}
+                {/* Printhead Swath (Width in Vertical, Height in Horizontal) */}
                 <div>
-                  <label className="text-[10px] text-zinc-500 block mb-1">Printhead Band (Locked Axis)</label>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    <button
-                      onClick={() => handleSetBandMm(12.5)}
-                      className={`py-1.5 px-2 rounded text-xs font-mono transition-colors ${
-                        currentBandMm === 12.5 ? 'bg-amber-500 text-black font-bold shadow-xs' : 'bg-zinc-950 border border-zinc-800 text-zinc-400 hover:text-white'
-                      }`}
-                    >
-                      12.5 mm
-                    </button>
-                    <button
-                      onClick={() => handleSetBandMm(12.7)}
-                      className={`py-1.5 px-2 rounded text-xs font-mono transition-colors ${
-                        currentBandMm === 12.7 ? 'bg-amber-500 text-black font-bold shadow-xs' : 'bg-zinc-950 border border-zinc-800 text-zinc-400 hover:text-white'
-                      }`}
-                    >
-                      12.7 mm (½")
-                    </button>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[10px] text-zinc-500 font-medium">
+                      {template.travel === 'Vertical' ? 'Swath Width (Nozzles)' : 'Swath Height (Nozzles)'}
+                    </label>
+                    <span className="text-[10px] text-amber-400 font-mono font-bold">
+                      {currentBandPx} px • {currentBandMm} mm
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <input
+                      type="number"
+                      step="1"
+                      min="50"
+                      max="1200"
+                      value={swathInputVal}
+                      onChange={e => setSwathInputVal(e.target.value)}
+                      onBlur={() => {
+                        const val = parseInt(swathInputVal);
+                        if (!isNaN(val) && val >= 50 && val <= 1200) {
+                          handleSetBandPx(val);
+                        } else {
+                          setSwathInputVal(String(currentBandPx));
+                        }
+                      }}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          const val = parseInt(swathInputVal);
+                          if (!isNaN(val) && val >= 50 && val <= 1200) {
+                            handleSetBandPx(val);
+                          } else {
+                            setSwathInputVal(String(currentBandPx));
+                          }
+                        }
+                      }}
+                      className="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-1 font-mono text-zinc-200 text-xs font-bold focus:outline-hidden"
+                      title="Swath pixel width (Default 148px for 12.5mm, 295px for 25.4mm dual-head)"
+                    />
+                    <span className="text-zinc-500 text-xs font-mono">px</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-1">
+                    {[
+                      { px: 148, mm: 12.5, label: '148 px (12.5mm)' },
+                      { px: 150, mm: 12.7, label: '150 px (12.7mm)' },
+                      { px: 295, mm: 25.0, label: '295 px (25.4mm)' }
+                    ].map(p => (
+                      <button
+                        key={p.px}
+                        type="button"
+                        onClick={() => handleSetBandPx(p.px)}
+                        className={`py-1 rounded text-[9px] font-mono transition-colors cursor-pointer ${
+                          Math.abs(currentBandMm - p.mm) < 0.1
+                            ? 'bg-amber-500 text-black font-bold shadow-xs'
+                            : 'bg-zinc-950 border border-zinc-800 text-zinc-400 hover:text-white'
+                        }`}
+                        title={`${p.px} pixels (~${p.mm}mm)`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
                   </div>
                 </div>
 
-                {/* Unrestricted / Endless Length */}
+                {/* Conveyor Travel Length (Height in Vertical, Width in Horizontal) */}
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <label className="text-[10px] text-zinc-500">Travel Length (Unrestricted)</label>
-                    <span className="text-[10px] text-emerald-400 font-mono">Endless Mode</span>
+                    <label className="text-[10px] text-zinc-500 font-medium">
+                      {template.travel === 'Vertical' ? 'Travel Length (Height)' : 'Travel Length (Width)'}
+                    </label>
+                    <span className="text-[10px] text-emerald-400 font-mono">
+                      {Math.round(currentLengthMm * (300 / 25.4))} px
+                    </span>
                   </div>
                   <div className="flex items-center gap-2">
                     <input
@@ -3697,25 +3887,55 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                       step="1"
                       min="10"
                       max="1000"
-                      value={currentLengthMm}
-                      onChange={e => handleSetLengthMm(parseFloat(e.target.value) || 35)}
+                      value={lenInputVal}
+                      onChange={e => setLenInputVal(e.target.value)}
+                      onBlur={() => {
+                        const val = parseFloat(lenInputVal);
+                        if (!isNaN(val) && val >= 10 && val <= 1000) {
+                          handleSetLengthMm(val);
+                        } else {
+                          setLenInputVal(String(currentLengthMm));
+                        }
+                      }}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          const val = parseFloat(lenInputVal);
+                          if (!isNaN(val) && val >= 10 && val <= 1000) {
+                            handleSetLengthMm(val);
+                          } else {
+                            setLenInputVal(String(currentLengthMm));
+                          }
+                        }
+                      }}
                       className="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-1 font-mono text-zinc-200 text-xs font-bold focus:outline-hidden"
                     />
                     <span className="text-zinc-500 text-xs font-mono">mm</span>
                   </div>
-                  <div className="grid grid-cols-4 gap-1 mt-1.5">
-                    {[35, 45, 80, 100].map(len => (
+                  <div className="grid grid-cols-5 gap-1 mt-1.5">
+                    {[20, 25, 35, 45, 55].map(len => (
                       <button
                         key={len}
+                        type="button"
                         onClick={() => handleSetLengthMm(len)}
-                        className={`py-1 rounded text-[10px] font-mono transition-colors ${
-                          currentLengthMm === len ? 'bg-amber-500/30 text-amber-300 font-bold border border-amber-500/50' : 'bg-zinc-950 border border-zinc-800 text-zinc-400 hover:text-white'
+                        className={`py-1 rounded text-[10px] font-mono transition-colors cursor-pointer ${
+                          Math.abs(currentLengthMm - len) < 0.5
+                            ? 'bg-amber-500/30 text-amber-300 font-bold border border-amber-500/50'
+                            : 'bg-zinc-950 border border-zinc-800 text-zinc-400 hover:text-white'
                         }`}
+                        title={`${len}mm preset`}
                       >
                         {len}mm
                       </button>
                     ))}
                   </div>
+                </div>
+
+                {/* Live Resolution & Geometry Summary */}
+                <div className="p-2 rounded bg-zinc-950 border border-zinc-800 flex items-center justify-between text-[10px] font-mono text-zinc-400">
+                  <span>Canvas Resolution:</span>
+                  <span className="text-amber-400 font-bold">
+                    {Math.round(canvasWidthMm * (300 / 25.4))}×{Math.round(canvasHeightMm * (300 / 25.4))} px
+                  </span>
                 </div>
               </div>
             </div>

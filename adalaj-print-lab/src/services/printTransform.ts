@@ -421,21 +421,30 @@ function renderSingleObject(
   const w = obj.width * dpmm;
   const h = obj.height * dpmm;
 
+  const isTextLike = obj.type === 'text' || obj.type === 'field';
+  const alignPivotX = obj.alignment === 'center' ? (w / 2) : obj.alignment === 'right' ? w : 0;
+  const alignPivotY = h / 2;
+  const originPivotX = isTextLike ? alignPivotX : (w / 2);
+  const originPivotY = h / 2;
+
+  const scaleX = (obj.mirrorX ? -1 : 1) * ((obj.horizontalStretchPercent || 100) / 100);
+  const scaleY = (obj.mirrorY ? -1 : 1) * ((obj.verticalStretchPercent || 100) / 100);
+
   ctx.save();
-  ctx.translate(x + w / 2, y + h / 2);
+  // 1. Anchor to the exact origin pivot matching Pack View DOM's transformOrigin
+  ctx.translate(x + originPivotX, y + originPivotY);
 
   if (obj.rotation !== 0) {
     ctx.rotate((obj.rotation * Math.PI) / 180);
   }
 
-  if (obj.mirrorX || obj.mirrorY) {
-    ctx.scale(obj.mirrorX ? -1 : 1, obj.mirrorY ? -1 : 1);
-  }
+  // 2. Apply scaleX and scaleY at the container level (matching Pack View DOM transform)
+  ctx.scale(scaleX, scaleY);
 
-  ctx.translate(-w / 2, -h / 2);
+  // 3. Move back to top-left of the object
+  ctx.translate(-originPivotX, -originPivotY);
 
-  // Exact 1:1 clipping matching Pack View DOM container's overflow-hidden:
-  // If anything is clipped or cut off in Pack View, it is cut off identically in canvas/raster/preview
+  // 4. Clip to the object's box (which now scales WITH the object, preventing unwanted text cutoff)
   ctx.beginPath();
   ctx.rect(0, 0, w, h);
   ctx.clip();
@@ -480,17 +489,6 @@ function renderSingleObject(
       } catch {}
     }
 
-    // Horizontal & Vertical stretch/condensing anchored to text alignment origin
-    const alignPivotX = obj.alignment === 'center' ? (w / 2) : obj.alignment === 'right' ? w : 0;
-    const alignPivotY = h / 2;
-    const scaleX = (obj.horizontalStretchPercent || 100) / 100;
-    const scaleY = (obj.verticalStretchPercent || 100) / 100;
-    if (scaleX !== 1 || scaleY !== 1) {
-      ctx.translate(alignPivotX, alignPivotY);
-      ctx.scale(scaleX, scaleY);
-      ctx.translate(-alignPivotX, -alignPivotY);
-    }
-
     let textX = 0;
     if (obj.alignment === 'center') {
       ctx.textAlign = 'center';
@@ -507,14 +505,6 @@ function renderSingleObject(
     ctx.fillText(text, textX, h / 2);
   } else {
     // Non-text objects (line, rectangle, rounded_rect, ellipse, image, barcode, qr)
-    const scaleX = (obj.horizontalStretchPercent || 100) / 100;
-    const scaleY = (obj.verticalStretchPercent || 100) / 100;
-    if (scaleX !== 1 || scaleY !== 1) {
-      ctx.translate(w / 2, h / 2);
-      ctx.scale(scaleX, scaleY);
-      ctx.translate(-w / 2, -h / 2);
-    }
-
     if (obj.type === 'line') {
       ctx.strokeStyle = '#000000';
       ctx.lineWidth = Math.max(1, (obj.strokeWidthMm || obj.height || 0.4) * dpmm);
@@ -798,6 +788,12 @@ export function renderTemplateToSvgString(
     const rot = obj.rotation || 0;
     const mirrorX = obj.mirrorX ? -1 : 1;
     const mirrorY = obj.mirrorY ? -1 : 1;
+    const isTextLike = obj.type === 'text' || obj.type === 'field';
+    const alignPivotX = obj.alignment === 'center' ? (w / 2) : obj.alignment === 'right' ? w : 0;
+    const alignPivotY = h / 2;
+    const originPivotX = isTextLike ? alignPivotX : (w / 2);
+    const originPivotY = h / 2;
+
     const scaleX = (obj.horizontalStretchPercent || 100) / 100;
     const scaleY = (obj.verticalStretchPercent || 100) / 100;
     const clipId = `clip_${obj.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
@@ -813,8 +809,6 @@ export function renderTemplateToSvgString(
       }
       if (obj.uppercase) text = text.toUpperCase();
 
-      const alignPivotX = obj.alignment === 'center' ? (w / 2) : obj.alignment === 'right' ? w : 0;
-      const alignPivotY = h / 2;
       const textX = obj.alignment === 'center' ? (w / 2) : obj.alignment === 'right' ? w : 0;
       const textAnchor = obj.alignment === 'center' ? 'middle' : obj.alignment === 'right' ? 'end' : 'start';
       const fontStyle = obj.fontStyle === 'italic' ? 'italic' : 'normal';
@@ -826,16 +820,12 @@ export function renderTemplateToSvgString(
 
       innerContent = `
         ${invertBg}
-        <g transform="translate(${alignPivotX}, ${alignPivotY}) scale(${scaleX}, ${scaleY}) translate(${-alignPivotX}, ${-alignPivotY})">
-          <text x="${textX}" y="${h / 2}" font-family="${escapeXml(obj.fontFamily)}, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, monospace, sans-serif" font-size="${obj.fontSizeMm}mm" font-weight="${fontWeight}" font-style="${fontStyle}" text-anchor="${textAnchor}" dominant-baseline="central" fill="${fill}"${letterSpacing}>${escapeXml(text)}</text>
-        </g>
+        <text x="${textX}" y="${h / 2}" font-family="${escapeXml(obj.fontFamily)}, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, monospace, sans-serif" font-size="${obj.fontSizeMm}mm" font-weight="${fontWeight}" font-style="${fontStyle}" text-anchor="${textAnchor}" dominant-baseline="central" fill="${fill}"${letterSpacing}>${escapeXml(text)}</text>
       `;
     } else if (obj.type === 'line') {
       const strokeW = obj.strokeWidthMm || obj.height || 0.4;
       innerContent = `
-        <g transform="translate(${w / 2}, ${h / 2}) scale(${scaleX}, ${scaleY}) translate(${-w / 2}, ${-h / 2})">
-          <line x1="0" y1="${h / 2}" x2="${w}" y2="${h / 2}" stroke="#000000" stroke-width="${strokeW}" stroke-linecap="square" />
-        </g>
+        <line x1="0" y1="${h / 2}" x2="${w}" y2="${h / 2}" stroke="#000000" stroke-width="${strokeW}" stroke-linecap="square" />
       `;
     } else if (obj.type === 'rectangle') {
       const strokeW = obj.strokeWidthMm || 0.4;
@@ -843,22 +833,16 @@ export function renderTemplateToSvgString(
       const isSolid = obj.fillMode === 'solid';
       const dash = obj.borderStyle === 'dashed' ? ' stroke-dasharray="2, 1"' : '';
       innerContent = `
-        <g transform="translate(${w / 2}, ${h / 2}) scale(${scaleX}, ${scaleY}) translate(${-w / 2}, ${-h / 2})">
-          <rect x="0" y="0" width="${w}" height="${h}" rx="${rx}" ry="${rx}" fill="${isSolid ? '#000000' : 'none'}" stroke="${isSolid ? 'none' : '#000000'}" stroke-width="${strokeW}"${dash} />
-        </g>
+        <rect x="0" y="0" width="${w}" height="${h}" rx="${rx}" ry="${rx}" fill="${isSolid ? '#000000' : 'none'}" stroke="${isSolid ? 'none' : '#000000'}" stroke-width="${strokeW}"${dash} />
       `;
     } else if (obj.type === 'rounded_rect') {
       const rx = Math.min(2, w / 4, h / 4);
       innerContent = `
-        <g transform="translate(${w / 2}, ${h / 2}) scale(${scaleX}, ${scaleY}) translate(${-w / 2}, ${-h / 2})">
-          <rect x="0" y="0" width="${w}" height="${h}" rx="${rx}" ry="${rx}" fill="none" stroke="#000000" stroke-width="0.3" />
-        </g>
+        <rect x="0" y="0" width="${w}" height="${h}" rx="${rx}" ry="${rx}" fill="none" stroke="#000000" stroke-width="0.3" />
       `;
     } else if (obj.type === 'ellipse') {
       innerContent = `
-        <g transform="translate(${w / 2}, ${h / 2}) scale(${scaleX}, ${scaleY}) translate(${-w / 2}, ${-h / 2})">
-          <ellipse cx="${w / 2}" cy="${h / 2}" rx="${w / 2}" ry="${h / 2}" fill="none" stroke="#000000" stroke-width="0.3" />
-        </g>
+        <ellipse cx="${w / 2}" cy="${h / 2}" rx="${w / 2}" ry="${h / 2}" fill="none" stroke="#000000" stroke-width="0.3" />
       `;
     } else if (obj.type === 'barcode' || obj.type === 'qr') {
       let text = obj.content || '';
@@ -876,23 +860,19 @@ export function renderTemplateToSvgString(
       const paths = dMatches.map(m => `<path d="${m[1]}" fill="#000000" />`).join('\n');
 
       innerContent = `
-        <g transform="translate(${w / 2}, ${h / 2}) scale(${scaleX}, ${scaleY}) translate(${-w / 2}, ${-h / 2})">
-          <svg x="0" y="0" width="${w}" height="${h}" viewBox="${vb}" preserveAspectRatio="${obj.type === 'qr' ? 'xMidYMid meet' : 'none'}">
-            ${paths}
-          </svg>
-        </g>
+        <svg x="0" y="0" width="${w}" height="${h}" viewBox="${vb}" preserveAspectRatio="${obj.type === 'qr' ? 'xMidYMid meet' : 'none'}">
+          ${paths}
+        </svg>
       `;
     } else if (obj.type === 'image' && obj.imageDataUrl) {
       innerContent = `
-        <g transform="translate(${w / 2}, ${h / 2}) scale(${scaleX}, ${scaleY}) translate(${-w / 2}, ${-h / 2})">
-          <image href="${escapeXml(obj.imageDataUrl)}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="none" />
-        </g>
+        <image href="${escapeXml(obj.imageDataUrl)}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="none" />
       `;
     }
 
     elementsSvg += `
       <!-- Object: ${escapeXml(obj.id)} (${obj.type}) -->
-      <g transform="translate(${obj.x}, ${obj.y}) translate(${w / 2}, ${h / 2}) rotate(${rot}) scale(${mirrorX}, ${mirrorY}) translate(${-w / 2}, ${-h / 2})">
+      <g transform="translate(${obj.x}, ${obj.y}) translate(${originPivotX}, ${originPivotY}) rotate(${rot}) scale(${mirrorX * scaleX}, ${mirrorY * scaleY}) translate(${-originPivotX}, ${-originPivotY})">
         <defs>
           <clipPath id="${clipId}">
             <rect x="0" y="0" width="${w}" height="${h}" />

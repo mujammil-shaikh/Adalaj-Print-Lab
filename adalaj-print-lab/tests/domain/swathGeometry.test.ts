@@ -97,5 +97,56 @@ describe('Swath Boundary & Safe Margins Calibration (Zero Edge Loss)', () => {
     // HP TIJ 2.5 12.7mm head
     const bandPx12_7 = Math.round(12.7 * dpmm);
     expect(bandPx12_7).toBe(150);
+
+    // Dual-Head 25.0mm / 25.4mm head
+    const bandPx25_0 = Math.round(25.0 * dpmm);
+    expect(bandPx25_0).toBe(295);
+    const bandPx25_4 = Math.round(25.4 * dpmm);
+    expect(bandPx25_4).toBe(300);
+  });
+
+  it('swaps swath and travel length axes correctly between Vertical and Horizontal modes', () => {
+    const dpmm = 300 / 25.4;
+    const swathBandMm = 12.5;
+    const travelLenMm = 45.0;
+
+    // In Vertical Mode: Width is swath (148px), Height is travel length (531px)
+    const verticalWidthPx = Math.round(swathBandMm * dpmm);
+    const verticalHeightPx = Math.round(travelLenMm * dpmm);
+    expect(verticalWidthPx).toBe(148);
+    expect(verticalHeightPx).toBe(531);
+
+    // In Horizontal Mode: Height is swath (148px), Width is travel length (531px)
+    const horizontalWidthPx = Math.round(travelLenMm * dpmm);
+    const horizontalHeightPx = Math.round(swathBandMm * dpmm);
+    expect(horizontalWidthPx).toBe(531);
+    expect(horizontalHeightPx).toBe(148);
+  });
+
+  it('preserves aspect ratio and scales objects proportionally when resizing swath from 148px to 295px', () => {
+    const dpmm = 300 / 25.4;
+    const oldSwathMm = (148 * 25.4) / 300; // ~12.53mm
+    const newSwathMm = (295 * 25.4) / 300; // ~24.97mm
+    const ratio = newSwathMm / oldSwathMm; // ~1.993
+
+    const oldLengthMm = 45.0;
+    const newLengthMm = Math.round(oldLengthMm * ratio * 10) / 10;
+    expect(newLengthMm).toBe(89.7); // Proportionally doubled
+
+    // An object at (1, 2) with width 10, height 4, font 2.4mm
+    const obj = { x: 1.0, y: 2.0, width: 10.0, height: 4.0, fontSizeMm: 2.4 };
+    const scaledObj = {
+      x: Math.round(obj.x * ratio * 10) / 10,
+      y: Math.round(obj.y * ratio * 10) / 10,
+      width: Math.round(obj.width * ratio * 10) / 10,
+      height: Math.round(obj.height * ratio * 10) / 10,
+      fontSizeMm: Math.round(obj.fontSizeMm * ratio * 10) / 10
+    };
+
+    expect(scaledObj.x).toBe(2.0);
+    expect(scaledObj.y).toBe(4.0);
+    expect(scaledObj.width).toBe(19.9);
+    expect(scaledObj.height).toBe(8.0);
+    expect(scaledObj.fontSizeMm).toBe(4.8);
   });
 });
