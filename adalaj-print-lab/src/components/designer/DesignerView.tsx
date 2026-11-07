@@ -47,7 +47,10 @@ import {
   Star,
   RotateCcw,
   ChevronDown,
-  Layers
+  Layers,
+  Link,
+  Unlink,
+  Maximize2
 } from 'lucide-react';
 import type { 
   Template, 
@@ -141,6 +144,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
   const [rasterRotation, setRasterRotation] = useState<0 | 90 | 180 | 270>(0);
   const [rasterMirrorX, setRasterMirrorX] = useState<boolean>(false);
   const [rasterMirrorY, setRasterMirrorY] = useState<boolean>(false);
+  const [isScaleRatioLocked, setIsScaleRatioLocked] = useState<boolean>(false);
   
   // Real-time Auto-Save for in-progress draft persistence
   const autoSaveTimerRef = useRef<any>(null);
@@ -623,6 +627,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       letterSpacingMm: 0.1,
       lineHeightMultiplier: 1.0,
       horizontalStretchPercent: 100,
+      verticalStretchPercent: 100,
       alignment: 'left',
       uppercase: true,
       channel: 'Black',
@@ -656,6 +661,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       letterSpacingMm: 0.1,
       lineHeightMultiplier: 1.0,
       horizontalStretchPercent: 100,
+      verticalStretchPercent: 100,
       alignment: 'left',
       uppercase: true,
       channel: 'Black',
@@ -689,6 +695,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       letterSpacingMm: 0,
       lineHeightMultiplier: 1.0,
       horizontalStretchPercent: 100,
+      verticalStretchPercent: 100,
       alignment: 'left',
       uppercase: false,
       channel: 'Black',
@@ -725,6 +732,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       letterSpacingMm: 0,
       lineHeightMultiplier: 1.0,
       horizontalStretchPercent: 100,
+      verticalStretchPercent: 100,
       alignment: 'left',
       uppercase: false,
       channel: 'Black',
@@ -1859,8 +1867,12 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                         }
 
                         const rot = obj.rotation || 0;
-                        const scaleX = (obj.mirrorX ? -1 : 1) * (obj.horizontalStretchPercent / 100);
-                        const scaleY = obj.mirrorY ? -1 : 1;
+                        const scaleX = (obj.mirrorX ? -1 : 1) * ((obj.horizontalStretchPercent || 100) / 100);
+                        const scaleY = (obj.mirrorY ? -1 : 1) * ((obj.verticalStretchPercent || 100) / 100);
+                        const isTextLike = obj.type === 'text' || obj.type === 'field';
+                        const originX = isTextLike 
+                          ? (obj.alignment === 'center' ? 'center' : obj.alignment === 'right' ? 'right' : 'left')
+                          : 'center';
 
                         return (
                           <div
@@ -1890,7 +1902,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                               fontStyle: obj.fontStyle === 'italic' ? 'italic' : 'normal',
                               letterSpacing: `${(obj.letterSpacingMm || 0) * zoomLevel}px`,
                               transform: `rotate(${rot}deg) scale(${scaleX}, ${scaleY})`,
-                              transformOrigin: `${obj.alignment === 'center' ? 'center' : obj.alignment === 'right' ? 'right' : 'left'} center`,
+                              transformOrigin: `${originX} center`,
                               filter: obj.invert ? 'invert(1)' : 'none',
                               justifyContent: obj.alignment === 'center' ? 'center' : obj.alignment === 'right' ? 'flex-end' : 'flex-start'
                             }}
@@ -3075,43 +3087,20 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                       />
                     </div>
                     <div className="flex-1">
-                      <div className="flex items-center justify-between mb-0.5">
-                        <label className="text-[10px] text-zinc-500">Condense (%)</label>
-                        <span className="text-[9px] font-mono text-amber-400 font-bold">{selectedObject.horizontalStretchPercent}%</span>
-                      </div>
+                      <label className="text-[10px] text-zinc-500 block mb-0.5">Letter Spacing (mm)</label>
                       <input
                         type="number"
-                        min="40"
-                        max="150"
-                        step="5"
-                        value={selectedObject.horizontalStretchPercent}
+                        step="0.05"
+                        min="-0.5"
+                        max="5"
+                        value={selectedObject.letterSpacingMm || 0}
                         onChange={e => {
-                          const val = Math.max(30, Math.min(200, parseInt(e.target.value) || 100));
-                          updateObjectCoalesced(selectedObject.id, { horizontalStretchPercent: val }, 'property_tweak');
+                          const v = parseFloat(e.target.value) || 0;
+                          updateObjectCoalesced(selectedObject.id, { letterSpacingMm: v }, 'property_tweak');
                         }}
                         onBlur={commitPendingSession}
                         className="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-1 font-mono text-zinc-200"
                       />
-                      <div className="flex items-center gap-1 mt-1">
-                        {[75, 80, 85, 90, 100].map(pct => (
-                          <button
-                            key={pct}
-                            type="button"
-                            onClick={() => {
-                              commitPendingSession();
-                              updateTemplateWithHistory(prev => ({
-                                ...prev,
-                                objects: prev.objects.map(o => o.id === selectedObject.id ? { ...o, horizontalStretchPercent: pct } : o)
-                              }));
-                            }}
-                            className={`px-1 py-0.5 rounded text-[8px] font-mono transition-colors ${
-                              selectedObject.horizontalStretchPercent === pct ? 'bg-amber-500 text-black font-bold' : 'bg-zinc-800 text-zinc-400 hover:text-white'
-                            }`}
-                          >
-                            {pct}%
-                          </button>
-                        ))}
-                      </div>
                     </div>
                   </div>
 
@@ -3155,6 +3144,246 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                   </div>
                 </div>
               )}
+
+              {/* Universal Scale, Condense & Elongate Engine (Horizontal & Vertical) */}
+              <div className="space-y-2 pt-3 border-t border-zinc-800">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Maximize2 className="w-3.5 h-3.5 text-amber-400" />
+                    <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider block">
+                      Scale, Condense & Elongate
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setIsScaleRatioLocked(prev => !prev)}
+                      title={isScaleRatioLocked ? "Proportional Aspect Ratio Locked (🔗)" : "Aspect Ratio Unlocked (🔓)"}
+                      className={`px-1.5 py-0.5 rounded text-[10px] border transition-colors cursor-pointer flex items-center gap-1 ${
+                        isScaleRatioLocked 
+                          ? 'bg-amber-500/20 text-amber-400 border-amber-500/40' 
+                          : 'bg-zinc-950 text-zinc-400 border-zinc-800 hover:text-white'
+                      }`}
+                    >
+                      {isScaleRatioLocked ? <Link className="w-3 h-3" /> : <Unlink className="w-3 h-3" />}
+                      <span className="text-[9px] font-mono">{isScaleRatioLocked ? 'Locked' : 'Free'}</span>
+                    </button>
+                    {((selectedObject.horizontalStretchPercent && selectedObject.horizontalStretchPercent !== 100) || (selectedObject.verticalStretchPercent && selectedObject.verticalStretchPercent !== 100)) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          commitPendingSession();
+                          updateObjectCoalesced(selectedObject.id, { 
+                            horizontalStretchPercent: 100,
+                            verticalStretchPercent: 100
+                          }, 'property_tweak');
+                          commitPendingSession();
+                        }}
+                        className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 transition-colors cursor-pointer"
+                        title="Reset both to 100% (1:1)"
+                      >
+                        Reset 1:1
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 space-y-3">
+                  {/* Horizontal Condense / Expand (X) */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1">
+                        <span className="text-[10px] font-bold text-zinc-300">Horizontal (X)</span>
+                        <span className={`text-[9px] font-mono px-1 py-0.2 rounded ${
+                          (selectedObject.horizontalStretchPercent || 100) < 100 
+                            ? 'bg-sky-950 text-sky-400 border border-sky-800/60' 
+                            : (selectedObject.horizontalStretchPercent || 100) > 100 
+                            ? 'bg-amber-950 text-amber-400 border border-amber-800/60'
+                            : 'text-zinc-500'
+                        }`}>
+                          {(selectedObject.horizontalStretchPercent || 100) < 100 
+                            ? 'Condensed' 
+                            : (selectedObject.horizontalStretchPercent || 100) > 100 
+                            ? 'Expanded' 
+                            : 'Normal 1:1'}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          min="30"
+                          max="400"
+                          step="1"
+                          value={selectedObject.horizontalStretchPercent || 100}
+                          onChange={e => {
+                            const val = Math.max(30, Math.min(400, parseInt(e.target.value) || 100));
+                            if (isScaleRatioLocked) {
+                              updateObjectCoalesced(selectedObject.id, { 
+                                horizontalStretchPercent: val,
+                                verticalStretchPercent: val 
+                              }, 'property_tweak');
+                            } else {
+                              updateObjectCoalesced(selectedObject.id, { horizontalStretchPercent: val }, 'property_tweak');
+                            }
+                          }}
+                          onBlur={commitPendingSession}
+                          className="w-14 bg-zinc-900 border border-zinc-700 rounded px-1.5 py-0.5 text-center font-mono text-xs text-amber-400 focus:outline-hidden"
+                        />
+                        <span className="text-[10px] font-mono text-zinc-500">%</span>
+                      </div>
+                    </div>
+
+                    {/* Horizontal Slider (50% to 400%) */}
+                    <input
+                      type="range"
+                      min="50"
+                      max="400"
+                      step="1"
+                      value={selectedObject.horizontalStretchPercent || 100}
+                      onChange={e => {
+                        const val = parseInt(e.target.value) || 100;
+                        if (isScaleRatioLocked) {
+                          updateObjectCoalesced(selectedObject.id, { 
+                            horizontalStretchPercent: val,
+                            verticalStretchPercent: val 
+                          }, 'property_tweak');
+                        } else {
+                          updateObjectCoalesced(selectedObject.id, { horizontalStretchPercent: val }, 'property_tweak');
+                        }
+                      }}
+                      onMouseUp={commitPendingSession}
+                      onTouchEnd={commitPendingSession}
+                      className="w-full accent-amber-500 cursor-pointer h-1.5 bg-zinc-800 rounded-lg"
+                    />
+
+                    {/* Horizontal Presets */}
+                    <div className="grid grid-cols-8 gap-0.5 pt-0.5">
+                      {[50, 75, 90, 100, 125, 150, 200, 400].map(pct => (
+                        <button
+                          key={pct}
+                          type="button"
+                          onClick={() => {
+                            commitPendingSession();
+                            if (isScaleRatioLocked) {
+                              updateObjectCoalesced(selectedObject.id, { 
+                                horizontalStretchPercent: pct,
+                                verticalStretchPercent: pct 
+                              }, 'property_tweak');
+                            } else {
+                              updateObjectCoalesced(selectedObject.id, { horizontalStretchPercent: pct }, 'property_tweak');
+                            }
+                            commitPendingSession();
+                          }}
+                          className={`py-0.5 rounded text-[8px] font-mono transition-colors text-center cursor-pointer ${
+                            (selectedObject.horizontalStretchPercent || 100) === pct
+                              ? 'bg-amber-500 text-black font-bold'
+                              : 'bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white'
+                          }`}
+                        >
+                          {pct}%
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Vertical Elongate / Condense (Y) */}
+                  <div className="space-y-1.5 pt-2 border-t border-zinc-800/80">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1">
+                        <span className="text-[10px] font-bold text-zinc-300">Vertical (Y)</span>
+                        <span className={`text-[9px] font-mono px-1 py-0.2 rounded ${
+                          (selectedObject.verticalStretchPercent || 100) < 100 
+                            ? 'bg-sky-950 text-sky-400 border border-sky-800/60' 
+                            : (selectedObject.verticalStretchPercent || 100) > 100 
+                            ? 'bg-amber-950 text-amber-400 border border-amber-800/60'
+                            : 'text-zinc-500'
+                        }`}>
+                          {(selectedObject.verticalStretchPercent || 100) < 100 
+                            ? 'Compressed' 
+                            : (selectedObject.verticalStretchPercent || 100) > 100 
+                            ? 'Elongated (Tall)' 
+                            : 'Normal 1:1'}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          min="30"
+                          max="400"
+                          step="1"
+                          value={selectedObject.verticalStretchPercent || 100}
+                          onChange={e => {
+                            const val = Math.max(30, Math.min(400, parseInt(e.target.value) || 100));
+                            if (isScaleRatioLocked) {
+                              updateObjectCoalesced(selectedObject.id, { 
+                                horizontalStretchPercent: val,
+                                verticalStretchPercent: val 
+                              }, 'property_tweak');
+                            } else {
+                              updateObjectCoalesced(selectedObject.id, { verticalStretchPercent: val }, 'property_tweak');
+                            }
+                          }}
+                          onBlur={commitPendingSession}
+                          className="w-14 bg-zinc-900 border border-zinc-700 rounded px-1.5 py-0.5 text-center font-mono text-xs text-amber-400 focus:outline-hidden"
+                        />
+                        <span className="text-[10px] font-mono text-zinc-500">%</span>
+                      </div>
+                    </div>
+
+                    {/* Vertical Slider (50% to 400%) */}
+                    <input
+                      type="range"
+                      min="50"
+                      max="400"
+                      step="1"
+                      value={selectedObject.verticalStretchPercent || 100}
+                      onChange={e => {
+                        const val = parseInt(e.target.value) || 100;
+                        if (isScaleRatioLocked) {
+                          updateObjectCoalesced(selectedObject.id, { 
+                            horizontalStretchPercent: val,
+                            verticalStretchPercent: val 
+                          }, 'property_tweak');
+                        } else {
+                          updateObjectCoalesced(selectedObject.id, { verticalStretchPercent: val }, 'property_tweak');
+                        }
+                      }}
+                      onMouseUp={commitPendingSession}
+                      onTouchEnd={commitPendingSession}
+                      className="w-full accent-amber-500 cursor-pointer h-1.5 bg-zinc-800 rounded-lg"
+                    />
+
+                    {/* Vertical Presets */}
+                    <div className="grid grid-cols-8 gap-0.5 pt-0.5">
+                      {[50, 75, 90, 100, 125, 150, 200, 400].map(pct => (
+                        <button
+                          key={pct}
+                          type="button"
+                          onClick={() => {
+                            commitPendingSession();
+                            if (isScaleRatioLocked) {
+                              updateObjectCoalesced(selectedObject.id, { 
+                                horizontalStretchPercent: pct,
+                                verticalStretchPercent: pct 
+                              }, 'property_tweak');
+                            } else {
+                              updateObjectCoalesced(selectedObject.id, { verticalStretchPercent: pct }, 'property_tweak');
+                            }
+                            commitPendingSession();
+                          }}
+                          className={`py-0.5 rounded text-[8px] font-mono transition-colors text-center cursor-pointer ${
+                            (selectedObject.verticalStretchPercent || 100) === pct
+                              ? 'bg-amber-500 text-black font-bold'
+                              : 'bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-white'
+                          }`}
+                        >
+                          {pct}%
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
 
               {/* Object Rotation, Mirroring & Invert Controls */}
               <div className="space-y-2 pt-3 border-t border-zinc-800">

@@ -238,9 +238,11 @@ export function renderTemplateToCanvas(
     mirrorY?: boolean;
     transform?: Partial<PrintTransform>;
     highlightColor?: string;
+    scaleMultiplier?: number;
   } = {}
 ): HTMLCanvasElement {
-  const dpi = options.dpi || machine.defaultDpi || 300;
+  const mult = Math.max(1, options.scaleMultiplier || 1);
+  const dpi = (options.dpi || machine.defaultDpi || 300) * mult;
   const dpmm = dpi / 25.4;
 
   const bandMm = template.customBandMm || machine.printBandMm || 12.5;
@@ -259,11 +261,11 @@ export function renderTemplateToCanvas(
   }
 
   // Exact 1:1 pixel dimensions (Defaults to 148 px width for 12.5 mm physical TIJ band @ 300 DPI)
-  const defaultBandPx = Math.round(bandMm * dpmm); // 148 px for 12.5 mm @ 300 DPI
+  const defaultBandPx = Math.round(bandMm * dpmm);
   const defaultTravelPx = Math.round(travelLengthMm * dpmm);
 
-  const widthPx = options.targetWidthPx || template.customWidthPx || (template.travel === 'Vertical' ? defaultBandPx : defaultTravelPx);
-  const heightPx = options.targetHeightPx || template.customHeightPx || (template.travel === 'Vertical' ? defaultTravelPx : defaultBandPx);
+  const widthPx = Math.round((options.targetWidthPx || template.customWidthPx || (template.travel === 'Vertical' ? defaultBandPx : defaultTravelPx)) * (options.targetWidthPx ? 1 : mult));
+  const heightPx = Math.round((options.targetHeightPx || template.customHeightPx || (template.travel === 'Vertical' ? defaultTravelPx : defaultBandPx)) * (options.targetHeightPx ? 1 : mult));
 
   // Compute effective dpmm for drawing objects
   // TIJ printer heads have uniform square pixel pitch. effDpmm must align with the physical nozzle swath density (X for vertical, Y for horizontal)
@@ -280,6 +282,13 @@ export function renderTemplateToCanvas(
   docCanvas.height = heightPx;
   const ctx = docCanvas.getContext('2d');
   if (!ctx) return docCanvas;
+
+  // Set high-fidelity geometric precision rendering for razor-sharp lines and curves
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  if ('textRendering' in ctx) {
+    (ctx as any).textRendering = 'geometricPrecision';
+  }
 
   // Background is always pure white
   ctx.fillStyle = '#ffffff';
@@ -444,7 +453,14 @@ function renderSingleObject(
     const fontWeight = obj.fontWeight === 'bold' ? 'bold ' : '';
     ctx.font = `${fontStyle}${fontWeight}${fontSizePx}px ${obj.fontFamily}, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
     ctx.textBaseline = 'middle';
-    ctx.fillStyle = obj.invert ? '#ffffff' : '#000000';
+
+    if (obj.invert) {
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, w, h);
+      ctx.fillStyle = '#ffffff';
+    } else {
+      ctx.fillStyle = '#000000';
+    }
 
     if (obj.letterSpacingMm) {
       const spacingPx = Math.round(obj.letterSpacingMm * dpmm);
@@ -459,13 +475,15 @@ function renderSingleObject(
       } catch {}
     }
 
-    // Horizontal stretch/condensing anchored to text alignment origin
+    // Horizontal & Vertical stretch/condensing anchored to text alignment origin
     const alignPivotX = obj.alignment === 'center' ? (w / 2) : obj.alignment === 'right' ? w : 0;
-    if (obj.horizontalStretchPercent && obj.horizontalStretchPercent !== 100) {
-      const scale = obj.horizontalStretchPercent / 100;
-      ctx.translate(alignPivotX, h / 2);
-      ctx.scale(scale, 1);
-      ctx.translate(-alignPivotX, -h / 2);
+    const alignPivotY = h / 2;
+    const scaleX = (obj.horizontalStretchPercent || 100) / 100;
+    const scaleY = (obj.verticalStretchPercent || 100) / 100;
+    if (scaleX !== 1 || scaleY !== 1) {
+      ctx.translate(alignPivotX, alignPivotY);
+      ctx.scale(scaleX, scaleY);
+      ctx.translate(-alignPivotX, -alignPivotY);
     }
 
     let textX = 0;
@@ -482,14 +500,24 @@ function renderSingleObject(
 
     // Direct 1:1 text rendering identical to Pack View canvas
     ctx.fillText(text, textX, h / 2);
-  } else if (obj.type === 'line') {
-    ctx.strokeStyle = '#000000';
-    ctx.lineWidth = Math.max(1, (obj.strokeWidthMm || obj.height || 0.4) * dpmm);
-    ctx.beginPath();
-    ctx.moveTo(0, h / 2);
-    ctx.lineTo(w, h / 2);
-    ctx.stroke();
-  } else if (obj.type === 'rectangle') {
+  } else {
+    // Non-text objects (line, rectangle, rounded_rect, ellipse, image, barcode, qr)
+    const scaleX = (obj.horizontalStretchPercent || 100) / 100;
+    const scaleY = (obj.verticalStretchPercent || 100) / 100;
+    if (scaleX !== 1 || scaleY !== 1) {
+      ctx.translate(w / 2, h / 2);
+      ctx.scale(scaleX, scaleY);
+      ctx.translate(-w / 2, -h / 2);
+    }
+
+    if (obj.type === 'line') {
+      ctx.strokeStyle = '#000000';
+      ctx.lineWidth = Math.max(1, (obj.strokeWidthMm || obj.height || 0.4) * dpmm);
+      ctx.beginPath();
+      ctx.moveTo(0, h / 2);
+      ctx.lineTo(w, h / 2);
+      ctx.stroke();
+    } else if (obj.type === 'rectangle') {
     ctx.strokeStyle = '#000000';
     ctx.lineWidth = Math.max(1, (obj.strokeWidthMm || 0.4) * dpmm);
     if (obj.borderStyle === 'dashed') {
@@ -577,6 +605,7 @@ function renderSingleObject(
       ctx.fillStyle = '#000000';
       ctx.fillRect(0, 0, w, h);
     }
+  }
   }
 
   ctx.restore();
@@ -705,5 +734,197 @@ export function renderBarcodeSvgString(
       <text x="50" y="18" font-family="monospace" font-size="7" text-anchor="middle" fill="#71717a">${text || 'INVALID CODE'}</text>
     </svg>`;
   }
+}
+
+/**
+ * Escapes characters for safe inclusion in XML / SVG attributes and text nodes
+ */
+function escapeXml(str: string): string {
+  if (!str) return '';
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+/**
+ * Renders an entire LabelTemplate into a pristine, razor-sharp vector SVG string.
+ * Provides infinite resolution, mathematical line precision, clean Bézier curves,
+ * and exact vector barcode/QR codes matching the Pack View design with 0% distortion.
+ */
+export function renderTemplateToSvgString(
+  template: Template,
+  machine: MachineProfile,
+  values: Record<string, string>,
+  options: {
+    widthMm?: number;
+    heightMm?: number;
+    downloadOrientation?: '1to1' | 'rotate90' | 'rotate180' | 'rotate270';
+    contentScale?: number;
+    fitEdgeToEdge?: boolean;
+  } = {}
+): string {
+  const bandMm = template.customBandMm || machine.printBandMm || 12.5;
+  const travelLengthMm = template.customLengthMm || 35.0;
+
+  let docWidthMm: number;
+  let docHeightMm: number;
+
+  if (options.widthMm && options.heightMm) {
+    docWidthMm = options.widthMm;
+    docHeightMm = options.heightMm;
+  } else {
+    docWidthMm = template.travel === 'Vertical' ? bandMm : travelLengthMm;
+    docHeightMm = template.travel === 'Vertical' ? travelLengthMm : bandMm;
+  }
+
+  const orientation = options.downloadOrientation || template.customDownloadOrientation || '1to1';
+  const isRotated90or270 = orientation === 'rotate90' || orientation === 'rotate270';
+  const outWidthMm = isRotated90or270 ? docHeightMm : docWidthMm;
+  const outHeightMm = isRotated90or270 ? docWidthMm : docHeightMm;
+
+  let elementsSvg = '';
+
+  for (const obj of template.objects) {
+    const w = obj.width;
+    const h = obj.height;
+    const rot = obj.rotation || 0;
+    const mirrorX = obj.mirrorX ? -1 : 1;
+    const mirrorY = obj.mirrorY ? -1 : 1;
+    const scaleX = (obj.horizontalStretchPercent || 100) / 100;
+    const scaleY = (obj.verticalStretchPercent || 100) / 100;
+    const clipId = `clip_${obj.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+
+    let innerContent = '';
+
+    if (obj.type === 'text' || obj.type === 'field') {
+      let text = obj.content || '';
+      if (text.includes('{')) {
+        text = text.replace(/\{(\w+)\}/g, (_: string, k: string) => values[k] !== undefined ? values[k] : `{${k}}`);
+      } else if (obj.fieldKey && values[obj.fieldKey]) {
+        text = values[obj.fieldKey];
+      }
+      if (obj.uppercase) text = text.toUpperCase();
+
+      const alignPivotX = obj.alignment === 'center' ? (w / 2) : obj.alignment === 'right' ? w : 0;
+      const alignPivotY = h / 2;
+      const textX = obj.alignment === 'center' ? (w / 2) : obj.alignment === 'right' ? w : 0;
+      const textAnchor = obj.alignment === 'center' ? 'middle' : obj.alignment === 'right' ? 'end' : 'start';
+      const fontStyle = obj.fontStyle === 'italic' ? 'italic' : 'normal';
+      const fontWeight = obj.fontWeight === 'bold' ? 'bold' : 'normal';
+      const letterSpacing = obj.letterSpacingMm ? ` letter-spacing="${obj.letterSpacingMm}mm"` : '';
+      const fill = obj.invert ? '#ffffff' : '#000000';
+
+      const invertBg = obj.invert ? `<rect x="0" y="0" width="${w}" height="${h}" fill="#000000" />` : '';
+
+      innerContent = `
+        ${invertBg}
+        <g transform="translate(${alignPivotX}, ${alignPivotY}) scale(${scaleX}, ${scaleY}) translate(${-alignPivotX}, ${-alignPivotY})">
+          <text x="${textX}" y="${h / 2}" font-family="${escapeXml(obj.fontFamily)}, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, monospace, sans-serif" font-size="${obj.fontSizeMm}mm" font-weight="${fontWeight}" font-style="${fontStyle}" text-anchor="${textAnchor}" dominant-baseline="central" fill="${fill}"${letterSpacing}>${escapeXml(text)}</text>
+        </g>
+      `;
+    } else if (obj.type === 'line') {
+      const strokeW = obj.strokeWidthMm || obj.height || 0.4;
+      innerContent = `
+        <g transform="translate(${w / 2}, ${h / 2}) scale(${scaleX}, ${scaleY}) translate(${-w / 2}, ${-h / 2})">
+          <line x1="0" y1="${h / 2}" x2="${w}" y2="${h / 2}" stroke="#000000" stroke-width="${strokeW}" stroke-linecap="square" />
+        </g>
+      `;
+    } else if (obj.type === 'rectangle') {
+      const strokeW = obj.strokeWidthMm || 0.4;
+      const rx = obj.cornerRadiusMm || 0;
+      const isSolid = obj.fillMode === 'solid';
+      const dash = obj.borderStyle === 'dashed' ? ' stroke-dasharray="2, 1"' : '';
+      innerContent = `
+        <g transform="translate(${w / 2}, ${h / 2}) scale(${scaleX}, ${scaleY}) translate(${-w / 2}, ${-h / 2})">
+          <rect x="0" y="0" width="${w}" height="${h}" rx="${rx}" ry="${rx}" fill="${isSolid ? '#000000' : 'none'}" stroke="${isSolid ? 'none' : '#000000'}" stroke-width="${strokeW}"${dash} />
+        </g>
+      `;
+    } else if (obj.type === 'rounded_rect') {
+      const rx = Math.min(2, w / 4, h / 4);
+      innerContent = `
+        <g transform="translate(${w / 2}, ${h / 2}) scale(${scaleX}, ${scaleY}) translate(${-w / 2}, ${-h / 2})">
+          <rect x="0" y="0" width="${w}" height="${h}" rx="${rx}" ry="${rx}" fill="none" stroke="#000000" stroke-width="0.3" />
+        </g>
+      `;
+    } else if (obj.type === 'ellipse') {
+      innerContent = `
+        <g transform="translate(${w / 2}, ${h / 2}) scale(${scaleX}, ${scaleY}) translate(${-w / 2}, ${-h / 2})">
+          <ellipse cx="${w / 2}" cy="${h / 2}" rx="${w / 2}" ry="${h / 2}" fill="none" stroke="#000000" stroke-width="0.3" />
+        </g>
+      `;
+    } else if (obj.type === 'barcode' || obj.type === 'qr') {
+      let text = obj.content || '';
+      if (text.includes('{')) {
+        text = text.replace(/\{(\w+)\}/g, (_: string, k: string) => values[k] !== undefined ? values[k] : `{${k}}`);
+      } else if (obj.fieldKey && values[obj.fieldKey]) {
+        text = values[obj.fieldKey];
+      }
+      const payload = text.trim() || (obj.type === 'barcode' ? (values.batch || 'ADTP014') : 'https://adalaj.in');
+      const bSvg = renderBarcodeSvgString(obj.type, payload, obj.barcodeFormat === 'EAN13' ? 'EAN13' : 'CODE128');
+      const vbMatch = bSvg.match(/viewBox="([^"]+)"/);
+      const vb = vbMatch ? vbMatch[1] : '0 0 100 100';
+      const dMatches = Array.from(bSvg.matchAll(/d="([^"]+)"/g));
+
+      const paths = dMatches.map(m => `<path d="${m[1]}" fill="#000000" />`).join('\n');
+
+      innerContent = `
+        <g transform="translate(${w / 2}, ${h / 2}) scale(${scaleX}, ${scaleY}) translate(${-w / 2}, ${-h / 2})">
+          <svg x="0" y="0" width="${w}" height="${h}" viewBox="${vb}" preserveAspectRatio="${obj.type === 'qr' ? 'xMidYMid meet' : 'none'}">
+            ${paths}
+          </svg>
+        </g>
+      `;
+    } else if (obj.type === 'image' && obj.imageDataUrl) {
+      innerContent = `
+        <g transform="translate(${w / 2}, ${h / 2}) scale(${scaleX}, ${scaleY}) translate(${-w / 2}, ${-h / 2})">
+          <image href="${escapeXml(obj.imageDataUrl)}" x="0" y="0" width="${w}" height="${h}" preserveAspectRatio="none" />
+        </g>
+      `;
+    }
+
+    elementsSvg += `
+      <!-- Object: ${escapeXml(obj.id)} (${obj.type}) -->
+      <g transform="translate(${obj.x}, ${obj.y}) translate(${w / 2}, ${h / 2}) rotate(${rot}) scale(${mirrorX}, ${mirrorY}) translate(${-w / 2}, ${-h / 2})">
+        <defs>
+          <clipPath id="${clipId}">
+            <rect x="0" y="0" width="${w}" height="${h}" />
+          </clipPath>
+        </defs>
+        <g clip-path="url(#${clipId})">
+          ${innerContent}
+        </g>
+      </g>
+    `;
+  }
+
+  // Content Scale (zoom in/out)
+  let contentScaleTransform = '';
+  if (options.contentScale && options.contentScale !== 1.0) {
+    const s = options.contentScale;
+    contentScaleTransform = ` transform="translate(${docWidthMm / 2}, ${docHeightMm / 2}) scale(${s}) translate(${-docWidthMm / 2}, ${-docHeightMm / 2})"`;
+  }
+
+  // Orientation transform
+  let orientationTransform = '';
+  if (orientation === 'rotate90') {
+    orientationTransform = ` transform="translate(${outWidthMm / 2}, ${outHeightMm / 2}) rotate(90) translate(${-docWidthMm / 2}, ${-docHeightMm / 2})"`;
+  } else if (orientation === 'rotate180') {
+    orientationTransform = ` transform="translate(${outWidthMm / 2}, ${outHeightMm / 2}) rotate(180) translate(${-docWidthMm / 2}, ${-docHeightMm / 2})"`;
+  } else if (orientation === 'rotate270') {
+    orientationTransform = ` transform="translate(${outWidthMm / 2}, ${outHeightMm / 2}) rotate(270) translate(${-docWidthMm / 2}, ${-docHeightMm / 2})"`;
+  }
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${outWidthMm}mm" height="${outHeightMm}mm" viewBox="0 0 ${outWidthMm} ${outHeightMm}" shape-rendering="geometricPrecision" text-rendering="geometricPrecision">
+  <rect width="100%" height="100%" fill="#ffffff" />
+  <g${orientationTransform}>
+    <g${contentScaleTransform}>
+      ${elementsSvg}
+    </g>
+  </g>
+</svg>`;
 }
 

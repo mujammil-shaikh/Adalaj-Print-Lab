@@ -170,7 +170,8 @@ export interface DesignObject {
   fontStyle: 'normal' | 'italic';
   letterSpacingMm: number;
   lineHeightMultiplier: number;
-  horizontalStretchPercent: number; // Condensing: 75% - 100%
+  horizontalStretchPercent: number; // Horizontal Condensing / Expanding: 50% - 400%
+  verticalStretchPercent?: number;  // Vertical Elongation / Compressing: 50% - 400%
   alignment: 'left' | 'center' | 'right';
   uppercase: boolean;
   channel: ColorChannel;

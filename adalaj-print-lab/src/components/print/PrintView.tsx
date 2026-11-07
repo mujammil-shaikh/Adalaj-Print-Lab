@@ -32,7 +32,7 @@ import {
   Unplug
 } from 'lucide-react';
 import type { Batch, BatchAllocation, Template, MachineProfile, PackProfile, Product, SKU, PrintJob, PrintTransform } from '../../types';
-import { renderTemplateToCanvas, canvasTo1BitBmp, canvasToStandardBmp, createExportZip } from '../../services/printTransform';
+import { renderTemplateToCanvas, canvasTo1BitBmp, canvasToStandardBmp, createExportZip, renderTemplateToSvgString } from '../../services/printTransform';
 import { fitObjectsToBand, validateTemplateQuality, type QualityIssue } from '../../services/fitEngine';
 import { buildPassPlan } from '../../services/passPlanner';
 import { hardwareManager, type HardwareTransportType, type HardwareLogEntry } from '../../services/hardwareAdapters';
@@ -211,6 +211,7 @@ export const PrintView: React.FC<PrintViewProps> = ({
   const [exportOrientation, setExportOrientation] = useState<'1to1' | 'rotate90' | 'rotate180' | 'rotate270'>(
     activeTemplate.customDownloadOrientation || '1to1'
   );
+  const [exportQuality, setExportQuality] = useState<'1x' | '2x' | '4x'>('2x');
   const [contentScale, setContentScale] = useState<number>(1.0); // 100% design scale on canvas
   const [isFitEdgeToEdge, setIsFitEdgeToEdge] = useState<boolean>(false);
   const [isRatioLocked, setIsRatioLocked] = useState<boolean>(true);
@@ -428,12 +429,36 @@ export const PrintView: React.FC<PrintViewProps> = ({
   const bmpFileName = `${baseDownloadPrefix}.BMP`;
   const raw1BitFileName = `${baseDownloadPrefix}_1BIT.BMP`;
   const pngFileName = `${baseDownloadPrefix}.PNG`;
+  const svgFileName = `${baseDownloadPrefix}.SVG`;
   const zipFileName = `${baseDownloadPrefix}_PRINT_PACKAGE.ZIP`;
 
   // One-click repair
   const handleRepairAll = () => {
     const res = fitObjectsToBand(activeTemplate, machine, packProfile);
     onUpdateTemplate(res.template);
+  };
+
+  // Crisp Vector SVG Download (Infinite resolution, pure mathematical lines & curves)
+  const handleDownloadSvg = () => {
+    if (values.mrp === '[Needs MRP]') {
+      setExportCompleteMsg('❌ Export blocked: Missing authorized MRP for this pack size.');
+      return;
+    }
+    const svgString = renderTemplateToSvgString(activeTemplate, machine, values, {
+      widthMm: previewWidthMm,
+      heightMm: previewHeightMm,
+      downloadOrientation: exportOrientation,
+      contentScale: contentScale,
+      fitEdgeToEdge: isFitEdgeToEdge
+    });
+    const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = svgFileName;
+    a.click();
+    URL.revokeObjectURL(url);
+    setExportCompleteMsg(`Exported ${svgFileName} (Crisp Vector SVG: 100% mathematical precision & sharp curves)`);
   };
 
   // Standard Windows BMP Download (Exact 1:1 Pixel Match - No forced rotation)
@@ -498,12 +523,13 @@ export const PrintView: React.FC<PrintViewProps> = ({
     setExportCompleteMsg(`Exported ${fileName} (Pure 1-bit monochrome BMP - exact 1:1 match: ${canvas.width}px × ${canvas.height}px, ${exportOrientation === '1to1' ? '0° upright' : exportOrientation})`);
   };
 
-  // Direct High-Resolution Canvas PNG Download
+  // Direct High-Resolution Canvas PNG Download with HD Super-Sampling
   const handleDownloadPng = () => {
     if (values.mrp === '[Needs MRP]') {
       setExportCompleteMsg('❌ Export blocked: Missing authorized MRP for this pack size.');
       return;
     }
+    const mult = exportQuality === '4x' ? 4 : exportQuality === '2x' ? 2 : 1;
     const targetDocW = isRotated90or270 ? exportHeightPx : exportWidthPx;
     const targetDocH = isRotated90or270 ? exportWidthPx : exportHeightPx;
 
@@ -511,19 +537,20 @@ export const PrintView: React.FC<PrintViewProps> = ({
       forDownload: true,
       widthMm: previewWidthMm,
       heightMm: previewHeightMm,
-      targetWidthPx: targetDocW,
-      targetHeightPx: targetDocH,
+      targetWidthPx: targetDocW * mult,
+      targetHeightPx: targetDocH * mult,
       downloadOrientation: exportOrientation,
       contentScale: contentScale,
-      fitEdgeToEdge: isFitEdgeToEdge
+      fitEdgeToEdge: isFitEdgeToEdge,
+      scaleMultiplier: mult
     });
-    const fileName = pngFileName;
+    const fileName = mult > 1 ? `${baseDownloadPrefix}_${exportQuality.toUpperCase()}_HD.PNG` : pngFileName;
     const url = canvas.toDataURL('image/png');
     const a = document.createElement('a');
     a.href = url;
     a.download = fileName;
     a.click();
-    setExportCompleteMsg(`Exported ${fileName} (Direct 1:1 Canvas PNG: ${canvas.width}px × ${canvas.height}px)`);
+    setExportCompleteMsg(`Exported ${fileName} (HD ${mult * 300} DPI Crisp PNG: ${canvas.width}px × ${canvas.height}px)`);
   };
 
   // ZIP Package with INDEX.TXT Download
@@ -570,6 +597,15 @@ export const PrintView: React.FC<PrintViewProps> = ({
       const bmpName = bmpFileName;
       const rawName = raw1BitFileName;
 
+      const svgString = renderTemplateToSvgString(activeTemplate, machine, values, {
+        widthMm: previewWidthMm,
+        heightMm: previewHeightMm,
+        downloadOrientation: exportOrientation,
+        contentScale: contentScale,
+        fitEdgeToEdge: isFitEdgeToEdge
+      });
+      const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+
       const files = [
         {
           filename: bmpName,
@@ -580,6 +616,11 @@ export const PrintView: React.FC<PrintViewProps> = ({
           filename: rawName,
           blob: raw1BitBlob,
           description: `Pass 1 of 1: 1-Bit Raw Controller Binary BMP`
+        },
+        {
+          filename: svgFileName,
+          blob: svgBlob,
+          description: `Pass 1 of 1: Crisp Vector SVG (Infinite Resolution, Sharp Lines & Curves)`
         }
       ];
 
@@ -1235,6 +1276,35 @@ export const PrintView: React.FC<PrintViewProps> = ({
 
               {/* Direct Instant Canvas Download Actions */}
               <div className="flex items-center gap-1.5 ml-auto">
+                {/* HD Quality Toggle */}
+                <div className="flex items-center bg-zinc-900 border border-zinc-800 rounded-lg p-0.5 text-[11px] font-mono">
+                  <span className="text-zinc-500 px-1.5 text-[10px] uppercase font-bold">HD</span>
+                  {(['1x', '2x', '4x'] as const).map(q => (
+                    <button
+                      key={q}
+                      type="button"
+                      onClick={() => setExportQuality(q)}
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition-colors cursor-pointer ${
+                        exportQuality === q
+                          ? 'bg-amber-500 text-black shadow-xs'
+                          : 'text-zinc-400 hover:text-zinc-200'
+                      }`}
+                      title={q === '1x' ? '1x Standard 300 DPI' : q === '2x' ? '2x HD 600 DPI' : '4x Ultra HD 1200 DPI'}
+                    >
+                      {q}
+                    </button>
+                  ))}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleDownloadSvg}
+                  className="h-8 px-2.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 font-bold text-xs border border-emerald-500/40 flex items-center gap-1 transition-colors cursor-pointer shadow-xs"
+                  title="Download clean mathematical vector SVG (Infinite crispness, clean lines & curves)"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Vector SVG</span>
+                </button>
                 <button
                   type="button"
                   onClick={handleDownloadBmp}
@@ -1257,10 +1327,10 @@ export const PrintView: React.FC<PrintViewProps> = ({
                   type="button"
                   onClick={handleDownloadPng}
                   className="h-8 px-2.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 font-bold text-xs flex items-center gap-1 transition-colors cursor-pointer"
-                  title="Download direct high-resolution PNG"
+                  title={`Download high-resolution PNG (${exportQuality.toUpperCase()} ${exportQuality === '4x' ? '1200' : exportQuality === '2x' ? '600' : '300'} DPI)`}
                 >
                   <Download className="w-3.5 h-3.5" />
-                  <span>PNG</span>
+                  <span>PNG ({exportQuality})</span>
                 </button>
               </div>
             </div>
@@ -1595,6 +1665,15 @@ export const PrintView: React.FC<PrintViewProps> = ({
             {/* Export & Actions Footer */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-zinc-800">
               <div className="flex items-center gap-2">
+                <button
+                  onClick={handleDownloadSvg}
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-emerald-950/60 hover:bg-emerald-900/60 text-emerald-300 font-bold text-xs border border-emerald-500/40 shadow-xs transition-colors cursor-pointer"
+                  title="Download clean mathematical vector SVG (Infinite resolution, razor-sharp curves & lines)"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Vector .SVG (Sharp)</span>
+                </button>
+
                 <button
                   onClick={handleDownloadBmp}
                   className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-amber-300 font-bold text-xs border border-zinc-700 shadow-sm transition-colors"
