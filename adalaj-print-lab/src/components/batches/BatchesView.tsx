@@ -995,7 +995,23 @@ export const BatchesView: React.FC<BatchesViewProps> = ({
                 <input
                   type="date"
                   value={editLotDate}
-                  onChange={e => setEditLotDate(e.target.value)}
+                  onChange={e => {
+                    const newDate = e.target.value;
+                    setEditLotDate(newDate);
+                    try {
+                      const cal = parseDateInput(newDate);
+                      const mfdFmt = formatCalendarDateDMY(cal);
+                      const prod = products.find(p => p.id === editProductId);
+                      const bbFmt = formatCalendarDateDMY(calculateBestBeforeDate(cal, prod?.defaultShelfLifeMonths || 12));
+                      setEditAllocations(prev => prev.map(a => ({
+                        ...a,
+                        mfd: mfdFmt,
+                        bestBefore: bbFmt
+                      })));
+                    } catch {
+                      // ignore
+                    }
+                  }}
                   required
                   className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 text-zinc-200 focus:outline-hidden"
                 />
@@ -1060,7 +1076,7 @@ export const BatchesView: React.FC<BatchesViewProps> = ({
                   const expectedPacks = alloc.allocatedKg > 0 ? Math.floor((alloc.allocatedKg * 1000) / grams) : 0;
                   return (
                     <div key={alloc.id || idx} className="p-2.5 rounded-lg bg-zinc-900 border border-zinc-800 grid grid-cols-1 sm:grid-cols-12 gap-2 items-center text-xs">
-                      <div className="sm:col-span-3">
+                      <div className="sm:col-span-2">
                         <label className="text-[10px] text-zinc-400 block mb-0.5">Pack Size</label>
                         <input
                           type="text"
@@ -1078,7 +1094,7 @@ export const BatchesView: React.FC<BatchesViewProps> = ({
                         />
                       </div>
 
-                      <div className="sm:col-span-3">
+                      <div className="sm:col-span-2">
                         <label className="text-[10px] text-zinc-400 block mb-0.5">Allocated (kg)</label>
                         <input
                           type="number"
@@ -1097,7 +1113,7 @@ export const BatchesView: React.FC<BatchesViewProps> = ({
                         />
                       </div>
 
-                      <div className="sm:col-span-3">
+                      <div className="sm:col-span-2">
                         <label className="text-[10px] text-amber-300 font-semibold block mb-0.5">M.R.P. (₹)</label>
                         <input
                           type="number"
@@ -1115,15 +1131,53 @@ export const BatchesView: React.FC<BatchesViewProps> = ({
                         />
                       </div>
 
-                      <div className="sm:col-span-3 flex items-center justify-between gap-1 pt-2 sm:pt-0">
+                      <div className="sm:col-span-2">
+                        <label className="text-[10px] text-zinc-400 block mb-0.5">MFD (DD/MM/YY)</label>
+                        <input
+                          type="text"
+                          value={alloc.mfd || ''}
+                          onChange={e => {
+                            const val = e.target.value;
+                            setEditAllocations(prev => prev.map((a, i) => {
+                              if (i !== idx) return a;
+                              let newBb = a.bestBefore;
+                              try {
+                                const cal = parseDateInput(val);
+                                const prod = products.find(p => p.id === editProductId);
+                                newBb = formatCalendarDateDMY(calculateBestBeforeDate(cal, prod?.defaultShelfLifeMonths || 12));
+                              } catch {
+                                // ignore
+                              }
+                              return { ...a, mfd: val, bestBefore: newBb };
+                            }));
+                          }}
+                          placeholder="DD/MM/YY"
+                          className="w-full bg-zinc-950 border border-zinc-700 focus:border-amber-500 rounded px-2 py-1 font-mono text-amber-300 text-center"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-2">
+                        <label className="text-[10px] text-zinc-400 block mb-0.5">Exp (DD/MM/YY)</label>
+                        <input
+                          type="text"
+                          value={alloc.bestBefore || ''}
+                          onChange={e => {
+                            const val = e.target.value;
+                            setEditAllocations(prev => prev.map((a, i) => i === idx ? { ...a, bestBefore: val } : a));
+                          }}
+                          placeholder="DD/MM/YY"
+                          className="w-full bg-zinc-950 border border-zinc-700 focus:border-amber-500 rounded px-2 py-1 font-mono text-amber-300 text-center"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-2 flex items-center justify-between gap-1 pt-2 sm:pt-0">
                         <div className="text-[10px] font-mono leading-tight">
                           <span className="text-emerald-400 font-bold block">{expectedPacks} pk</span>
-                          <span className="text-zinc-500 text-[9px]">{alloc.mfd}</span>
                         </div>
                         <button
                           type="button"
                           onClick={() => setEditAllocations(prev => prev.filter((_, i) => i !== idx))}
-                          className="p-1 rounded hover:bg-rose-950/50 text-zinc-500 hover:text-rose-400 transition-colors"
+                          className="p-1 rounded hover:bg-rose-950/50 text-zinc-500 hover:text-rose-400 transition-colors cursor-pointer"
                           title="Remove allocation"
                         >
                           <Trash2 className="w-3.5 h-3.5" />

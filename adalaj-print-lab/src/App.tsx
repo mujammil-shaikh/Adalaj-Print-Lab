@@ -46,6 +46,7 @@ import {
   getFactoryProductTemplate
 } from './services/layoutRegistry';
 import { generateNextBatchId, duplicateBatchCommand } from './domain/batchCommands';
+import { parseDateInput, formatCalendarDateDMY, formatCalendarDateISO, calculateBestBeforeDate } from './domain/dates';
 
 // Shell Components
 import { Header } from './components/shell/Header';
@@ -562,10 +563,61 @@ export default function App() {
     await saveUniversalSnapshot();
   };
 
+  const ensureBatchForProduct = (p: Product, currentBatches: Batch[]): Batch => {
+    const existing = currentBatches.find(b => b.productId === p.id);
+    if (existing) return existing;
+    const prefix = p.batchPrefix || p.shortCode || 'AD';
+    const todayCal = parseDateInput(new Date());
+    const todayIso = formatCalendarDateISO(todayCal);
+    const todayDmy = formatCalendarDateDMY(todayCal);
+    const bbDmy = formatCalendarDateDMY(calculateBestBeforeDate(todayCal, p.defaultShelfLifeMonths || 12));
+    const allowedPacks = p.allowedPackSizes || ['100 g', '200 g', '500 g', '1 kg'];
+    const newBatch: Batch = {
+      id: `${prefix}001`,
+      productId: p.id,
+      rawMaterialKg: 50,
+      lotDate: todayIso,
+      status: 'Open',
+      notes: `Active production batch for ${p.name}`,
+      allocations: allowedPacks.map(ps => {
+        const matchedSku = skus.find(s => s.productId === p.id && normalizePackSize(s.packSize) === normalizePackSize(ps));
+        const grams = matchedSku?.netWeightGrams || (ps.includes('kg') ? parseFloat(ps) * 1000 : parseFloat(ps) || 100);
+        const mrp = matchedSku?.mrp || 50;
+        return {
+          id: `alloc_${prefix}001_${normalizePackSize(ps)}`,
+          batchId: `${prefix}001`,
+          skuId: matchedSku?.id || `sku_${p.id}_${normalizePackSize(ps)}`,
+          productId: p.id,
+          packSize: ps,
+          allocatedKg: 10,
+          expectedPacks: Math.floor((10 * 1000) / grams),
+          mfd: todayDmy,
+          bestBefore: bbDmy,
+          mrpSnapshot: mrp,
+          ratePerGmSnapshot: grams > 0 ? mrp / grams : 0.5,
+          templateVersionSnapshot: 1,
+          printStatus: 'Pending',
+          packsPrinted: 0
+        };
+      }),
+      createdAt: new Date().toISOString()
+    };
+    db.batches.put(newBatch);
+    setBatches(prev => [newBatch, ...prev]);
+    return newBatch;
+  };
+
   const handleUpdateBatch = async (updated: Batch) => {
     await db.batches.put(updated);
-    setBatches(prev => prev.map(b => b.id === updated.id ? updated : b));
-    if (activeBatch?.id === updated.id) setActiveBatch(updated);
+    setBatches(prev => {
+      const exists = prev.some(b => b.id === updated.id);
+      if (exists) return prev.map(b => b.id === updated.id ? updated : b);
+      return [updated, ...prev];
+    });
+    if (activeBatch?.id === updated.id || activeProduct?.id === updated.productId || !activeBatch) {
+      setActiveBatch(updated);
+      localStorage.setItem('als_active_batch_id', updated.id);
+    }
     await saveUniversalSnapshot();
   };
 
@@ -854,11 +906,9 @@ export default function App() {
             onSelectProduct={p => {
               setActiveProduct(p);
               if (p) localStorage.setItem('als_active_product_id', p.id);
-              const pBatch = batches.find(b => b.productId === p.id);
-              if (pBatch) {
-                setActiveBatch(pBatch);
-                localStorage.setItem('als_active_batch_id', pBatch.id);
-              }
+              const pBatch = ensureBatchForProduct(p, batches);
+              setActiveBatch(pBatch);
+              localStorage.setItem('als_active_batch_id', pBatch.id);
               const pSku = skus.find(s => s.productId === p.id && s.packSize === activeSku?.packSize) || skus.find(s => s.productId === p.id);
               if (pSku) {
                 setActiveSku(pSku);
@@ -876,6 +926,7 @@ export default function App() {
                 localStorage.setItem('als_active_product_id', p.id);
               }
             }}
+            onUpdateBatch={handleUpdateBatch}
           />
         )}
 
@@ -933,17 +984,15 @@ export default function App() {
             onSelectProduct={p => {
               setActiveProduct(p);
               if (p) localStorage.setItem('als_active_product_id', p.id);
+              const pBatch = ensureBatchForProduct(p, batches);
+              setActiveBatch(pBatch);
+              localStorage.setItem('als_active_batch_id', pBatch.id);
               const pSku = skus.find(s => s.productId === p.id && s.packSize === activeSku?.packSize) || skus.find(s => s.productId === p.id);
               if (pSku) {
                 setActiveSku(pSku);
                 localStorage.setItem('als_active_sku_id', pSku.id);
                 const resolved = resolveLayout(p.id, pSku.packSize, templates, packProfiles);
                 setActiveTemplate(resolved.template);
-              }
-              const pBatch = batches.find(b => b.productId === p.id);
-              if (pBatch) {
-                setActiveBatch(pBatch);
-                localStorage.setItem('als_active_batch_id', pBatch.id);
               }
             }}
             onSelectSku={s => {
@@ -993,6 +1042,7 @@ export default function App() {
                 setActiveTemplate(t);
                 db.templates.put(t);
               }}
+              onUpdateBatch={handleUpdateBatch}
             />
           );
         })()}

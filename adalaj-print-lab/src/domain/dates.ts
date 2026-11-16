@@ -58,6 +58,26 @@ export function formatCalendarDateDMY(date: CalendarDate, twoDigitYear = true): 
   return `${d}/${m}/${y}`;
 }
 
+export function formatCalendarDateISO(date: CalendarDate): string {
+  const d = String(date.day).padStart(2, '0');
+  const m = String(date.month).padStart(2, '0');
+  return `${date.year}-${m}-${d}`;
+}
+
+/**
+ * Extracts a date substring if present in a formatted string like 'MFD: 16/11/26' or 'EXP: 15/11/27'
+ */
+export function extractDateFromText(text: string): string | null {
+  if (!text) return null;
+  // Match DD/MM/YY or DD/MM/YYYY
+  const dmy = text.match(/(\d{1,2}\/\d{1,2}\/\d{2,4})/);
+  if (dmy) return dmy[1];
+  // Match YYYY-MM-DD
+  const iso = text.match(/(\d{4}-\d{2}-\d{2})/);
+  if (iso) return iso[1];
+  return null;
+}
+
 export function daysInMonth(year: number, month: number): number {
   return new Date(year, month, 0).getDate();
 }

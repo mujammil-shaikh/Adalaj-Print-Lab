@@ -39,6 +39,8 @@ import { hardwareManager, type HardwareTransportType, type HardwareLogEntry } fr
 import { resolveLayout } from '../../services/layoutRegistry';
 import { createImmutablePrintJobSnapshot, runPreflightCheck } from '../../domain/printJob';
 import { db, saveUniversalSnapshot } from '../../services/db';
+import { parseDateInput, formatCalendarDateDMY, formatCalendarDateISO, calculateBestBeforeDate } from '../../domain/dates';
+import { normalizePackSize } from '../../services/layoutRegistry';
 
 interface PrintViewProps {
   batches: Batch[];
@@ -55,6 +57,7 @@ interface PrintViewProps {
   onClearReprint?: () => void;
   onMarkPrinted: (batchId: string, allocId: string, count: number) => void;
   onUpdateTemplate: (t: Template) => void;
+  onUpdateBatch?: (b: Batch) => Promise<void> | void;
 }
 
 export const PrintView: React.FC<PrintViewProps> = ({
@@ -71,7 +74,8 @@ export const PrintView: React.FC<PrintViewProps> = ({
   reprintJob,
   onClearReprint,
   onMarkPrinted,
-  onUpdateTemplate
+  onUpdateTemplate,
+  onUpdateBatch
 }) => {
   const [selectedBatchId, setSelectedBatchId] = useState<string>(activeBatch?.id || batches[0]?.id || 'ADTP014');
   const [selectedAllocId, setSelectedAllocId] = useState<string>(initialAllocId || activeBatch?.allocations[0]?.id || '');
@@ -100,6 +104,9 @@ export const PrintView: React.FC<PrintViewProps> = ({
     setHardwareLogs(hardwareManager.getLogs());
     const unsub = hardwareManager.subscribeLogs(() => {
       setHardwareLogs(hardwareManager.getLogs());
+    });
+    hardwareManager.setOnDisconnect(() => {
+      setConnectedDeviceName('');
     });
     return unsub;
   }, []);
@@ -165,12 +172,35 @@ export const PrintView: React.FC<PrintViewProps> = ({
       ? `₹${(effectiveMrp / netGrams).toFixed(2)}`
       : '[Needs Rate]';
 
+    let allocMfd = currentAlloc?.mfd || '';
+    let allocBb = currentAlloc?.bestBefore || '';
+    if (!allocMfd && currentBatch?.lotDate) {
+      try {
+        const cal = parseDateInput(currentBatch.lotDate);
+        allocMfd = formatCalendarDateDMY(cal);
+      } catch {
+        // ignore
+      }
+    }
+    if (!allocMfd) {
+      allocMfd = formatCalendarDateDMY(parseDateInput(new Date()));
+    }
+    if (!allocBb) {
+      try {
+        const cal = parseDateInput(allocMfd);
+        const shelfLife = currentProduct?.defaultShelfLifeMonths || 12;
+        allocBb = formatCalendarDateDMY(calculateBestBeforeDate(cal, shelfLife));
+      } catch {
+        allocBb = '[Needs Expiry]';
+      }
+    }
+
     return {
       mrp: mrpVal,
       batch: currentBatch?.id || '[No Batch]',
       net_wt: currentAlloc?.packSize ? currentAlloc.packSize.toUpperCase() : '[Needs Net Wt]',
-      mfd: currentAlloc?.mfd || '[Needs MFD]',
-      best_before: currentAlloc?.bestBefore || '[Needs Expiry]',
+      mfd: allocMfd,
+      best_before: allocBb,
       rate_per_gm: (currentAlloc?.ratePerGmSnapshot && currentAlloc.ratePerGmSnapshot > 0)
         ? `₹${currentAlloc.ratePerGmSnapshot.toFixed(2)}`
         : rateVal,
@@ -702,10 +732,26 @@ export const PrintView: React.FC<PrintViewProps> = ({
       if (res.success) {
         setConnectedDeviceName(res.deviceName || 'Bluetooth Handheld');
       }
+    } else if (transportType === 'webserial') {
+      const res = await hardwareManager.connectSerial();
+      if (res.success) {
+        setConnectedDeviceName(res.deviceName || 'Serial / Bluetooth COM Port');
+      }
     } else if (transportType === 'network_socket') {
       hardwareManager.setNetworkConfig({ ip: networkIp, port: networkPort });
       setConnectedDeviceName(`${networkIp}:${networkPort}`);
     }
+  };
+
+  const handleDisconnectHardware = async () => {
+    if (transportType === 'webusb') {
+      await hardwareManager.disconnectWebUsb();
+    } else if (transportType === 'bluetooth') {
+      await hardwareManager.disconnectBluetooth();
+    } else if (transportType === 'webserial') {
+      await hardwareManager.disconnectSerial();
+    }
+    setConnectedDeviceName('');
   };
 
   // Direct Hardware Transmit (WebUSB, Bluetooth, Network Socket)
@@ -947,6 +993,97 @@ export const PrintView: React.FC<PrintViewProps> = ({
                   </div>
                 </div>
               )}
+
+              {/* Universal Live Date Control (MFD & Expiry) */}
+              {currentBatch && currentAlloc && (
+                <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800 space-y-2">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="font-bold text-amber-400 uppercase tracking-wider">Print Batch Dates</span>
+                    <span className="text-[10px] text-zinc-500 font-mono">Synced Universally</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <div className="flex items-center justify-between mb-0.5">
+                        <label className="text-[10px] text-zinc-400">MFD (DD/MM/YY)</label>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const todayCal = parseDateInput(new Date());
+                            const todayDmy = formatCalendarDateDMY(todayCal);
+                            const todayIso = formatCalendarDateISO(todayCal);
+                            const shelfLife = currentProduct?.defaultShelfLifeMonths || 12;
+                            const bbDmy = formatCalendarDateDMY(calculateBestBeforeDate(todayCal, shelfLife));
+                            const updatedAllocs = currentBatch.allocations.map(a => 
+                              a.id === currentAlloc.id ? { ...a, mfd: todayDmy, bestBefore: bbDmy } : a
+                            );
+                            const updatedBatch: Batch = {
+                              ...currentBatch,
+                              lotDate: todayIso,
+                              allocations: updatedAllocs
+                            };
+                            await db.batches.put(updatedBatch);
+                            if (onUpdateBatch) await onUpdateBatch(updatedBatch);
+                            await saveUniversalSnapshot();
+                          }}
+                          className="text-[9px] text-amber-300 hover:text-amber-200 underline cursor-pointer"
+                        >
+                          Today
+                        </button>
+                      </div>
+                      <input
+                        type="text"
+                        value={currentAlloc.mfd || ''}
+                        onChange={async e => {
+                          const val = e.target.value;
+                          let newBb = currentAlloc.bestBefore;
+                          let newIso = currentBatch.lotDate;
+                          try {
+                            const cal = parseDateInput(val);
+                            newIso = formatCalendarDateISO(cal);
+                            const shelfLife = currentProduct?.defaultShelfLifeMonths || 12;
+                            newBb = formatCalendarDateDMY(calculateBestBeforeDate(cal, shelfLife));
+                          } catch {
+                            // ignore
+                          }
+                          const updatedAllocs = currentBatch.allocations.map(a => 
+                            a.id === currentAlloc.id ? { ...a, mfd: val, bestBefore: newBb } : a
+                          );
+                          const updatedBatch: Batch = {
+                            ...currentBatch,
+                            lotDate: newIso,
+                            allocations: updatedAllocs
+                          };
+                          await db.batches.put(updatedBatch);
+                          if (onUpdateBatch) await onUpdateBatch(updatedBatch);
+                          await saveUniversalSnapshot();
+                        }}
+                        className="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 font-mono text-amber-300 text-center text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-zinc-400 block mb-0.5">Expiry Date</label>
+                      <input
+                        type="text"
+                        value={currentAlloc.bestBefore || ''}
+                        onChange={async e => {
+                          const val = e.target.value;
+                          const updatedAllocs = currentBatch.allocations.map(a => 
+                            a.id === currentAlloc.id ? { ...a, bestBefore: val } : a
+                          );
+                          const updatedBatch: Batch = {
+                            ...currentBatch,
+                            allocations: updatedAllocs
+                          };
+                          await db.batches.put(updatedBatch);
+                          if (onUpdateBatch) await onUpdateBatch(updatedBatch);
+                          await saveUniversalSnapshot();
+                        }}
+                        className="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 font-mono text-amber-300 text-center text-xs"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -957,10 +1094,10 @@ export const PrintView: React.FC<PrintViewProps> = ({
               Hardware Transport Mode
             </h3>
 
-            <div className="grid grid-cols-2 gap-1.5">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
               <button
                 onClick={() => setTransportType('usb_drive')}
-                className={`p-2 rounded-lg border text-left flex items-center gap-1.5 transition-colors ${
+                className={`p-2 rounded-lg border text-left flex items-center gap-1.5 transition-colors cursor-pointer ${
                   transportType === 'usb_drive' ? 'bg-amber-500 text-black border-amber-400 font-bold' : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-white'
                 }`}
               >
@@ -970,7 +1107,7 @@ export const PrintView: React.FC<PrintViewProps> = ({
 
               <button
                 onClick={() => setTransportType('webusb')}
-                className={`p-2 rounded-lg border text-left flex items-center gap-1.5 transition-colors ${
+                className={`p-2 rounded-lg border text-left flex items-center gap-1.5 transition-colors cursor-pointer ${
                   transportType === 'webusb' ? 'bg-amber-500 text-black border-amber-400 font-bold' : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-white'
                 }`}
               >
@@ -980,7 +1117,7 @@ export const PrintView: React.FC<PrintViewProps> = ({
 
               <button
                 onClick={() => setTransportType('bluetooth')}
-                className={`p-2 rounded-lg border text-left flex items-center gap-1.5 transition-colors ${
+                className={`p-2 rounded-lg border text-left flex items-center gap-1.5 transition-colors cursor-pointer ${
                   transportType === 'bluetooth' ? 'bg-amber-500 text-black border-amber-400 font-bold' : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-white'
                 }`}
               >
@@ -989,8 +1126,19 @@ export const PrintView: React.FC<PrintViewProps> = ({
               </button>
 
               <button
+                onClick={() => setTransportType('webserial')}
+                className={`p-2 rounded-lg border text-left flex items-center gap-1.5 transition-colors cursor-pointer ${
+                  transportType === 'webserial' ? 'bg-amber-500 text-black border-amber-400 font-bold' : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-white'
+                }`}
+                title="Web Serial COM port (Virtual COM / Bluetooth SPP)"
+              >
+                <Terminal className="w-3.5 h-3.5" />
+                <span>Web Serial / COM</span>
+              </button>
+
+              <button
                 onClick={() => setTransportType('network_socket')}
-                className={`p-2 rounded-lg border text-left flex items-center gap-1.5 transition-colors ${
+                className={`p-2 rounded-lg border text-left flex items-center gap-1.5 transition-colors cursor-pointer col-span-2 sm:col-span-1 ${
                   transportType === 'network_socket' ? 'bg-amber-500 text-black border-amber-400 font-bold' : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-white'
                 }`}
               >
@@ -1028,19 +1176,47 @@ export const PrintView: React.FC<PrintViewProps> = ({
               </div>
             )}
 
-            {(transportType === 'webusb' || transportType === 'bluetooth') && (
+            {(transportType === 'webusb' || transportType === 'bluetooth' || transportType === 'webserial') && (
               <div className="p-3 bg-zinc-950 rounded-lg border border-zinc-800 space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-zinc-400 text-[11px]">
-                    Status: <strong className={connectedDeviceName ? 'text-emerald-400' : 'text-amber-400'}>{connectedDeviceName || 'Disconnected'}</strong>
-                  </span>
-                  <button
-                    onClick={handleConnectHardware}
-                    className="px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-amber-300 font-semibold border border-zinc-700"
-                  >
-                    {connectedDeviceName ? 'Reconnect' : 'Connect Device'}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <span className={`w-2 h-2 rounded-full ${connectedDeviceName ? 'bg-emerald-400 animate-pulse' : 'bg-rose-500'}`} />
+                    <span className="text-zinc-400 text-[11px]">
+                      Status: <strong className={connectedDeviceName ? 'text-emerald-400 font-mono font-bold' : 'text-zinc-400 font-mono'}>{connectedDeviceName ? `Connected (${connectedDeviceName})` : 'Disconnected'}</strong>
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {connectedDeviceName ? (
+                      <button
+                        type="button"
+                        onClick={handleDisconnectHardware}
+                        className="px-2.5 py-1 rounded bg-rose-950 hover:bg-rose-900 text-rose-300 font-semibold border border-rose-800 text-xs transition-colors cursor-pointer"
+                        title="Disconnect from hardware device"
+                      >
+                        Disconnect
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleConnectHardware}
+                        className="px-2.5 py-1 rounded bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs transition-colors cursor-pointer shadow-sm"
+                        title="Pair and connect hardware device"
+                      >
+                        Connect Device
+                      </button>
+                    )}
+                  </div>
                 </div>
+                {transportType === 'bluetooth' && (
+                  <p className="text-[10px] text-zinc-500 font-mono">
+                    {connectedDeviceName ? '✓ Handheld Bluetooth paired & GATT server active.' : '💡 Click "Connect Device" to open the browser Bluetooth chooser and pair your printer.'}
+                  </p>
+                )}
+                {transportType === 'webserial' && (
+                  <p className="text-[10px] text-zinc-500 font-mono">
+                    {connectedDeviceName ? '✓ Web Serial virtual COM port connected @ 115200 baud.' : '💡 For Bluetooth printers on Windows with a COM port, or USB serial cables, select the COM port here.'}
+                  </p>
+                )}
               </div>
             )}
 

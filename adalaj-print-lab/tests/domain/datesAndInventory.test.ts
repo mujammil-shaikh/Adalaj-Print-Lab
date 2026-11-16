@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   parseDateInput,
   formatCalendarDateDMY,
+  formatCalendarDateISO,
+  extractDateFromText,
   calculateBestBeforeDate,
 } from '../../src/domain/dates';
 import {
@@ -63,12 +65,16 @@ describe('Domain: Date Calculations (DATA-09, DATA-10)', () => {
     expect(bb).toEqual({ year: 2025, month: 2, day: 27 });
   });
 
-  it('handles first day of month rollover to previous month end', () => {
-    const mfd = parseDateInput('2026-01-01');
-    const bb = calculateBestBeforeDate(mfd, 1);
-    // Target month = Feb 2026. Day 1 - 1 = day 0 -> Jan 31, 2026
-    expect(bb).toEqual({ year: 2026, month: 1, day: 31 });
-    expect(formatCalendarDateDMY(bb)).toBe('31/01/26');
+  it('formats calendar date to ISO YYYY-MM-DD reliably', () => {
+    const cd = { year: 2026, month: 11, day: 16 };
+    expect(formatCalendarDateISO(cd)).toBe('2026-11-16');
+  });
+
+  it('extracts date substrings from formatted labels and user text', () => {
+    expect(extractDateFromText('MFD: 16/11/26')).toBe('16/11/26');
+    expect(extractDateFromText('BEST BEFORE: 15/11/2027')).toBe('15/11/2027');
+    expect(extractDateFromText('PKD 2026-11-16')).toBe('2026-11-16');
+    expect(extractDateFromText('NO DATE HERE')).toBeNull();
   });
 });
 

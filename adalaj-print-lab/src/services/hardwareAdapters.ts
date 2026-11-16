@@ -4,7 +4,7 @@
  * for continuous inkjet (CIJ), thermal inkjet (TIJ), and industrial marking controllers.
  */
 
-export type HardwareTransportType = 'usb_drive' | 'webusb' | 'bluetooth' | 'network_socket';
+export type HardwareTransportType = 'usb_drive' | 'webusb' | 'bluetooth' | 'webserial' | 'network_socket';
 
 // Ambient definitions for WebUSB and Web Bluetooth
 interface USBDevice {
@@ -171,6 +171,11 @@ class HardwareManager {
   }
 
   // --- 2. Web Bluetooth Adapter ---
+  public onDisconnectCallback: (() => void) | null = null;
+  public setOnDisconnect(cb: () => void) {
+    this.onDisconnectCallback = cb;
+  }
+
   public isBluetoothSupported(): boolean {
     return typeof navigator !== 'undefined' && 'bluetooth' in navigator;
   }
@@ -182,40 +187,106 @@ class HardwareManager {
       return { success: false, error: err };
     }
 
+    const BLUETOOTH_PRINTER_SERVICES = [
+      '000018f0-0000-1000-8000-00805f9b34fb', // Standard Printer Service
+      '0000ffe0-0000-1000-8000-00805f9b34fb', // TI CC2540 / HM-10 / TransSerial (Most Common for TIJ/POS)
+      '0000ffe1-0000-1000-8000-00805f9b34fb', // HM-10 alternate
+      '0000fff0-0000-1000-8000-00805f9b34fb', // FFF0 Generic Chinese Printer Service
+      '0000fee7-0000-1000-8000-00805f9b34fb', // Tencent / POS Printer
+      '0000ff00-0000-1000-8000-00805f9b34fb', // FF00 Custom Serial
+      '0000af30-0000-1000-8000-00805f9b34fb', // Paperang / Mini Printer
+      '0000ae30-0000-1000-8000-00805f9b34fb', // Mini Pocket Printer
+      '0000e781-0000-1000-8000-00805f9b34fb', // UART
+      '00001101-0000-1000-8000-00805f9b34fb', // Serial Port Profile (SPP)
+      '00001800-0000-1000-8000-00805f9b34fb', // Generic Access
+      '00001801-0000-1000-8000-00805f9b34fb', // Generic Attribute
+      '0000180a-0000-1000-8000-00805f9b34fb', // Device Information Service
+      '6e400001-b5a3-f393-e0a9-e50e24dcca9e', // Nordic UART Service (standard)
+      'e7810a71-73ae-499d-8c15-faa9aef0c3f2', // Nordic UART Service alternate
+      '49535343-fe7d-4ae5-8fa9-9fafd205e455', // ISSC Service
+      '0003cbbb-0000-1000-8000-008025000000',
+      '2456e1b9-26e2-8f83-e744-f34f01e9d701'
+    ];
+
     try {
       this.addLog('info', 'Scanning for nearby Bluetooth handheld printers...');
-      // Request device with common printer / serial GATT services
       const device = await (navigator as any).bluetooth.requestDevice({
         acceptAllDevices: true,
         optionalServices: [
-          '000018f0-0000-1000-8000-00805f9b34fb', // Standard Serial/Printer
-          '49535343-fe7d-4ae5-8fa9-9fafd205e455', // ISSC Transparent TX/RX
-          'e7810a71-73ae-499d-8c15-faa9aef0c3f2'  // Nordic UART
+          ...BLUETOOTH_PRINTER_SERVICES,
+          0x18f0,
+          0xffe0,
+          0xffe1,
+          0xfff0,
+          0xfee7,
+          0xff00,
+          0x180a,
+          0x1800,
+          0x1801
         ]
       });
 
-      this.addLog('info', `Connecting GATT server to ${device.name || 'Bluetooth Device'}...`);
-      const server = await device.gatt.connect();
-
-      // Attempt to resolve primary write characteristic
-      const services = await server.getPrimaryServices();
-      let writeChar: BluetoothRemoteGATTCharacteristic | null = null;
-
-      for (const service of services) {
-        const characteristics = await service.getCharacteristics();
-        for (const char of characteristics) {
-          if (char.properties.write || char.properties.writeWithoutResponse) {
-            writeChar = char;
-            break;
-          }
-        }
-        if (writeChar) break;
+      const deviceName = device.name || 'Bluetooth Handheld Printer';
+      this.addLog('info', `Paired with ${deviceName}. Connecting GATT server...`);
+      
+      let server: any = null;
+      try {
+        server = await device.gatt.connect();
+      } catch (gattErr: any) {
+        this.addLog('warning', `GATT connection warning: ${gattErr.message}. Attempting device handle retention.`);
       }
 
       this.btDevice = device;
+
+      device.addEventListener('gattserverdisconnected', () => {
+        this.addLog('warning', `Bluetooth device "${deviceName}" was disconnected.`);
+        this.btDevice = null;
+        this.btCharacteristic = null;
+        if (this.onDisconnectCallback) this.onDisconnectCallback();
+      });
+
+      let writeChar: BluetoothRemoteGATTCharacteristic | null = null;
+
+      if (server) {
+        try {
+          const services = await server.getPrimaryServices();
+          for (const service of services) {
+            try {
+              const characteristics = await service.getCharacteristics();
+              for (const char of characteristics) {
+                if (char.properties.write || char.properties.writeWithoutResponse) {
+                  writeChar = char;
+                  this.addLog('info', `Found writable GATT characteristic: ${char.uuid}`);
+                  break;
+                }
+              }
+            } catch {
+              // continue
+            }
+            if (writeChar) break;
+          }
+        } catch {
+          for (const uuid of BLUETOOTH_PRINTER_SERVICES) {
+            try {
+              const service = await server.getPrimaryService(uuid);
+              const characteristics = await service.getCharacteristics();
+              for (const char of characteristics) {
+                if (char.properties.write || char.properties.writeWithoutResponse) {
+                  writeChar = char;
+                  this.addLog('info', `Found writable characteristic on service ${uuid}`);
+                  break;
+                }
+              }
+              if (writeChar) break;
+            } catch {
+              // continue
+            }
+          }
+        }
+      }
+
       this.btCharacteristic = writeChar;
-      const deviceName = device.name || 'Bluetooth Handheld Printer';
-      this.addLog('success', `Bluetooth connected: ${deviceName}. Write characteristic ready.`);
+      this.addLog('success', `✓ Bluetooth connected: ${deviceName}${writeChar ? ' (Ready to Print)' : ' (GATT Paired)'}`);
 
       return { success: true, deviceName };
     } catch (err: any) {
@@ -226,8 +297,46 @@ class HardwareManager {
   }
 
   public async sendViaBluetooth(buffer: ArrayBuffer): Promise<{ success: boolean; bytesWritten: number; error?: string }> {
-    if (!this.btDevice || !this.btDevice.gatt?.connected || !this.btCharacteristic) {
-      const err = 'No Bluetooth printer is currently connected. Click "Connect Bluetooth" first.';
+    if (!this.btDevice || !this.btDevice.gatt?.connected) {
+      const err = 'No Bluetooth printer is currently connected. Click "Connect Device" first.';
+      this.addLog('error', err);
+      return { success: false, bytesWritten: 0, error: err };
+    }
+
+    if (!this.btCharacteristic) {
+      try {
+        const server = this.btDevice.gatt as any;
+        const BLUETOOTH_PRINTER_SERVICES = [
+          '000018f0-0000-1000-8000-00805f9b34fb',
+          '0000ffe0-0000-1000-8000-00805f9b34fb',
+          '0000ffe1-0000-1000-8000-00805f9b34fb',
+          '0000fff0-0000-1000-8000-00805f9b34fb',
+          '0000fee7-0000-1000-8000-00805f9b34fb',
+          '6e400001-b5a3-f393-e0a9-e50e24dcca9e',
+          '49535343-fe7d-4ae5-8fa9-9fafd205e455'
+        ];
+        for (const uuid of BLUETOOTH_PRINTER_SERVICES) {
+          try {
+            const service = await server.getPrimaryService(uuid);
+            const characteristics = await service.getCharacteristics();
+            for (const char of characteristics) {
+              if (char.properties.write || char.properties.writeWithoutResponse) {
+                this.btCharacteristic = char;
+                break;
+              }
+            }
+            if (this.btCharacteristic) break;
+          } catch {
+            // continue
+          }
+        }
+      } catch {
+        // continue
+      }
+    }
+
+    if (!this.btCharacteristic) {
+      const err = 'Device is paired via Bluetooth, but no writable GATT printer characteristic was exposed. For Windows/PC Bluetooth printers, please select "Web Serial" mode to transmit via virtual COM port.';
       this.addLog('error', err);
       return { success: false, bytesWritten: 0, error: err };
     }
@@ -257,11 +366,78 @@ class HardwareManager {
   }
 
   public async disconnectBluetooth() {
-    if (this.btDevice && this.btDevice.gatt?.connected) {
-      this.btDevice.gatt.disconnect();
+    if (this.btDevice) {
+      try {
+        if (this.btDevice.gatt?.connected) {
+          this.btDevice.gatt.disconnect();
+        }
+      } catch {
+        // ignore
+      }
       this.addLog('info', 'Bluetooth printer disconnected.');
       this.btDevice = null;
       this.btCharacteristic = null;
+    }
+  }
+
+  // --- 3. Web Serial Adapter (Bluetooth COM / USB Serial) ---
+  private serialPort: any = null;
+
+  public isSerialSupported(): boolean {
+    return typeof navigator !== 'undefined' && 'serial' in navigator;
+  }
+
+  public async connectSerial(baudRate = 115200): Promise<{ success: boolean; deviceName?: string; error?: string }> {
+    if (!this.isSerialSupported()) {
+      const err = 'Web Serial API is not supported in this browser. Please use Chrome or Edge.';
+      this.addLog('error', err);
+      return { success: false, error: err };
+    }
+
+    try {
+      this.addLog('info', 'Requesting Web Serial port (USB/Bluetooth COM port)...');
+      const port = await (navigator as any).serial.requestPort();
+      await port.open({ baudRate });
+      this.serialPort = port;
+      const info = port.getInfo ? port.getInfo() : {};
+      const deviceName = info.usbVendorId ? `Serial Device (VID: 0x${info.usbVendorId.toString(16)})` : 'Serial / Bluetooth COM Port';
+      this.addLog('success', `✓ Web Serial connected: ${deviceName} @ ${baudRate} baud`);
+      return { success: true, deviceName };
+    } catch (err: any) {
+      const msg = err.message || 'Serial connection cancelled or failed';
+      this.addLog('error', `Serial error: ${msg}`);
+      return { success: false, error: msg };
+    }
+  }
+
+  public async disconnectSerial() {
+    if (this.serialPort) {
+      try {
+        await this.serialPort.close();
+      } catch {
+        // ignore
+      }
+      this.serialPort = null;
+      this.addLog('info', 'Serial port disconnected.');
+    }
+  }
+
+  public async sendViaSerial(buffer: ArrayBuffer): Promise<{ success: boolean; bytesWritten: number; error?: string }> {
+    if (!this.serialPort || !this.serialPort.writable) {
+      const err = 'No Serial port is currently connected. Click "Connect Device" first.';
+      this.addLog('error', err);
+      return { success: false, bytesWritten: 0, error: err };
+    }
+
+    try {
+      const writer = this.serialPort.writable.getWriter();
+      await writer.write(new Uint8Array(buffer));
+      writer.releaseLock();
+      this.addLog('success', `Serial transmission complete: ${buffer.byteLength} bytes delivered to printer.`);
+      return { success: true, bytesWritten: buffer.byteLength };
+    } catch (err: any) {
+      this.addLog('error', `Serial transmission failed: ${err.message}`);
+      return { success: false, bytesWritten: 0, error: err.message };
     }
   }
 
@@ -395,6 +571,13 @@ class HardwareManager {
         success: res.success,
         bytesWritten: res.bytesWritten,
         message: res.success ? `Bluetooth wireless transmission of ${res.bytesWritten} bytes succeeded.` : res.error || 'Bluetooth error'
+      };
+    } else if (transport === 'webserial') {
+      const res = await this.sendViaSerial(buffer);
+      return {
+        success: res.success,
+        bytesWritten: res.bytesWritten,
+        message: res.success ? `Web Serial COM transmission of ${res.bytesWritten} bytes succeeded.` : res.error || 'Serial error'
       };
     } else if (transport === 'network_socket') {
       const res = await this.sendViaNetworkSocket(buffer, jobId);

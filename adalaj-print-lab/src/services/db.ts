@@ -18,7 +18,8 @@ import type {
   AuditLogEntry,
   LooseStockRecord
 } from '../types';
-import { default500gTemplate } from './layoutRegistry';
+import { default500gTemplate, normalizePackSize } from './layoutRegistry';
+import { parseDateInput, formatCalendarDateDMY, formatCalendarDateISO, calculateBestBeforeDate } from '../domain/dates';
 
 export class LabelStudioDatabase extends Dexie {
   businesses!: Table<Business, string>;
@@ -274,6 +275,115 @@ export function sanitizeTemplatesForCutoff(templates: Template[]): { updated: Te
   return { updated, changed };
 }
 
+export async function healBatchesAndAllocations(): Promise<boolean> {
+  try {
+    const products = await db.products.toArray();
+    const skus = await db.skus.toArray();
+    const existingBatches = await db.batches.toArray();
+    if (!products.length) return false;
+
+    let hasChanges = false;
+    const todayCal = parseDateInput(new Date());
+    const todayIso = formatCalendarDateISO(todayCal);
+    const todayDmy = formatCalendarDateDMY(todayCal);
+
+    const healedBatches: Batch[] = [];
+
+    for (const prod of products) {
+      const prodBatches = existingBatches.filter(b => b.productId === prod.id);
+      let activeBatch = prodBatches.find(b => b.status === 'Open' || b.status === 'In Production' || b.status === 'Planned') || prodBatches[0];
+
+      const allowedPacks = prod.allowedPackSizes || ['100 g', '200 g', '500 g', '1 kg'];
+      const shelfLife = prod.defaultShelfLifeMonths || 12;
+
+      if (!activeBatch) {
+        const prefix = prod.batchPrefix || prod.shortCode || 'AD';
+        const batchId = `${prefix}001`;
+        const bbDmy = formatCalendarDateDMY(calculateBestBeforeDate(todayCal, shelfLife));
+        const newBatch: Batch = {
+          id: batchId,
+          productId: prod.id,
+          rawMaterialKg: 50,
+          lotDate: todayIso,
+          status: 'Open',
+          notes: `Active production batch for ${prod.name}`,
+          allocations: allowedPacks.map(ps => {
+            const matchedSku = skus.find(s => s.productId === prod.id && normalizePackSize(s.packSize) === normalizePackSize(ps));
+            const grams = matchedSku?.netWeightGrams || (ps.includes('kg') ? parseFloat(ps) * 1000 : parseFloat(ps) || 100);
+            const mrp = matchedSku?.mrp || 50;
+            return {
+              id: `alloc_${batchId}_${normalizePackSize(ps)}`,
+              batchId,
+              skuId: matchedSku?.id || `sku_${prod.id}_${normalizePackSize(ps)}`,
+              productId: prod.id,
+              packSize: ps,
+              allocatedKg: 10,
+              expectedPacks: Math.floor((10 * 1000) / grams),
+              mfd: todayDmy,
+              bestBefore: bbDmy,
+              mrpSnapshot: mrp,
+              ratePerGmSnapshot: grams > 0 ? mrp / grams : 0.5,
+              templateVersionSnapshot: 1,
+              printStatus: 'Pending',
+              packsPrinted: 0
+            };
+          }),
+          createdAt: new Date().toISOString()
+        };
+        healedBatches.push(newBatch);
+        hasChanges = true;
+      } else {
+        let batchChanged = false;
+        const currentAllocations = [...(activeBatch.allocations || [])];
+        const batchCal = activeBatch.lotDate ? parseDateInput(activeBatch.lotDate) : todayCal;
+        const batchMfd = formatCalendarDateDMY(batchCal);
+        const batchBb = formatCalendarDateDMY(calculateBestBeforeDate(batchCal, shelfLife));
+
+        for (const ps of allowedPacks) {
+          const norm = normalizePackSize(ps);
+          const existingAlloc = currentAllocations.find(a => normalizePackSize(a.packSize) === norm);
+          if (!existingAlloc) {
+            const matchedSku = skus.find(s => s.productId === prod.id && normalizePackSize(s.packSize) === norm);
+            const grams = matchedSku?.netWeightGrams || (ps.includes('kg') ? parseFloat(ps) * 1000 : parseFloat(ps) || 100);
+            const mrp = matchedSku?.mrp || 50;
+            currentAllocations.push({
+              id: `alloc_${activeBatch.id}_${norm}`,
+              batchId: activeBatch.id,
+              skuId: matchedSku?.id || `sku_${prod.id}_${norm}`,
+              productId: prod.id,
+              packSize: ps,
+              allocatedKg: 10,
+              expectedPacks: Math.floor((10 * 1000) / grams),
+              mfd: batchMfd,
+              bestBefore: batchBb,
+              mrpSnapshot: mrp,
+              ratePerGmSnapshot: grams > 0 ? mrp / grams : 0.5,
+              templateVersionSnapshot: 1,
+              printStatus: 'Pending',
+              packsPrinted: 0
+            });
+            batchChanged = true;
+          }
+        }
+
+        if (batchChanged) {
+          healedBatches.push({ ...activeBatch, allocations: currentAllocations });
+          hasChanges = true;
+        }
+      }
+    }
+
+    if (hasChanges && healedBatches.length > 0) {
+      await db.batches.bulkPut(healedBatches);
+      await saveUniversalSnapshot();
+    }
+    return hasChanges;
+  } catch (err) {
+    console.error('Failed to heal batches and allocations:', err);
+    return false;
+  }
+}
+
 async function doInitializeDatabase() {
   const [businessCount, machCount, tmplCount, looseCount] = await Promise.all([
     db.businesses.count(),
@@ -292,6 +402,7 @@ async function doInitializeDatabase() {
         await db.templates.bulkPut(updated);
         await saveUniversalSnapshot();
       }
+      await healBatchesAndAllocations();
       return;
     }
   }
@@ -304,6 +415,7 @@ async function doInitializeDatabase() {
       await db.templates.bulkPut(updated);
       await saveUniversalSnapshot();
     }
+    await healBatchesAndAllocations();
 
     if (looseCount === 0) {
       await db.looseStock.put({
@@ -909,6 +1021,8 @@ async function doInitializeDatabase() {
       undoable: false
     });
   });
+
+  await healBatchesAndAllocations();
 
   // Seed snapshot mirror immediately
   await saveUniversalSnapshot();

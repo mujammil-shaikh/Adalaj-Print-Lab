@@ -27,9 +27,9 @@ import {
 } from 'lucide-react';
 import type { Batch, Product, SKU, MachineProfile, Template, PackProfile } from '../../types';
 import { renderTemplateToCanvas } from '../../services/printTransform';
-import { parseDateInput, calculateBestBeforeDate, formatCalendarDateDMY } from '../../domain/dates';
-import { resolveLayout } from '../../services/layoutRegistry';
-import { db } from '../../services/db';
+import { parseDateInput, calculateBestBeforeDate, formatCalendarDateDMY, formatCalendarDateISO } from '../../domain/dates';
+import { resolveLayout, normalizePackSize } from '../../services/layoutRegistry';
+import { db, saveUniversalSnapshot } from '../../services/db';
 
 interface HomeViewProps {
   batches: Batch[];
@@ -44,6 +44,7 @@ interface HomeViewProps {
   onNavigate: (route: string) => void;
   onSelectBatch: (b: Batch) => void;
   onSelectProduct?: (p: Product) => void;
+  onUpdateBatch?: (b: Batch) => Promise<void> | void;
 }
 
 export const HomeView: React.FC<HomeViewProps> = ({
@@ -58,7 +59,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
   activeMachine,
   onNavigate,
   onSelectBatch,
-  onSelectProduct
+  onSelectProduct,
+  onUpdateBatch
 }) => {
   const [previewMode, setPreviewMode] = useState<'pouch' | 'band' | 'raster'>('pouch');
   const [selectedProductId, setSelectedProductId] = useState<string>(activeProduct?.id || activeBatch?.productId || products[0]?.id || '');
@@ -126,17 +128,32 @@ export const HomeView: React.FC<HomeViewProps> = ({
     const mrp = mrpNumber ? `₹${mrpNumber}` : '[Needs MRP]';
     const rate = mrpNumber ? `₹${(mrpNumber / netGrams).toFixed(2)}` : '[Needs Rate]';
 
-    let mfdStr = '[Sample MFD]';
-    let bbStr = '[Sample Expiry]';
-    if (currentBatch?.lotDate) {
+    const norm = normalizePackSize(activeSku?.packSize || '100g');
+    const activeAlloc = currentBatch?.allocations?.find(a => normalizePackSize(a.packSize) === norm) || currentBatch?.allocations?.[0];
+
+    let mfdStr = activeAlloc?.mfd || '';
+    let bbStr = activeAlloc?.bestBefore || '';
+
+    if (!mfdStr && currentBatch?.lotDate) {
       try {
         const cal = parseDateInput(currentBatch.lotDate);
         mfdStr = formatCalendarDateDMY(cal);
+      } catch {
+        // Keep sample label
+      }
+    }
+    if (!mfdStr) {
+      mfdStr = formatCalendarDateDMY(parseDateInput(new Date()));
+    }
+
+    if (!bbStr) {
+      try {
+        const cal = parseDateInput(mfdStr);
         const shelfLife = activeSku?.shelfLifeOverrideMonths || currentProduct?.defaultShelfLifeMonths || 12;
         const bb = calculateBestBeforeDate(cal, shelfLife);
         bbStr = formatCalendarDateDMY(bb);
       } catch {
-        // Keep sample label
+        bbStr = '[Sample Expiry]';
       }
     }
 
@@ -152,6 +169,59 @@ export const HomeView: React.FC<HomeViewProps> = ({
       pack_size: activeSku?.packSize || '100 g'
     };
   }, [activeSku, currentBatch, currentProduct]);
+
+  const handleHomeSetDateToday = async () => {
+    if (!currentBatch) return;
+    try {
+      const todayCal = parseDateInput(new Date());
+      const dmy = formatCalendarDateDMY(todayCal);
+      const iso = formatCalendarDateISO(todayCal);
+      const shelfLife = activeSku?.shelfLifeOverrideMonths || currentProduct?.defaultShelfLifeMonths || 12;
+      const bbCal = calculateBestBeforeDate(todayCal, shelfLife);
+      const bbDmy = formatCalendarDateDMY(bbCal);
+
+      const targetNorm = normalizePackSize(activeSku?.packSize || '100g');
+      let matched = false;
+      const updatedAllocations = (currentBatch.allocations || []).map(a => {
+        if (normalizePackSize(a.packSize) === targetNorm) {
+          matched = true;
+          return { ...a, mfd: dmy, bestBefore: bbDmy };
+        }
+        return { ...a, mfd: dmy, bestBefore: bbDmy };
+      });
+
+      if (!matched) {
+        updatedAllocations.push({
+          id: `alloc_${currentBatch.id}_${targetNorm}`,
+          batchId: currentBatch.id,
+          skuId: activeSku?.id || `sku_${currentBatch.productId}_${targetNorm}`,
+          productId: currentBatch.productId,
+          packSize: activeSku?.packSize || '100 g',
+          allocatedKg: 10,
+          expectedPacks: 100,
+          mfd: dmy,
+          bestBefore: bbDmy,
+          mrpSnapshot: activeSku?.mrp || 50,
+          ratePerGmSnapshot: 0.5,
+          templateVersionSnapshot: 1,
+          printStatus: 'Pending',
+          packsPrinted: 0
+        });
+      }
+
+      const updatedBatch: Batch = {
+        ...currentBatch,
+        lotDate: iso,
+        allocations: updatedAllocations
+      };
+
+      await db.batches.put(updatedBatch);
+      if (onUpdateBatch) await onUpdateBatch(updatedBatch);
+      await saveUniversalSnapshot();
+    } catch (e) {
+      console.error('Failed to set today on Home:', e);
+    }
+  };
 
   // Resolve truthful layout matching Pack View Designer ground-truth
   const effectiveTemplate = useMemo(() => {
@@ -469,13 +539,23 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   <span className="text-zinc-500">Net Weight :</span>
                   <span className="text-zinc-200">{liveValues.net_wt}</span>
                 </div>
-                <div className="flex justify-between py-1 border-b border-zinc-800/60">
+                <div className="flex justify-between items-center py-1 border-b border-zinc-800/60">
                   <span className="text-zinc-500">MFD Date :</span>
-                  <span className="text-zinc-300">{liveValues.mfd}</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-amber-300 font-mono font-bold">{liveValues.mfd}</span>
+                    <button
+                      type="button"
+                      onClick={handleHomeSetDateToday}
+                      className="px-1.5 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-amber-300 text-[9px] font-mono border border-zinc-700 transition-colors cursor-pointer"
+                      title="Set batch MFD to Today across all pages"
+                    >
+                      Today
+                    </button>
+                  </div>
                 </div>
                 <div className="flex justify-between py-1 border-b border-zinc-800/60">
                   <span className="text-zinc-500">Best Before :</span>
-                  <span className="text-zinc-300">{liveValues.best_before}</span>
+                  <span className="text-zinc-300 font-mono">{liveValues.best_before}</span>
                 </div>
                 <div className="flex justify-between py-1">
                   <span className="text-zinc-500">Unit Rate :</span>

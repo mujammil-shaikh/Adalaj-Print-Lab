@@ -79,7 +79,7 @@ import {
   type LayoutSource, 
   type ResolvedLayout 
 } from '../../services/layoutRegistry';
-import { parseDateInput, calculateBestBeforeDate, formatCalendarDateDMY } from '../../domain/dates';
+import { parseDateInput, calculateBestBeforeDate, formatCalendarDateDMY, formatCalendarDateISO, extractDateFromText } from '../../domain/dates';
 import { db, saveUniversalSnapshot } from '../../services/db';
 
 interface DesignerViewProps {
@@ -575,10 +575,39 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
     const mrp = previewSku?.mrp ? `₹${previewSku.mrp}` : '₹50';
     const netGrams = previewSku?.netWeightGrams || 100;
     const rate = previewSku?.mrp ? `₹${(previewSku.mrp / netGrams).toFixed(2)}` : '₹0.50';
-    const batchId = activeBatch?.id || `${activeProduct?.batchPrefix || 'ADTP'}014`;
-    const alloc = activeBatch?.allocations?.find(a => a.packSize === previewSku?.packSize) || activeBatch?.allocations?.[0];
-    const mfd = alloc?.mfd || '10/10/26';
-    const bb = alloc?.bestBefore || '09/11/27';
+
+    const currentBat = (activeBatch && activeBatch.productId === activeProduct?.id)
+      ? activeBatch
+      : (allBatches && allBatches.find(bat => bat.productId === activeProduct?.id)) || activeBatch || allBatches?.[0];
+
+    const batchId = currentBat?.id || `${activeProduct?.batchPrefix || 'ADTP'}014`;
+    const targetNorm = normalizePackSize(previewSku?.packSize || '100g');
+    const alloc = currentBat?.allocations?.find(a => normalizePackSize(a.packSize) === targetNorm) || currentBat?.allocations?.[0];
+
+    let mfd = alloc?.mfd || '';
+    let bb = alloc?.bestBefore || '';
+
+    if (!mfd && currentBat?.lotDate) {
+      try {
+        const cal = parseDateInput(currentBat.lotDate);
+        mfd = formatCalendarDateDMY(cal);
+      } catch {
+        // ignore
+      }
+    }
+    if (!mfd) {
+      mfd = formatCalendarDateDMY(parseDateInput(new Date()));
+    }
+
+    if (!bb) {
+      try {
+        const cal = parseDateInput(mfd);
+        const shelfLife = previewSku?.shelfLifeOverrideMonths || activeProduct?.defaultShelfLifeMonths || 12;
+        bb = formatCalendarDateDMY(calculateBestBeforeDate(cal, shelfLife));
+      } catch {
+        bb = '09/11/27';
+      }
+    }
 
     return {
       mrp,
@@ -591,7 +620,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       brand: 'ADALAJ',
       pack_size: previewSku?.packSize || '100 g'
     };
-  }, [previewSku, activeProduct, activeBatch]);
+  }, [previewSku, activeProduct, activeBatch, allBatches]);
 
   // Synchronize Live Field Inputs whenever batch, SKU, or product changes
   useEffect(() => {
@@ -605,26 +634,103 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
   const handleLiveUpdateMfd = async (newMfd: string) => {
     if (!newMfd.trim()) return;
     const trimmed = newMfd.trim();
+    let cal;
     try {
-      let b = activeBatch || (allBatches && allBatches.find(bat => bat.productId === activeProduct.id)) || allBatches?.[0];
-      if (b) {
-        const updatedAllocations = (b.allocations || []).map(a => {
-          if (a.packSize === previewSku.packSize) {
-            return { ...a, mfd: trimmed };
-          }
-          return a;
-        });
-        const exists = updatedAllocations.some(a => a.packSize === previewSku.packSize);
-        if (!exists && updatedAllocations.length > 0) {
-          updatedAllocations[0] = { ...updatedAllocations[0], mfd: trimmed };
-        }
-        const updatedBatch: Batch = { ...b, allocations: updatedAllocations };
-        await db.batches.put(updatedBatch);
-        if (onUpdateBatch) await onUpdateBatch(updatedBatch);
-        await saveUniversalSnapshot();
-        setToastMessage(`✓ MFD updated to ${trimmed} across all pages`);
-        setTimeout(() => setToastMessage(null), 2500);
+      cal = parseDateInput(trimmed);
+    } catch {
+      return;
+    }
+    const dmyMfd = formatCalendarDateDMY(cal);
+    const isoLotDate = formatCalendarDateISO(cal);
+    const shelfLife = previewSku?.shelfLifeOverrideMonths || activeProduct?.defaultShelfLifeMonths || 12;
+    const bbCal = calculateBestBeforeDate(cal, shelfLife);
+    const dmyBb = formatCalendarDateDMY(bbCal);
+
+    try {
+      let b = (activeBatch && activeBatch.productId === activeProduct.id)
+        ? { ...activeBatch }
+        : (allBatches && allBatches.find(bat => bat.productId === activeProduct.id))
+        ? { ...allBatches.find(bat => bat.productId === activeProduct.id)! }
+        : null;
+
+      const targetNorm = normalizePackSize(previewSku?.packSize || '100g');
+
+      if (!b) {
+        const prefix = activeProduct.batchPrefix || activeProduct.shortCode || 'AD';
+        b = {
+          id: `${prefix}001`,
+          productId: activeProduct.id,
+          rawMaterialKg: 50,
+          lotDate: isoLotDate,
+          status: 'Open',
+          notes: `Active production batch for ${activeProduct.name}`,
+          allocations: [],
+          createdAt: new Date().toISOString()
+        };
       }
+
+      let matched = false;
+      const updatedAllocations = (b.allocations || []).map(a => {
+        if (normalizePackSize(a.packSize) === targetNorm) {
+          matched = true;
+          return { ...a, mfd: dmyMfd, bestBefore: dmyBb };
+        }
+        return { ...a, mfd: dmyMfd, bestBefore: dmyBb };
+      });
+
+      if (!matched) {
+        updatedAllocations.push({
+          id: `alloc_${b.id}_${targetNorm}`,
+          batchId: b.id,
+          skuId: previewSku?.id || `sku_${b.productId}_${targetNorm}`,
+          productId: b.productId,
+          packSize: previewSku?.packSize || '100 g',
+          allocatedKg: 10,
+          expectedPacks: Math.floor((10 * 1000) / (previewSku?.netWeightGrams || 100)),
+          mfd: dmyMfd,
+          bestBefore: dmyBb,
+          mrpSnapshot: previewSku?.mrp || 50,
+          ratePerGmSnapshot: (previewSku?.mrp && previewSku?.netWeightGrams) ? previewSku.mrp / previewSku.netWeightGrams : 0.5,
+          templateVersionSnapshot: 1,
+          printStatus: 'Pending',
+          packsPrinted: 0
+        });
+      }
+
+      const updatedBatch: Batch = {
+        ...b,
+        lotDate: isoLotDate,
+        allocations: updatedAllocations
+      };
+
+      await db.batches.put(updatedBatch);
+      if (onUpdateBatch) await onUpdateBatch(updatedBatch);
+      localStorage.setItem('als_active_batch_id', updatedBatch.id);
+
+      setEditMfdInput(dmyMfd);
+      setEditBbInput(dmyBb);
+
+      // Also ensure any template text object displaying literal MFD updates to new date
+      if (template && template.objects) {
+        let tmplChanged = false;
+        const newObjects = template.objects.map(obj => {
+          if (obj.fieldKey === 'mfd' && obj.content && !obj.content.includes('{mfd}')) {
+            tmplChanged = true;
+            return { ...obj, content: dmyMfd };
+          }
+          return obj;
+        });
+        if (tmplChanged) {
+          const updatedTmpl = { ...template, objects: newObjects };
+          setTemplate(updatedTmpl);
+          await db.templates.put(updatedTmpl);
+          if (onTemplateChange) onTemplateChange(updatedTmpl);
+        }
+      }
+
+      await saveUniversalSnapshot();
+      setToastMessage(`✓ MFD updated to ${dmyMfd} across all pages`);
+      setTimeout(() => setToastMessage(null), 2500);
     } catch (err) {
       console.error('Failed to update MFD:', err);
     }
@@ -633,26 +739,95 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
   const handleLiveUpdateBestBefore = async (newBb: string) => {
     if (!newBb.trim()) return;
     const trimmed = newBb.trim();
+    let cal;
     try {
-      let b = activeBatch || (allBatches && allBatches.find(bat => bat.productId === activeProduct.id)) || allBatches?.[0];
-      if (b) {
-        const updatedAllocations = (b.allocations || []).map(a => {
-          if (a.packSize === previewSku.packSize) {
-            return { ...a, bestBefore: trimmed };
-          }
-          return a;
-        });
-        const exists = updatedAllocations.some(a => a.packSize === previewSku.packSize);
-        if (!exists && updatedAllocations.length > 0) {
-          updatedAllocations[0] = { ...updatedAllocations[0], bestBefore: trimmed };
-        }
-        const updatedBatch: Batch = { ...b, allocations: updatedAllocations };
-        await db.batches.put(updatedBatch);
-        if (onUpdateBatch) await onUpdateBatch(updatedBatch);
-        await saveUniversalSnapshot();
-        setToastMessage(`✓ Best Before updated to ${trimmed} across all pages`);
-        setTimeout(() => setToastMessage(null), 2500);
+      cal = parseDateInput(trimmed);
+    } catch {
+      return;
+    }
+    const dmyBb = formatCalendarDateDMY(cal);
+
+    try {
+      let b = (activeBatch && activeBatch.productId === activeProduct.id)
+        ? { ...activeBatch }
+        : (allBatches && allBatches.find(bat => bat.productId === activeProduct.id))
+        ? { ...allBatches.find(bat => bat.productId === activeProduct.id)! }
+        : null;
+
+      const targetNorm = normalizePackSize(previewSku?.packSize || '100g');
+
+      if (!b) {
+        const prefix = activeProduct.batchPrefix || activeProduct.shortCode || 'AD';
+        const todayCal = parseDateInput(new Date());
+        b = {
+          id: `${prefix}001`,
+          productId: activeProduct.id,
+          rawMaterialKg: 50,
+          lotDate: formatCalendarDateISO(todayCal),
+          status: 'Open',
+          notes: `Active production batch for ${activeProduct.name}`,
+          allocations: [],
+          createdAt: new Date().toISOString()
+        };
       }
+
+      let matched = false;
+      const updatedAllocations = (b.allocations || []).map(a => {
+        if (normalizePackSize(a.packSize) === targetNorm) {
+          matched = true;
+          return { ...a, bestBefore: dmyBb };
+        }
+        return a;
+      });
+
+      if (!matched) {
+        const todayCal = parseDateInput(b.lotDate || new Date());
+        const dmyMfd = formatCalendarDateDMY(todayCal);
+        updatedAllocations.push({
+          id: `alloc_${b.id}_${targetNorm}`,
+          batchId: b.id,
+          skuId: previewSku?.id || `sku_${b.productId}_${targetNorm}`,
+          productId: b.productId,
+          packSize: previewSku?.packSize || '100 g',
+          allocatedKg: 10,
+          expectedPacks: Math.floor((10 * 1000) / (previewSku?.netWeightGrams || 100)),
+          mfd: dmyMfd,
+          bestBefore: dmyBb,
+          mrpSnapshot: previewSku?.mrp || 50,
+          ratePerGmSnapshot: (previewSku?.mrp && previewSku?.netWeightGrams) ? previewSku.mrp / previewSku.netWeightGrams : 0.5,
+          templateVersionSnapshot: 1,
+          printStatus: 'Pending',
+          packsPrinted: 0
+        });
+      }
+
+      const updatedBatch: Batch = { ...b, allocations: updatedAllocations };
+      await db.batches.put(updatedBatch);
+      if (onUpdateBatch) await onUpdateBatch(updatedBatch);
+      localStorage.setItem('als_active_batch_id', updatedBatch.id);
+
+      setEditBbInput(dmyBb);
+
+      if (template && template.objects) {
+        let tmplChanged = false;
+        const newObjects = template.objects.map(obj => {
+          if (obj.fieldKey === 'best_before' && obj.content && !obj.content.includes('{best_before}')) {
+            tmplChanged = true;
+            return { ...obj, content: dmyBb };
+          }
+          return obj;
+        });
+        if (tmplChanged) {
+          const updatedTmpl = { ...template, objects: newObjects };
+          setTemplate(updatedTmpl);
+          await db.templates.put(updatedTmpl);
+          if (onTemplateChange) onTemplateChange(updatedTmpl);
+        }
+      }
+
+      await saveUniversalSnapshot();
+      setToastMessage(`✓ Best Before updated to ${dmyBb} across all pages`);
+      setTimeout(() => setToastMessage(null), 2500);
     } catch (err) {
       console.error('Failed to update Best Before:', err);
     }
@@ -3214,7 +3389,28 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                           const val = e.target.value;
                           updateObjectCoalesced(selectedObject.id, { content: val }, 'property_tweak');
                         }}
-                        onBlur={commitPendingSession}
+                        onBlur={() => {
+                          commitPendingSession();
+                          const val = selectedObject.content || '';
+                          if (selectedObject.fieldKey === 'mfd' || category === 'mfd') {
+                            const extracted = extractDateFromText(val);
+                            if (extracted) handleLiveUpdateMfd(extracted);
+                          } else if (selectedObject.fieldKey === 'best_before' || category === 'best_before') {
+                            const extracted = extractDateFromText(val);
+                            if (extracted) handleLiveUpdateBestBefore(extracted);
+                          } else if (selectedObject.fieldKey === 'mrp' || category === 'mrp') {
+                            const match = val.match(/(\d+(?:\.\d+)?)/);
+                            if (match) handleLiveUpdateMrp(parseFloat(match[1]));
+                          } else if (selectedObject.fieldKey === 'batch' || category === 'batch') {
+                            const match = val.match(/([A-Za-z0-9_-]{3,})/);
+                            if (match) handleLiveUpdateBatchId(match[1]);
+                          }
+                        }}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') {
+                            e.currentTarget.blur();
+                          }
+                        }}
                         placeholder={isQr ? 'https://adalaj.in/b/{batch}' : isBarcode ? 'ADTP014' : 'Enter text...'}
                         className="w-full bg-zinc-900 border border-zinc-700 focus:border-amber-500 rounded px-2.5 py-1.5 text-xs text-zinc-100 font-mono focus:outline-hidden"
                       />
