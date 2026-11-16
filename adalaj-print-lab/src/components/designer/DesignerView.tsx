@@ -72,12 +72,14 @@ import {
   buildPackDefaultTemplate, 
   buildSkuOverrideTemplate, 
   getSkuOverrideTemplateId,
+  getPackDefaultTemplateId,
   normalizePackSize, 
   getCleanGlobalPackDefault,
   getFactoryProductTemplate,
   type LayoutSource, 
   type ResolvedLayout 
 } from '../../services/layoutRegistry';
+import { parseDateInput, calculateBestBeforeDate, formatCalendarDateDMY } from '../../domain/dates';
 import { db, saveUniversalSnapshot } from '../../services/db';
 
 interface DesignerViewProps {
@@ -100,6 +102,8 @@ interface DesignerViewProps {
   onSaveSkuOverride?: (t: Template, productId: string, productName: string, packSize: string) => Promise<void>;
   onRevertSkuOverride?: (productId: string, packSize: string) => Promise<void>;
   onTemplateChange?: (t: Template) => void;
+  onUpdateBatch?: (b: Batch) => Promise<void> | void;
+  onUpdateSku?: (s: SKU) => Promise<void> | void;
   onNavigateToPrint: () => void;
 }
 
@@ -123,6 +127,8 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
   onSaveSkuOverride,
   onRevertSkuOverride,
   onTemplateChange,
+  onUpdateBatch,
+  onUpdateSku,
   onNavigateToPrint
 }) => {
   const [template, setTemplate] = useState<Template>(initialTemplate);
@@ -151,26 +157,16 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
   const autoSaveTimerRef = useRef<any>(null);
   const [autoSaveStatus, setAutoSaveStatus] = useState<string>('Saved');
 
-  useEffect(() => {
-    if (!template || !template.id) return;
-    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-    autoSaveTimerRef.current = setTimeout(async () => {
-      try {
-        await db.templates.put(template);
-        if (onTemplateChange) onTemplateChange(template);
-        await saveUniversalSnapshot();
-        const now = new Date();
-        const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        setAutoSaveStatus(`Auto-saved ${timeStr}`);
-      } catch (err) {
-        console.error('Auto-save error:', err);
-      }
-    }, 400);
+  // Universal Scope State: 'global' (Pack Default) vs 'individual' (SKU Override)
+  const [activeSaveScope, setActiveSaveScope] = useState<'global' | 'individual'>(() => {
+    return (initialTemplate.isSkuOverride || Boolean(initialTemplate.skuOverrideKey)) ? 'individual' : 'global';
+  });
 
-    return () => {
-      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-    };
-  }, [template, onTemplateChange]);
+  // Interactive Live Field Inputs for Batch & SKU Single Source of Truth
+  const [editMfdInput, setEditMfdInput] = useState<string>('');
+  const [editBbInput, setEditBbInput] = useState<string>('');
+  const [editMrpInput, setEditMrpInput] = useState<string>('');
+  const [editBatchInput, setEditBatchInput] = useState<string>('');
   
   // Refs
   const canvasViewportRef = useRef<HTMLDivElement | null>(null);
@@ -237,6 +233,50 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       setRedoStack([]);
     }
   }, [activeProduct.id, previewSku.packSize, templates]);
+
+  // Synchronize Save Scope selection with layout inheritance source
+  useEffect(() => {
+    if (currentLayoutInfo.source === 'sku_override') {
+      setActiveSaveScope('individual');
+      setSelectedSaveTarget('sku_override');
+    } else {
+      setActiveSaveScope('global');
+      setSelectedSaveTarget('pack_default');
+    }
+  }, [currentLayoutInfo.source, previewSku.id, activeProduct.id]);
+
+  // Real-time Auto-Save with Explicit Scope Awareness & Dual-Layer Persistence
+  useEffect(() => {
+    if (!template || !template.id) return;
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(async () => {
+      try {
+        let tmplToSave = template;
+        const norm = normalizePackSize(previewSku.packSize);
+        if (activeSaveScope === 'global') {
+          if (!tmplToSave.isPackSizeDefault || tmplToSave.packSizeScope !== norm) {
+            tmplToSave = buildPackDefaultTemplate(tmplToSave, previewSku.packSize);
+          }
+        } else {
+          if (!tmplToSave.isSkuOverride || tmplToSave.skuOverrideKey !== `${activeProduct.id}_${norm}`) {
+            tmplToSave = buildSkuOverrideTemplate(tmplToSave, activeProduct.id, activeProduct.name, previewSku.packSize);
+          }
+        }
+        await db.templates.put(tmplToSave);
+        if (onTemplateChange) onTemplateChange(tmplToSave);
+        await saveUniversalSnapshot();
+        const now = new Date();
+        const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        setAutoSaveStatus(`Auto-saved ${timeStr}`);
+      } catch (err) {
+        console.error('Auto-save error:', err);
+      }
+    }, 400);
+
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, [template, onTemplateChange, activeSaveScope, previewSku.packSize, activeProduct.id, activeProduct.name]);
 
   // Undo / Redo history stacks (up to 25 states)
   const [history, setHistory] = useState<Template[]>([]);
@@ -426,7 +466,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
   }, [template, machine, packProfile]);
 
   // Active Printhead Band (12.5mm vs 12.7mm TIJ ½" cartridge, or custom)
-  const currentBandMm = template.customBandMm || machine.printBandMm || 12.7;
+  const currentBandMm = template.customBandMm || machine.printBandMm || 12.5;
 
   // Active Travel Length: Endless / Unrestricted (e.g. 35, 45, 80, 100, 150+ mm)
   const currentLengthMm = template.customLengthMm || packProfile.printWindowLengthMm || (template.travel === 'Vertical' ? 35.0 : 45.0);
@@ -552,6 +592,145 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       pack_size: previewSku?.packSize || '100 g'
     };
   }, [previewSku, activeProduct, activeBatch]);
+
+  // Synchronize Live Field Inputs whenever batch, SKU, or product changes
+  useEffect(() => {
+    setEditMfdInput(previewValues.mfd || '');
+    setEditBbInput(previewValues.best_before || '');
+    setEditMrpInput(previewSku?.mrp ? String(previewSku.mrp) : '50');
+    setEditBatchInput(previewValues.batch || '');
+  }, [previewValues.mfd, previewValues.best_before, previewSku?.mrp, previewValues.batch]);
+
+  // Universal Single-Source-of-Truth Live Handlers
+  const handleLiveUpdateMfd = async (newMfd: string) => {
+    if (!newMfd.trim()) return;
+    const trimmed = newMfd.trim();
+    try {
+      let b = activeBatch || (allBatches && allBatches.find(bat => bat.productId === activeProduct.id)) || allBatches?.[0];
+      if (b) {
+        const updatedAllocations = (b.allocations || []).map(a => {
+          if (a.packSize === previewSku.packSize) {
+            return { ...a, mfd: trimmed };
+          }
+          return a;
+        });
+        const exists = updatedAllocations.some(a => a.packSize === previewSku.packSize);
+        if (!exists && updatedAllocations.length > 0) {
+          updatedAllocations[0] = { ...updatedAllocations[0], mfd: trimmed };
+        }
+        const updatedBatch: Batch = { ...b, allocations: updatedAllocations };
+        await db.batches.put(updatedBatch);
+        if (onUpdateBatch) await onUpdateBatch(updatedBatch);
+        await saveUniversalSnapshot();
+        setToastMessage(`✓ MFD updated to ${trimmed} across all pages`);
+        setTimeout(() => setToastMessage(null), 2500);
+      }
+    } catch (err) {
+      console.error('Failed to update MFD:', err);
+    }
+  };
+
+  const handleLiveUpdateBestBefore = async (newBb: string) => {
+    if (!newBb.trim()) return;
+    const trimmed = newBb.trim();
+    try {
+      let b = activeBatch || (allBatches && allBatches.find(bat => bat.productId === activeProduct.id)) || allBatches?.[0];
+      if (b) {
+        const updatedAllocations = (b.allocations || []).map(a => {
+          if (a.packSize === previewSku.packSize) {
+            return { ...a, bestBefore: trimmed };
+          }
+          return a;
+        });
+        const exists = updatedAllocations.some(a => a.packSize === previewSku.packSize);
+        if (!exists && updatedAllocations.length > 0) {
+          updatedAllocations[0] = { ...updatedAllocations[0], bestBefore: trimmed };
+        }
+        const updatedBatch: Batch = { ...b, allocations: updatedAllocations };
+        await db.batches.put(updatedBatch);
+        if (onUpdateBatch) await onUpdateBatch(updatedBatch);
+        await saveUniversalSnapshot();
+        setToastMessage(`✓ Best Before updated to ${trimmed} across all pages`);
+        setTimeout(() => setToastMessage(null), 2500);
+      }
+    } catch (err) {
+      console.error('Failed to update Best Before:', err);
+    }
+  };
+
+  const handleLiveUpdateMrp = async (newMrp: number) => {
+    if (!previewSku || isNaN(newMrp) || newMrp <= 0) return;
+    try {
+      const updatedSku: SKU = { ...previewSku, mrp: newMrp };
+      await db.skus.put(updatedSku);
+      if (onUpdateSku) await onUpdateSku(updatedSku);
+      await saveUniversalSnapshot();
+      setToastMessage(`✓ MRP updated to ₹${newMrp} across all pages`);
+      setTimeout(() => setToastMessage(null), 2500);
+    } catch (err) {
+      console.error('Failed to update MRP:', err);
+    }
+  };
+
+  const handleLiveUpdateBatchId = async (newBatchId: string) => {
+    if (!newBatchId.trim()) return;
+    const trimmed = newBatchId.trim().toUpperCase();
+    try {
+      let b = activeBatch || (allBatches && allBatches.find(bat => bat.productId === activeProduct.id)) || allBatches?.[0];
+      if (b && b.id !== trimmed) {
+        const oldId = b.id;
+        const updatedBatch: Batch = {
+          ...b,
+          id: trimmed,
+          allocations: (b.allocations || []).map(a => ({
+            ...a,
+            batchId: trimmed
+          }))
+        };
+        await db.batches.delete(oldId);
+        await db.batches.put(updatedBatch);
+        if (onUpdateBatch) await onUpdateBatch(updatedBatch);
+        await saveUniversalSnapshot();
+        setToastMessage(`✓ Batch ID changed to ${trimmed}`);
+        setTimeout(() => setToastMessage(null), 2500);
+      }
+    } catch (err) {
+      console.error('Failed to update Batch ID:', err);
+    }
+  };
+
+  // Scope Switching Handler with One-Click Seamless Persistence
+  const handleToggleScope = async (newScope: 'global' | 'individual') => {
+    if (newScope === activeSaveScope) return;
+    const targetPackSize = previewSku.packSize;
+    if (newScope === 'global') {
+      const packTmpl = buildPackDefaultTemplate(template, targetPackSize);
+      setTemplate(packTmpl);
+      setActiveSaveScope('global');
+      setSelectedSaveTarget('pack_default');
+      if (onSavePackDefault) {
+        await onSavePackDefault(template, targetPackSize, activeProduct.id);
+      } else {
+        await db.templates.put(packTmpl);
+        await saveUniversalSnapshot();
+      }
+      setToastMessage(`✓ Switched to Global (${targetPackSize}) Default`);
+      setTimeout(() => setToastMessage(null), 3000);
+    } else {
+      const skuTmpl = buildSkuOverrideTemplate(template, activeProduct.id, activeProduct.name, targetPackSize);
+      setTemplate(skuTmpl);
+      setActiveSaveScope('individual');
+      setSelectedSaveTarget('sku_override');
+      if (onSaveSkuOverride) {
+        await onSaveSkuOverride(template, activeProduct.id, activeProduct.name, targetPackSize);
+      } else {
+        await db.templates.put(skuTmpl);
+        await saveUniversalSnapshot();
+      }
+      setToastMessage(`✓ Switched to Individual (${activeProduct.shortCode}) Override`);
+      setTimeout(() => setToastMessage(null), 3000);
+    }
+  };
 
   // Generate Printer View raster whenever needed with exact 1:1 physical millimeter bounds
   const updatePrinterViewRaster = useCallback(() => {
@@ -952,6 +1131,8 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       const packTmpl = buildPackDefaultTemplate(template, targetPackSize);
       // Immediately set the local template state so canvas retains all edits
       setTemplate(packTmpl);
+      setActiveSaveScope('global');
+      setSelectedSaveTarget('pack_default');
       if (onTemplateChange) onTemplateChange(packTmpl);
       if (onSavePackDefault) {
         await onSavePackDefault(template, targetPackSize, activeProduct.id);
@@ -980,6 +1161,8 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       const skuTmpl = buildSkuOverrideTemplate(template, activeProduct.id, activeProduct.name, targetPackSize);
       // Immediately set the local template state so canvas retains all edits
       setTemplate(skuTmpl);
+      setActiveSaveScope('individual');
+      setSelectedSaveTarget('sku_override');
       if (onTemplateChange) onTemplateChange(skuTmpl);
       if (onSaveSkuOverride) {
         await onSaveSkuOverride(template, activeProduct.id, activeProduct.name, targetPackSize);
@@ -1012,6 +1195,8 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       const remainingTemplates = (templates || []).filter(t => t.id !== overrideId && t.skuOverrideKey !== `${activeProduct.id}_${norm}`);
       const resolved = resolveLayout(activeProduct.id, targetPackSize, remainingTemplates, packProfiles);
       setTemplate(resolved.template);
+      setActiveSaveScope('global');
+      setSelectedSaveTarget('pack_default');
       if (onTemplateChange) onTemplateChange(resolved.template);
       setSelectedObjectId(resolved.template.objects[0]?.id || null);
       setHistory(h => [...h.slice(-24), JSON.parse(JSON.stringify(template))]);
@@ -1027,7 +1212,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
 
   // Primary Save Button Dispatcher
   const handlePrimarySaveClick = () => {
-    if (currentLayoutInfo.source === 'sku_override') {
+    if (activeSaveScope === 'individual') {
       handleSaveSkuCustomOverride();
     } else {
       handleSaveGeneralPackDefault();
@@ -1388,19 +1573,36 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
             </select>
           </div>
 
-          {/* Scope Inheritance Pill */}
-          <div className="hidden sm:flex items-center h-8">
-            {currentLayoutInfo.source === 'sku_override' ? (
-              <span className="flex items-center gap-1 text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 py-1 rounded-lg font-semibold" title={`Custom placement override for ${activeProduct.name} ${previewSku.packSize}`}>
-                <Star className="w-3 h-3 fill-amber-400" />
-                <span className="hidden md:inline">Override</span>
-              </span>
-            ) : (
-              <span className="flex items-center gap-1 text-[11px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2 py-1 rounded-lg font-semibold" title={`Global default layout for all ${previewSku.packSize} products`}>
-                <Globe className="w-3 h-3" />
-                <span className="hidden md:inline">Global Default</span>
-              </span>
-            )}
+          {/* Universal Scope Selector: Global vs Individual Override */}
+          <div className="flex items-center bg-zinc-950 border border-zinc-800 rounded-lg p-0.5 h-8">
+            <button
+              type="button"
+              onClick={() => handleToggleScope('global')}
+              className={`flex items-center gap-1 px-2 h-7 rounded text-[11px] font-medium transition-colors cursor-pointer ${
+                activeSaveScope === 'global'
+                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/50 shadow-xs'
+                  : 'text-zinc-400 hover:text-white'
+              }`}
+              title={`Save edits as Global Default for ALL ${previewSku.packSize} products across all categories`}
+            >
+              <Globe className="w-3 h-3 text-emerald-400 shrink-0" />
+              <span className="hidden md:inline">Global ({previewSku.packSize})</span>
+              <span className="md:hidden">Global</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleToggleScope('individual')}
+              className={`flex items-center gap-1 px-2 h-7 rounded text-[11px] font-medium transition-colors cursor-pointer ${
+                activeSaveScope === 'individual'
+                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/50 shadow-xs'
+                  : 'text-zinc-400 hover:text-white'
+              }`}
+              title={`Save edits as Custom Override ONLY for ${activeProduct.name} (${previewSku.packSize})`}
+            >
+              <Star className="w-3 h-3 text-amber-400 fill-amber-400 shrink-0" />
+              <span className="hidden md:inline">Individual ({activeProduct.shortCode})</span>
+              <span className="md:hidden">Individual</span>
+            </button>
           </div>
         </div>
 
@@ -1445,7 +1647,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
               />
               <span className="text-[10px] text-zinc-500 font-mono">px</span>
 
-              {/* Quick Swath Presets */}
+              {/* Quick Swath Presets - Strict Pixel Equality (Never highlights both) */}
               <div className="flex items-center gap-0.5 pl-0.5">
                 {[
                   { px: 148, mm: 12.5, label: '148' },
@@ -1457,7 +1659,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                     type="button"
                     onClick={() => handleSetBandPx(p.px)}
                     className={`h-7 px-1.5 rounded text-[10px] font-mono transition-colors cursor-pointer ${
-                      Math.abs(currentBandMm - p.mm) < 0.1
+                      currentBandPx === p.px
                         ? 'bg-amber-500 text-black font-bold shadow-xs'
                         : 'text-zinc-400 hover:text-white'
                     }`}
@@ -2040,7 +2242,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                         let displayText = obj.content || '';
                         if (displayText.includes('{')) {
                           displayText = displayText.replace(/\{(\w+)\}/g, (_, k) => previewValues[k] !== undefined ? previewValues[k] : `{${k}}`);
-                        } else if (obj.fieldKey && previewValues[obj.fieldKey]) {
+                        } else if (obj.fieldKey && previewValues[obj.fieldKey] && (!obj.content || obj.content === `{${obj.fieldKey}}`)) {
                           displayText = previewValues[obj.fieldKey];
                         }
 
@@ -2570,19 +2772,47 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
 
                     {/* MRP Specific Micro-Inspector */}
                     {category === 'mrp' && (
-                      <div className="p-2 rounded bg-zinc-900/80 border border-zinc-800 space-y-1.5 text-xs">
+                      <div className="p-2 rounded bg-zinc-900/80 border border-zinc-800 space-y-2 text-xs">
                         <div className="flex items-center justify-between text-[11px]">
                           <span className="text-zinc-400">Current MRP: <strong className="text-white">{previewValues.mrp}</strong></span>
                           <span className="text-amber-400 font-mono">Rate: <strong>{previewValues.rate_per_gm}/g</strong></span>
                         </div>
+                        {/* Live Single Source of Truth Price Editor */}
+                        <div className="flex items-center justify-between gap-2 p-1.5 rounded bg-zinc-950 border border-zinc-800">
+                          <label htmlFor="designer-live-mrp-input" className="text-[10px] text-zinc-400 font-medium shrink-0">Edit SKU Price:</label>
+                          <div className="flex items-center gap-1">
+                            <span className="text-xs text-emerald-400 font-bold font-mono">₹</span>
+                            <input
+                              id="designer-live-mrp-input"
+                              type="number"
+                              step="1"
+                              min="1"
+                              value={editMrpInput}
+                              onChange={e => setEditMrpInput(e.target.value)}
+                              onBlur={() => {
+                                const val = parseFloat(editMrpInput);
+                                if (!isNaN(val) && val > 0) handleLiveUpdateMrp(val);
+                              }}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter') {
+                                  const val = parseFloat(editMrpInput);
+                                  if (!isNaN(val) && val > 0) handleLiveUpdateMrp(val);
+                                }
+                              }}
+                              className="w-16 bg-zinc-900 border border-zinc-700 focus:border-emerald-500 rounded px-1.5 py-0.5 text-xs text-emerald-300 font-mono font-bold text-right focus:outline-hidden"
+                              title="Update SKU MRP across Home, Batches, Design, and Print"
+                            />
+                          </div>
+                          <span className="text-[10px] text-zinc-500 font-mono">({previewSku.packSize})</span>
+                        </div>
                         <span className="text-[9px] text-zinc-500 block">Regulatory Format Presets (Click to apply):</span>
                         <div className="grid grid-cols-1 gap-1">
                           {[
-                            { label: `₹{mrp}`, desc: 'Price only' },
-                            { label: `MRP ₹{mrp}`, desc: 'Standard label' },
-                            { label: `MRP ₹{mrp} (INCL. OF ALL TAXES)`, desc: 'Statutory compliance' },
-                            { label: `MRP ₹{mrp} (₹{rate_per_gm}/g)`, desc: 'Price + unit rate' },
-                            { label: `₹{mrp} (USP ₹{rate_per_gm}/g)`, desc: 'Short USP tag' }
+                            { label: `{mrp}`, desc: 'Price with ₹ symbol' },
+                            { label: `MRP {mrp}`, desc: 'Standard label' },
+                            { label: `MRP {mrp} (INCL. OF ALL TAXES)`, desc: 'Statutory compliance' },
+                            { label: `MRP {mrp} ({rate_per_gm}/g)`, desc: 'Price + unit rate' },
+                            { label: `{mrp} (USP {rate_per_gm}/g)`, desc: 'Short USP tag' }
                           ].map(preset => (
                             <button
                               key={preset.label}
@@ -2603,10 +2833,31 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
 
                     {/* Batch Specific Micro-Inspector */}
                     {category === 'batch' && (
-                      <div className="p-2 rounded bg-zinc-900/80 border border-zinc-800 space-y-1.5 text-xs">
+                      <div className="p-2 rounded bg-zinc-900/80 border border-zinc-800 space-y-2 text-xs">
                         <div className="flex items-center justify-between text-[11px]">
                           <span className="text-zinc-400">Active Batch: <strong className="text-amber-400 font-mono">{previewValues.batch}</strong></span>
                           <span className="text-zinc-500 font-mono text-[10px]">{activeProduct.name}</span>
+                        </div>
+                        {/* Live Batch Code Editor */}
+                        <div className="flex items-center justify-between gap-2 p-1.5 rounded bg-zinc-950 border border-zinc-800">
+                          <label htmlFor="designer-live-batch-input" className="text-[10px] text-zinc-400 font-medium shrink-0">Batch No:</label>
+                          <input
+                            id="designer-live-batch-input"
+                            type="text"
+                            value={editBatchInput}
+                            onChange={e => setEditBatchInput(e.target.value)}
+                            onBlur={() => {
+                              if (editBatchInput.trim()) handleLiveUpdateBatchId(editBatchInput.trim());
+                            }}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter' && editBatchInput.trim()) {
+                                handleLiveUpdateBatchId(editBatchInput.trim());
+                              }
+                            }}
+                            className="w-28 bg-zinc-900 border border-zinc-700 focus:border-amber-500 rounded px-1.5 py-0.5 text-xs text-amber-400 font-mono font-bold uppercase focus:outline-hidden"
+                            placeholder="e.g. ADTP014"
+                            title="Update Batch Number across all views"
+                          />
                         </div>
                         <span className="text-[9px] text-zinc-500 block">Batch Format Presets:</span>
                         <div className="grid grid-cols-2 gap-1">
@@ -2636,10 +2887,44 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
 
                     {/* MFD Specific Micro-Inspector */}
                     {category === 'mfd' && (
-                      <div className="p-2 rounded bg-zinc-900/80 border border-zinc-800 space-y-1.5 text-xs">
+                      <div className="p-2 rounded bg-zinc-900/80 border border-zinc-800 space-y-2 text-xs">
                         <div className="flex items-center justify-between text-[11px]">
                           <span className="text-zinc-400">MFD Value: <strong className="text-white font-mono">{previewValues.mfd}</strong></span>
                           <span className="text-zinc-500 font-mono text-[9px]">DD/MM/YY</span>
+                        </div>
+                        {/* Live MFD Date Editor + Today Button */}
+                        <div className="flex items-center justify-between gap-2 p-1.5 rounded bg-zinc-950 border border-zinc-800">
+                          <label htmlFor="designer-live-mfd-input" className="text-[10px] text-zinc-400 font-medium shrink-0">Mfg Date:</label>
+                          <input
+                            id="designer-live-mfd-input"
+                            type="text"
+                            value={editMfdInput}
+                            onChange={e => setEditMfdInput(e.target.value)}
+                            onBlur={() => {
+                              if (editMfdInput.trim()) handleLiveUpdateMfd(editMfdInput.trim());
+                            }}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter' && editMfdInput.trim()) {
+                                handleLiveUpdateMfd(editMfdInput.trim());
+                              }
+                            }}
+                            className="w-24 bg-zinc-900 border border-zinc-700 focus:border-amber-500 rounded px-1.5 py-0.5 text-xs text-amber-300 font-mono text-center focus:outline-hidden"
+                            placeholder="DD/MM/YY"
+                            title="Edit Manufacturing Date universally"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const todayCal = parseDateInput(new Date());
+                              const todayStr = formatCalendarDateDMY(todayCal);
+                              setEditMfdInput(todayStr);
+                              handleLiveUpdateMfd(todayStr);
+                            }}
+                            className="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-[10px] font-mono font-semibold cursor-pointer transition-colors"
+                            title="Set MFD to Today's date"
+                          >
+                            Today
+                          </button>
                         </div>
                         <span className="text-[9px] text-zinc-500 block">Manufacturing Date Presets:</span>
                         <div className="grid grid-cols-2 gap-1">
@@ -2669,10 +2954,57 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
 
                     {/* Best Before Specific Micro-Inspector */}
                     {category === 'best_before' && (
-                      <div className="p-2 rounded bg-zinc-900/80 border border-zinc-800 space-y-1.5 text-xs">
+                      <div className="p-2 rounded bg-zinc-900/80 border border-zinc-800 space-y-2 text-xs">
                         <div className="flex items-center justify-between text-[11px]">
                           <span className="text-zinc-400">Expiry Value: <strong className="text-white font-mono">{previewValues.best_before}</strong></span>
                           <span className="text-zinc-500 font-mono text-[9px]">Shelf Life</span>
+                        </div>
+                        {/* Live Expiry Date Editor */}
+                        <div className="flex items-center justify-between gap-2 p-1.5 rounded bg-zinc-950 border border-zinc-800">
+                          <label htmlFor="designer-live-bb-input" className="text-[10px] text-zinc-400 font-medium shrink-0">Expiry Date:</label>
+                          <input
+                            id="designer-live-bb-input"
+                            type="text"
+                            value={editBbInput}
+                            onChange={e => setEditBbInput(e.target.value)}
+                            onBlur={() => {
+                              if (editBbInput.trim()) handleLiveUpdateBestBefore(editBbInput.trim());
+                            }}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter' && editBbInput.trim()) {
+                                handleLiveUpdateBestBefore(editBbInput.trim());
+                              }
+                            }}
+                            className="w-28 bg-zinc-900 border border-zinc-700 focus:border-amber-500 rounded px-1.5 py-0.5 text-xs text-amber-300 font-mono text-center focus:outline-hidden"
+                            placeholder="DD/MM/YY"
+                            title="Edit Best Before Date universally"
+                          />
+                        </div>
+                        {/* Quick Statutory Shelf Life Calculation Buttons */}
+                        <div className="flex items-center gap-1 pt-0.5">
+                          <span className="text-[9px] text-zinc-500 shrink-0">Add:</span>
+                          {[6, 12, 18, 24].map(months => (
+                            <button
+                              key={months}
+                              type="button"
+                              onClick={() => {
+                                try {
+                                  const mfdToUse = editMfdInput || previewValues.mfd || new Date();
+                                  const cal = parseDateInput(mfdToUse);
+                                  const bbCal = calculateBestBeforeDate(cal, months);
+                                  const bbStr = formatCalendarDateDMY(bbCal);
+                                  setEditBbInput(bbStr);
+                                  handleLiveUpdateBestBefore(bbStr);
+                                } catch (e) {
+                                  console.error('Error calculating shelf life date:', e);
+                                }
+                              }}
+                              className="flex-1 py-0.5 rounded bg-zinc-950 hover:bg-zinc-800 text-zinc-300 hover:text-amber-300 border border-zinc-800 hover:border-amber-500/40 text-[10px] font-mono cursor-pointer transition-colors"
+                              title={`Calculate Expiry Date as MFD + ${months} months (FSSAI rule: -1 day)`}
+                            >
+                              +{months}M
+                            </button>
+                          ))}
                         </div>
                         <span className="text-[9px] text-zinc-500 block">Best Before & Expiry Presets:</span>
                         <div className="grid grid-cols-2 gap-1">
@@ -3859,7 +4191,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                         type="button"
                         onClick={() => handleSetBandPx(p.px)}
                         className={`py-1 rounded text-[9px] font-mono transition-colors cursor-pointer ${
-                          Math.abs(currentBandMm - p.mm) < 0.1
+                          currentBandPx === p.px
                             ? 'bg-amber-500 text-black font-bold shadow-xs'
                             : 'bg-zinc-950 border border-zinc-800 text-zinc-400 hover:text-white'
                         }`}

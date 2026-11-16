@@ -453,7 +453,7 @@ function renderSingleObject(
     let text = obj.content || '';
     if (text.includes('{')) {
       text = text.replace(/\{(\w+)\}/g, (_, k) => values[k] !== undefined ? values[k] : `{${k}}`);
-    } else if (obj.fieldKey && values[obj.fieldKey]) {
+    } else if (obj.fieldKey && values[obj.fieldKey] && (!obj.content || obj.content === `{${obj.fieldKey}}`)) {
       text = values[obj.fieldKey];
     }
 
@@ -563,7 +563,7 @@ function renderSingleObject(
     let text = obj.content || '';
     if (text.includes('{')) {
       text = text.replace(/\{(\w+)\}/g, (_, k) => values[k] !== undefined ? values[k] : `{${k}}`);
-    } else if (obj.fieldKey && values[obj.fieldKey]) {
+    } else if (obj.fieldKey && values[obj.fieldKey] && (!obj.content || obj.content === `{${obj.fieldKey}}`)) {
       text = values[obj.fieldKey];
     }
     const payload = text.trim() || (obj.type === 'barcode' ? (values.batch || 'ADTP014') : 'https://adalaj.in');
@@ -804,7 +804,7 @@ export function renderTemplateToSvgString(
       let text = obj.content || '';
       if (text.includes('{')) {
         text = text.replace(/\{(\w+)\}/g, (_: string, k: string) => values[k] !== undefined ? values[k] : `{${k}}`);
-      } else if (obj.fieldKey && values[obj.fieldKey]) {
+      } else if (obj.fieldKey && values[obj.fieldKey] && (!obj.content || obj.content === `{${obj.fieldKey}}`)) {
         text = values[obj.fieldKey];
       }
       if (obj.uppercase) text = text.toUpperCase();
@@ -848,7 +848,7 @@ export function renderTemplateToSvgString(
       let text = obj.content || '';
       if (text.includes('{')) {
         text = text.replace(/\{(\w+)\}/g, (_: string, k: string) => values[k] !== undefined ? values[k] : `{${k}}`);
-      } else if (obj.fieldKey && values[obj.fieldKey]) {
+      } else if (obj.fieldKey && values[obj.fieldKey] && (!obj.content || obj.content === `{${obj.fieldKey}}`)) {
         text = values[obj.fieldKey];
       }
       const payload = text.trim() || (obj.type === 'barcode' ? (values.batch || 'ADTP014') : 'https://adalaj.in');

@@ -962,6 +962,8 @@ export default function App() {
             onSaveSkuOverride={handleSaveSkuOverride}
             onRevertSkuOverride={handleRevertSkuOverride}
             onTemplateChange={handleTemplateChange}
+            onUpdateBatch={handleUpdateBatch}
+            onUpdateSku={handleUpdateSku}
             onNavigateToPrint={() => navigateToRoute('print')}
           />
         )}
