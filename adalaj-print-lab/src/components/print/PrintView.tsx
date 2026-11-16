@@ -141,7 +141,7 @@ export const PrintView: React.FC<PrintViewProps> = ({
   }, [currentAlloc?.id, currentAlloc?.mfd, currentAlloc?.bestBefore, currentBatch?.id, currentBatch?.lotDate, currentProduct?.id]);
 
   // Universal Live Date Persistence
-  const handleSavePrintDates = async (newMfd: string, newBb?: string) => {
+  const handleSavePrintDates = async (newMfd: string, newBb?: string, syncInputs = true) => {
     if (!currentBatch) return;
     let cal;
     try {
@@ -177,8 +177,10 @@ export const PrintView: React.FC<PrintViewProps> = ({
       allocations: updatedAllocs
     };
 
-    setPrintMfdInput(dmyMfd);
-    setPrintBbInput(dmyBb);
+    if (syncInputs) {
+      setPrintMfdInput(dmyMfd);
+      setPrintBbInput(dmyBb);
+    }
 
     await db.batches.put(updatedBatch);
     if (onUpdateBatch) await onUpdateBatch(updatedBatch);
@@ -1147,21 +1149,23 @@ export const PrintView: React.FC<PrintViewProps> = ({
                         onChange={e => {
                           const val = e.target.value;
                           setPrintMfdInput(val);
-                          try {
-                            parseDateInput(val);
-                            handleSavePrintDates(val, printBbInput);
-                          } catch {
-                            // keep typing
+                          if (/^\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}$/.test(val.trim())) {
+                            try {
+                              parseDateInput(val);
+                              handleSavePrintDates(val, printBbInput, false);
+                            } catch {
+                              // keep typing
+                            }
                           }
                         }}
                         onBlur={() => {
                           if (printMfdInput.trim()) {
-                            handleSavePrintDates(printMfdInput, printBbInput);
+                            handleSavePrintDates(printMfdInput, printBbInput, true);
                           }
                         }}
                         onKeyDown={e => {
                           if (e.key === 'Enter' && printMfdInput.trim()) {
-                            handleSavePrintDates(printMfdInput, printBbInput);
+                            handleSavePrintDates(printMfdInput, printBbInput, true);
                           }
                         }}
                         className="w-full bg-zinc-900 border border-zinc-700 focus:border-amber-500 rounded px-2 py-1 font-mono text-amber-300 text-center text-xs focus:outline-hidden"
@@ -1177,21 +1181,23 @@ export const PrintView: React.FC<PrintViewProps> = ({
                         onChange={e => {
                           const val = e.target.value;
                           setPrintBbInput(val);
-                          try {
-                            parseDateInput(val);
-                            handleSavePrintDates(printMfdInput, val);
-                          } catch {
-                            // keep typing
+                          if (/^\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}$/.test(val.trim())) {
+                            try {
+                              parseDateInput(val);
+                              handleSavePrintDates(printMfdInput, val, false);
+                            } catch {
+                              // keep typing
+                            }
                           }
                         }}
                         onBlur={() => {
                           if (printBbInput.trim()) {
-                            handleSavePrintDates(printMfdInput, printBbInput);
+                            handleSavePrintDates(printMfdInput, printBbInput, true);
                           }
                         }}
                         onKeyDown={e => {
                           if (e.key === 'Enter' && printBbInput.trim()) {
-                            handleSavePrintDates(printMfdInput, printBbInput);
+                            handleSavePrintDates(printMfdInput, printBbInput, true);
                           }
                         }}
                         className="w-full bg-zinc-900 border border-zinc-700 focus:border-amber-500 rounded px-2 py-1 font-mono text-amber-300 text-center text-xs focus:outline-hidden"

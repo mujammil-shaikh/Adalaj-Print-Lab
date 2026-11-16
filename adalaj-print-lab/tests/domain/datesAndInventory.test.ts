@@ -27,6 +27,13 @@ describe('Domain: Date Calculations (DATA-09, DATA-10)', () => {
     expect(formatCalendarDateDMY(bb)).toBe('09/10/27');
   });
 
+  it('throws on incomplete or bare number date inputs', () => {
+    expect(() => parseDateInput('')).toThrow('Empty date string');
+    expect(() => parseDateInput('1')).toThrow('Incomplete date string');
+    expect(() => parseDateInput('10')).toThrow('Incomplete date string');
+    expect(() => parseDateInput('2026')).toThrow('Incomplete date string');
+  });
+
   it('matches all 4 product-owner verified shelf-life test vectors', () => {
     // 1. 15 Jan 2026 + 6 months -> 14 Jul 2026
     const mfd1 = parseDateInput('2026-01-15');

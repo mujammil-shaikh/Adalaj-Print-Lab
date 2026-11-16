@@ -19,15 +19,25 @@ export function parseDateInput(value: string | Date): CalendarDate {
   }
 
   const trimmed = (value || '').trim();
+  if (!trimmed) {
+    throw new Error('Empty date string');
+  }
+
+  // Reject bare numbers (e.g. "1", "20", "2026") which new Date() parses unpredictably
+  if (/^\d+$/.test(trimmed)) {
+    throw new Error(`Incomplete date string: "${value}"`);
+  }
 
   // Handle YYYY-MM-DD or YYYY/MM/DD or YYYY.MM.DD
   const isoMatch = trimmed.match(/^(\d{4})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{1,2})$/);
   if (isoMatch) {
-    return {
-      year: parseInt(isoMatch[1], 10),
-      month: parseInt(isoMatch[2], 10),
-      day: parseInt(isoMatch[3], 10),
-    };
+    const year = parseInt(isoMatch[1], 10);
+    const month = parseInt(isoMatch[2], 10);
+    const day = parseInt(isoMatch[3], 10);
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return { year, month, day };
+    }
+    throw new Error(`Invalid calendar numbers in date: "${value}"`);
   }
 
   // Handle DD/MM/YY or DD/MM/YYYY or DD-MM-YY or DD-MM-YYYY or DD.MM.YY with optional spaces
@@ -35,22 +45,27 @@ export function parseDateInput(value: string | Date): CalendarDate {
   if (dmyMatch) {
     let year = parseInt(dmyMatch[3], 10);
     if (year < 100) year += 2000;
-    return {
-      year,
-      month: parseInt(dmyMatch[2], 10),
-      day: parseInt(dmyMatch[1], 10),
-    };
+    const month = parseInt(dmyMatch[2], 10);
+    const day = parseInt(dmyMatch[1], 10);
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return { year, month, day };
+    }
+    throw new Error(`Invalid calendar numbers in date: "${value}"`);
   }
 
-  const d = new Date(trimmed);
-  if (isNaN(d.getTime())) {
-    throw new Error(`Invalid date string: "${value}"`);
+  // Handle textual dates like "16 Nov 2026" or full ISO timestamps like "2026-11-16T12:00:00Z"
+  if (/[a-zA-Z]/.test(trimmed) || trimmed.includes('T')) {
+    const d = new Date(trimmed);
+    if (!isNaN(d.getTime())) {
+      return {
+        year: d.getFullYear(),
+        month: d.getMonth() + 1,
+        day: d.getDate(),
+      };
+    }
   }
-  return {
-    year: d.getFullYear(),
-    month: d.getMonth() + 1,
-    day: d.getDate(),
-  };
+
+  throw new Error(`Invalid date string: "${value}"`);
 }
 
 export function formatCalendarDateDMY(date: CalendarDate, twoDigitYear = true): string {

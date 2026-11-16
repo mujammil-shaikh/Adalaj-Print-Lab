@@ -631,7 +631,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
   }, [previewValues.mfd, previewValues.best_before, previewSku?.mrp, previewValues.batch]);
 
   // Universal Single-Source-of-Truth Live Handlers
-  const handleLiveUpdateMfd = async (newMfd: string) => {
+  const handleLiveUpdateMfd = async (newMfd: string, syncInputs = true) => {
     if (!newMfd.trim()) return;
     const trimmed = newMfd.trim();
     let cal;
@@ -707,8 +707,10 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       if (onUpdateBatch) await onUpdateBatch(updatedBatch);
       localStorage.setItem('als_active_batch_id', updatedBatch.id);
 
-      setEditMfdInput(dmyMfd);
-      setEditBbInput(dmyBb);
+      if (syncInputs) {
+        setEditMfdInput(dmyMfd);
+        setEditBbInput(dmyBb);
+      }
 
       // Also ensure any template text object displaying literal MFD updates to new date
       if (template && template.objects) {
@@ -736,7 +738,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
     }
   };
 
-  const handleLiveUpdateBestBefore = async (newBb: string) => {
+  const handleLiveUpdateBestBefore = async (newBb: string, syncInputs = true) => {
     if (!newBb.trim()) return;
     const trimmed = newBb.trim();
     let cal;
@@ -806,7 +808,9 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       if (onUpdateBatch) await onUpdateBatch(updatedBatch);
       localStorage.setItem('als_active_batch_id', updatedBatch.id);
 
-      setEditBbInput(dmyBb);
+      if (syncInputs) {
+        setEditBbInput(dmyBb);
+      }
 
       if (template && template.objects) {
         let tmplChanged = false;
@@ -3077,19 +3081,21 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                             onChange={e => {
                               const val = e.target.value;
                               setEditMfdInput(val);
-                              try {
-                                parseDateInput(val);
-                                handleLiveUpdateMfd(val);
-                              } catch {
-                                // keep typing
+                              if (/^\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}$/.test(val.trim())) {
+                                try {
+                                  parseDateInput(val);
+                                  handleLiveUpdateMfd(val, false);
+                                } catch {
+                                  // keep typing
+                                }
                               }
                             }}
                             onBlur={() => {
-                              if (editMfdInput.trim()) handleLiveUpdateMfd(editMfdInput.trim());
+                              if (editMfdInput.trim()) handleLiveUpdateMfd(editMfdInput.trim(), true);
                             }}
                             onKeyDown={e => {
                               if (e.key === 'Enter' && editMfdInput.trim()) {
-                                handleLiveUpdateMfd(editMfdInput.trim());
+                                handleLiveUpdateMfd(editMfdInput.trim(), true);
                               }
                             }}
                             className="w-24 bg-zinc-900 border border-zinc-700 focus:border-amber-500 rounded px-1.5 py-0.5 text-xs text-amber-300 font-mono text-center focus:outline-hidden"
@@ -3153,19 +3159,21 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                             onChange={e => {
                               const val = e.target.value;
                               setEditBbInput(val);
-                              try {
-                                parseDateInput(val);
-                                handleLiveUpdateBestBefore(val);
-                              } catch {
-                                // keep typing
+                              if (/^\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}$/.test(val.trim())) {
+                                try {
+                                  parseDateInput(val);
+                                  handleLiveUpdateBestBefore(val, false);
+                                } catch {
+                                  // keep typing
+                                }
                               }
                             }}
                             onBlur={() => {
-                              if (editBbInput.trim()) handleLiveUpdateBestBefore(editBbInput.trim());
+                              if (editBbInput.trim()) handleLiveUpdateBestBefore(editBbInput.trim(), true);
                             }}
                             onKeyDown={e => {
                               if (e.key === 'Enter' && editBbInput.trim()) {
-                                handleLiveUpdateBestBefore(editBbInput.trim());
+                                handleLiveUpdateBestBefore(editBbInput.trim(), true);
                               }
                             }}
                             className="w-28 bg-zinc-900 border border-zinc-700 focus:border-amber-500 rounded px-1.5 py-0.5 text-xs text-amber-300 font-mono text-center focus:outline-hidden"
