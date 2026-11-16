@@ -812,25 +812,38 @@ export const PrintView: React.FC<PrintViewProps> = ({
   };
 
   // Direct Hardware Connect handler
-  const handleConnectHardware = async () => {
-    if (transportType === 'webusb') {
-      const res = await hardwareManager.connectWebUsb();
-      if (res.success) {
-        setConnectedDeviceName(res.deviceName || 'WebUSB Controller');
+  const handleConnectHardware = async (): Promise<{ success: boolean; deviceName?: string; error?: string }> => {
+    let res: { success: boolean; deviceName?: string; error?: string } = { success: false, error: 'Unknown transport' };
+    try {
+      if (transportType === 'webusb') {
+        res = await hardwareManager.connectWebUsb();
+      } else if (transportType === 'bluetooth') {
+        res = await hardwareManager.connectBluetooth();
+      } else if (transportType === 'webserial') {
+        res = await hardwareManager.connectSerial();
+      } else if (transportType === 'network_socket') {
+        hardwareManager.setNetworkConfig({ ip: networkIp, port: networkPort });
+        res = { success: true, deviceName: `${networkIp}:${networkPort}` };
       }
-    } else if (transportType === 'bluetooth') {
-      const res = await hardwareManager.connectBluetooth();
-      if (res.success) {
-        setConnectedDeviceName(res.deviceName || 'Bluetooth Handheld');
-      }
-    } else if (transportType === 'webserial') {
-      const res = await hardwareManager.connectSerial();
-      if (res.success) {
-        setConnectedDeviceName(res.deviceName || 'Serial / Bluetooth COM Port');
-      }
-    } else if (transportType === 'network_socket') {
-      hardwareManager.setNetworkConfig({ ip: networkIp, port: networkPort });
-      setConnectedDeviceName(`${networkIp}:${networkPort}`);
+    } catch (err: any) {
+      res = { success: false, error: err?.message || 'Connection error' };
+    }
+
+    if (res.success) {
+      const devName = res.deviceName || (transportType === 'bluetooth' ? 'R2D2-SX100 Handheld' : 'Hardware Controller');
+      setConnectedDeviceName(devName);
+      setTransmitInlineMsg({
+        type: 'success',
+        text: `✓ Paired & Connected: ${devName}. Ready to transmit payload.`
+      });
+      return { success: true, deviceName: devName };
+    } else {
+      const errMsg = res.error || `Connection to ${transportType.toUpperCase()} was cancelled or failed. Check printer power & pairing.`;
+      setTransmitInlineMsg({
+        type: 'error',
+        text: errMsg
+      });
+      return { success: false, error: errMsg };
     }
   };
 
@@ -843,20 +856,26 @@ export const PrintView: React.FC<PrintViewProps> = ({
       await hardwareManager.disconnectSerial();
     }
     setConnectedDeviceName('');
+    setTransmitInlineMsg(null);
   };
 
   // Direct Hardware Transmit (WebUSB, Bluetooth, Network Socket)
   const handleTransmitDirect = async () => {
     setTransmitInlineMsg(null);
 
+    let activeDevice = connectedDeviceName;
+
     // Auto-prompt to connect if not yet paired
-    if ((transportType === 'bluetooth' || transportType === 'webusb' || transportType === 'webserial') && !connectedDeviceName) {
+    if ((transportType === 'bluetooth' || transportType === 'webusb' || transportType === 'webserial') && !activeDevice) {
       setTransmitInlineMsg({
         type: 'warning',
-        text: `Printer not paired. Opening ${transportType === 'bluetooth' ? 'Bluetooth' : transportType === 'webserial' ? 'Serial COM' : 'WebUSB'} chooser...`
+        text: `Printer not paired. Opening ${transportType === 'bluetooth' ? 'Bluetooth' : transportType === 'webserial' ? 'Serial COM' : 'WebUSB'} chooser for R2D2-SX100...`
       });
-      await handleConnectHardware();
-      return;
+      const connectRes = await handleConnectHardware();
+      if (!connectRes.success) {
+        return; // handleConnectHardware already displayed inline error message!
+      }
+      activeDevice = connectRes.deviceName || 'R2D2-SX100 Handheld';
     }
 
     if (values.mrp === '[Needs MRP]') {
@@ -888,7 +907,7 @@ export const PrintView: React.FC<PrintViewProps> = ({
     setIsTransmitting(true);
     setTransmitInlineMsg({
       type: 'warning',
-      text: `Connecting & transmitting 1-bit BMP payload to ${transportType.toUpperCase()}...`
+      text: `Rasterizing & transmitting 1-bit BMP payload to ${activeDevice || transportType.toUpperCase()}...`
     });
 
     try {

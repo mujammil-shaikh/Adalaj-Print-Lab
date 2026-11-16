@@ -247,7 +247,7 @@ export default function App() {
     };
   }, [loadDatabase]);
 
-  // Handle immediate in-memory template changes from Designer View
+  // Handle immediate in-memory template changes from Designer View with instant DB persistence
   const handleTemplateChange = useCallback((updatedTmpl: Template) => {
     setActiveTemplate(updatedTmpl);
     setTemplates(prev => {
@@ -259,6 +259,8 @@ export default function App() {
       }
       return [updatedTmpl, ...prev];
     });
+    db.templates.put(updatedTmpl).catch(console.error);
+    saveUniversalSnapshot().catch(console.error);
   }, []);
 
   // Toggle Theme
@@ -678,8 +680,10 @@ export default function App() {
     const targetId = getPackDefaultTemplateId(packSize);
     const packDefaultTmpl = buildPackDefaultTemplate(tmplToSave, packSize);
 
+    const allDbTemplates = await db.templates.toArray();
+
     // 1. Remove ANY previous template that served as the default for this pack size
-    let updatedTemplates = templates.filter(t => 
+    let updatedTemplates = allDbTemplates.filter(t => 
       t.id !== targetId && 
       !(t.packSizeScope === norm && t.isPackSizeDefault) &&
       !(norm === '100g' && t.id === 'tmpl_adalaj_6line')
@@ -722,7 +726,8 @@ export default function App() {
     const norm = normalizePackSize(packSize);
     const skuOverrideTmpl = buildSkuOverrideTemplate(tmplToSave, productId, productName, packSize);
     await db.templates.put(skuOverrideTmpl);
-    let updatedTemplates = templates.filter(t => t.id !== skuOverrideTmpl.id && t.skuOverrideKey !== `${productId}_${norm}`);
+    const allDbTemplates = await db.templates.toArray();
+    let updatedTemplates = allDbTemplates.filter(t => t.id !== skuOverrideTmpl.id && t.skuOverrideKey !== `${productId}_${norm}`);
     updatedTemplates = [skuOverrideTmpl, ...updatedTemplates];
     setTemplates(updatedTemplates);
     setActiveTemplate(skuOverrideTmpl);

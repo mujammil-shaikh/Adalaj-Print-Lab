@@ -228,7 +228,7 @@ class HardwareManager {
         ]
       });
 
-      const deviceName = device.name || 'Bluetooth Handheld Printer';
+      const deviceName = device.name || 'R2D2-SX100 Handheld';
       this.addLog('info', `Paired with ${deviceName}. Connecting GATT server...`);
       
       let server: any = null;
@@ -299,7 +299,9 @@ class HardwareManager {
 
       return { success: true, deviceName };
     } catch (err: any) {
-      const msg = err.message || 'Bluetooth pairing was cancelled or failed';
+      const msg = err.name === 'NotFoundError' || err.message?.includes('User cancelled')
+        ? 'Bluetooth pairing was cancelled by user. Please select your R2D2-SX100 printer from the dialog.'
+        : err.message || 'Bluetooth pairing failed';
       this.addLog('error', `Bluetooth error: ${msg}`);
       return { success: false, error: msg };
     }
@@ -355,7 +357,7 @@ class HardwareManager {
     }
 
     if (!this.btCharacteristic) {
-      const err = 'Device is paired via Bluetooth, but no writable GATT printer characteristic was exposed. For Windows/PC Bluetooth printers, please select "Web Serial" mode to transmit via virtual COM port.';
+      const err = `Device "${this.btDeviceName || 'R2D2-SX100'}" is paired, but no writable BLE GATT printer characteristic was exposed. For Windows handheld TIJ printers, Windows uses virtual COM ports (SPP). Please select "Web Serial / COM" above to transmit directly via COM port @ 115200 baud.`;
       this.addLog('error', err);
       return { success: false, bytesWritten: 0, error: err };
     }

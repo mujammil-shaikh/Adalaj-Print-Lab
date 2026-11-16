@@ -245,38 +245,57 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
     }
   }, [currentLayoutInfo.source, previewSku.id, activeProduct.id]);
 
+  // Track latest template in ref for unmount flush
+  const latestTemplateRef = useRef(template);
+  latestTemplateRef.current = template;
+
+  const flushTemplateToStorage = useCallback(async (tmpl: Template) => {
+    if (!tmpl || !tmpl.id) return;
+    try {
+      let tmplToSave = tmpl;
+      const norm = normalizePackSize(previewSku.packSize);
+      if (activeSaveScope === 'global') {
+        if (!tmplToSave.isPackSizeDefault || tmplToSave.packSizeScope !== norm) {
+          tmplToSave = buildPackDefaultTemplate(tmplToSave, previewSku.packSize);
+        }
+      } else {
+        if (!tmplToSave.isSkuOverride || tmplToSave.skuOverrideKey !== `${activeProduct.id}_${norm}`) {
+          tmplToSave = buildSkuOverrideTemplate(tmplToSave, activeProduct.id, activeProduct.name, previewSku.packSize);
+        }
+      }
+      await db.templates.put(tmplToSave);
+      if (onTemplateChange) onTemplateChange(tmplToSave);
+      await saveUniversalSnapshot();
+    } catch (err) {
+      console.error('Template flush error:', err);
+    }
+  }, [previewSku.packSize, activeSaveScope, activeProduct.id, activeProduct.name, onTemplateChange]);
+
   // Real-time Auto-Save with Explicit Scope Awareness & Dual-Layer Persistence
   useEffect(() => {
     if (!template || !template.id) return;
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     autoSaveTimerRef.current = setTimeout(async () => {
-      try {
-        let tmplToSave = template;
-        const norm = normalizePackSize(previewSku.packSize);
-        if (activeSaveScope === 'global') {
-          if (!tmplToSave.isPackSizeDefault || tmplToSave.packSizeScope !== norm) {
-            tmplToSave = buildPackDefaultTemplate(tmplToSave, previewSku.packSize);
-          }
-        } else {
-          if (!tmplToSave.isSkuOverride || tmplToSave.skuOverrideKey !== `${activeProduct.id}_${norm}`) {
-            tmplToSave = buildSkuOverrideTemplate(tmplToSave, activeProduct.id, activeProduct.name, previewSku.packSize);
-          }
-        }
-        await db.templates.put(tmplToSave);
-        if (onTemplateChange) onTemplateChange(tmplToSave);
-        await saveUniversalSnapshot();
-        const now = new Date();
-        const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        setAutoSaveStatus(`Auto-saved ${timeStr}`);
-      } catch (err) {
-        console.error('Auto-save error:', err);
-      }
-    }, 400);
+      await flushTemplateToStorage(template);
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      setAutoSaveStatus(`Auto-saved ${timeStr}`);
+    }, 300);
 
     return () => {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     };
-  }, [template, onTemplateChange, activeSaveScope, previewSku.packSize, activeProduct.id, activeProduct.name]);
+  }, [template, flushTemplateToStorage]);
+
+  // Flush on unmount (e.g. when navigating to Print or Batches tab)
+  useEffect(() => {
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+      if (latestTemplateRef.current) {
+        flushTemplateToStorage(latestTemplateRef.current);
+      }
+    };
+  }, [flushTemplateToStorage]);
 
   // Undo / Redo history stacks (up to 25 states)
   const [history, setHistory] = useState<Template[]>([]);
@@ -1312,12 +1331,14 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       setTemplate(packTmpl);
       setActiveSaveScope('global');
       setSelectedSaveTarget('pack_default');
+      await db.templates.put(packTmpl);
       if (onTemplateChange) onTemplateChange(packTmpl);
       if (onSavePackDefault) {
-        await onSavePackDefault(template, targetPackSize, activeProduct.id);
+        await onSavePackDefault(packTmpl, targetPackSize, activeProduct.id);
       } else {
         await onSaveTemplate(packTmpl, 'All SKUs of this pack size');
       }
+      await saveUniversalSnapshot();
       setSaveStatus('saved');
       setToastMessage(`✓ Saved as Global Default for all ${targetPackSize} packages!`);
       setTimeout(() => setSaveStatus('idle'), 2500);
@@ -1342,12 +1363,14 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       setTemplate(skuTmpl);
       setActiveSaveScope('individual');
       setSelectedSaveTarget('sku_override');
+      await db.templates.put(skuTmpl);
       if (onTemplateChange) onTemplateChange(skuTmpl);
       if (onSaveSkuOverride) {
-        await onSaveSkuOverride(template, activeProduct.id, activeProduct.name, targetPackSize);
+        await onSaveSkuOverride(skuTmpl, activeProduct.id, activeProduct.name, targetPackSize);
       } else {
         await onSaveTemplate(skuTmpl, 'This SKU');
       }
+      await saveUniversalSnapshot();
       setSaveStatus('saved');
       setToastMessage(`✓ Saved Custom Override for ${activeProduct.shortCode} (${targetPackSize})`);
       setTimeout(() => setSaveStatus('idle'), 2500);

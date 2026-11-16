@@ -242,37 +242,8 @@ export function initializeDatabase(): Promise<void> {
 }
 
 export function sanitizeTemplatesForCutoff(templates: Template[]): { updated: Template[]; changed: boolean } {
-  let changed = false;
-  const updated = templates.map(t => {
-    let tChanged = false;
-    const is100g = t.packSizeScope === '100g' || t.id.includes('100g') || t.id === 'tmpl_adalaj_6line';
-    const targetX = is100g ? 1.0 : 0.5;
-    const targetW = is100g ? 10.5 : 11.5;
-
-    const newObjects = t.objects.map(obj => {
-      if (obj.type === 'field' && (obj.fieldKey === 'mfd' || obj.fieldKey === 'best_before')) {
-        if (obj.fontFamily === 'Roboto Mono' || obj.fontSizeMm > 2.8 || (obj.letterSpacingMm && obj.letterSpacingMm > 0.02)) {
-          tChanged = true;
-          return {
-            ...obj,
-            fontFamily: 'Roboto Condensed',
-            fontSizeMm: 2.5,
-            fontSizePt: 7.5,
-            width: targetW,
-            letterSpacingMm: 0,
-            x: targetX
-          };
-        }
-      }
-      return obj;
-    });
-    if (tChanged) {
-      changed = true;
-      return { ...t, objects: newObjects, updatedAt: new Date().toISOString() };
-    }
-    return t;
-  });
-  return { updated, changed };
+  // Preserve all user-configured component sizes, font families, positions, and offsets exactly as saved without resetting to default on refresh
+  return { updated: templates, changed: false };
 }
 
 export async function healBatchesAndAllocations(): Promise<boolean> {
