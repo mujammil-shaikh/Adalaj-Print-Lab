@@ -54,12 +54,21 @@ export function runPreflightCheck(params: {
 
   // Verify Geometry & Band constraints
   if (template && machine) {
-    const bandMm = template.customBandMm || machine.printBandMm || 12.7;
+    const bandMm = template.customBandMm || machine.printBandMm || 12.5;
+    const lengthMm = template.customLengthMm || packProfile?.printWindowLengthMm || (template.travel === 'Vertical' ? 35.0 : 45.0);
+
+    const isVertical = template.travel === 'Vertical';
+    const widthLimit = isVertical ? bandMm : lengthMm;
+    const heightLimit = isVertical ? lengthMm : bandMm;
+
     for (const obj of template.objects) {
-      if (obj.y + obj.height > bandMm) {
-        blockers.push(`Object "${obj.content || obj.id}" exceeds usable print band (${bandMm} mm)`);
+      if (obj.x + obj.width > widthLimit + 0.5) {
+        blockers.push(`Object "${obj.content || obj.id}" exceeds printable width (${widthLimit} mm)`);
       }
-      if (obj.x < 0 || obj.y < 0) {
+      if (obj.y + obj.height > heightLimit + 0.5) {
+        blockers.push(`Object "${obj.content || obj.id}" exceeds printable height (${heightLimit} mm)`);
+      }
+      if (obj.x < -0.1 || obj.y < -0.1) {
         blockers.push(`Object "${obj.content || obj.id}" has negative coordinates (out of printable area)`);
       }
     }

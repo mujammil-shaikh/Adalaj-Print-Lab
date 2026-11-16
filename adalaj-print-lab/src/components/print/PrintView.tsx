@@ -96,6 +96,7 @@ export const PrintView: React.FC<PrintViewProps> = ({
   const [transportType, setTransportType] = useState<HardwareTransportType>('usb_drive');
   const [connectedDeviceName, setConnectedDeviceName] = useState<string>('');
   const [isTransmitting, setIsTransmitting] = useState(false);
+  const [transmitInlineMsg, setTransmitInlineMsg] = useState<{ type: 'success' | 'error' | 'warning'; text: string } | null>(null);
   const [hardwareLogs, setHardwareLogs] = useState<HardwareLogEntry[]>([]);
   const [networkIp, setNetworkIp] = useState<string>('192.168.1.100');
   const [networkPort, setNetworkPort] = useState<number>(9100);
@@ -844,8 +845,22 @@ export const PrintView: React.FC<PrintViewProps> = ({
 
   // Direct Hardware Transmit (WebUSB, Bluetooth, Network Socket)
   const handleTransmitDirect = async () => {
+    setTransmitInlineMsg(null);
+
+    // Auto-prompt to connect if not yet paired
+    if ((transportType === 'bluetooth' || transportType === 'webusb' || transportType === 'webserial') && !connectedDeviceName) {
+      setTransmitInlineMsg({
+        type: 'warning',
+        text: `Printer not paired. Opening ${transportType === 'bluetooth' ? 'Bluetooth' : transportType === 'webserial' ? 'Serial COM' : 'WebUSB'} chooser...`
+      });
+      await handleConnectHardware();
+      return;
+    }
+
     if (values.mrp === '[Needs MRP]') {
-      setExportCompleteMsg('❌ Transmission blocked: Missing authorized MRP.');
+      const msg = '❌ Transmission blocked: Missing authorized MRP.';
+      setExportCompleteMsg(msg);
+      setTransmitInlineMsg({ type: 'error', text: msg });
       return;
     }
 
@@ -861,12 +876,19 @@ export const PrintView: React.FC<PrintViewProps> = ({
         packProfile
       });
       if (!preflight.passed) {
-        setExportCompleteMsg(`❌ Direct transmission blocked: ${preflight.blockers[0]}`);
+        const msg = `❌ Direct transmission blocked: ${preflight.blockers[0]}`;
+        setExportCompleteMsg(msg);
+        setTransmitInlineMsg({ type: 'error', text: msg });
         return;
       }
     }
 
     setIsTransmitting(true);
+    setTransmitInlineMsg({
+      type: 'warning',
+      text: `Connecting & transmitting 1-bit BMP payload to ${transportType.toUpperCase()}...`
+    });
+
     try {
       const targetDocW = isRotated90or270 ? exportHeightPx : exportWidthPx;
       const targetDocH = isRotated90or270 ? exportWidthPx : exportHeightPx;
@@ -893,6 +915,10 @@ export const PrintView: React.FC<PrintViewProps> = ({
 
       const res = await hardwareManager.dispatchPrintJob(transportType, bmpBlob, jobCode);
       setExportCompleteMsg(res.message);
+      setTransmitInlineMsg({
+        type: res.success ? 'success' : 'error',
+        text: res.message
+      });
 
       if (res.success && currentProduct && currentBatch && currentAlloc) {
         const job = createImmutablePrintJobSnapshot({
@@ -928,6 +954,7 @@ export const PrintView: React.FC<PrintViewProps> = ({
       }
     } catch (err: any) {
       console.error(err);
+      setTransmitInlineMsg({ type: 'error', text: `Hardware transmission error: ${err.message}` });
     } finally {
       setIsTransmitting(false);
     }
@@ -1349,14 +1376,37 @@ export const PrintView: React.FC<PrintViewProps> = ({
 
             {/* Direct Hardware Dispatch Button */}
             {transportType !== 'usb_drive' && (
-              <button
-                onClick={handleTransmitDirect}
-                disabled={isTransmitting}
-                className="w-full py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-bold flex items-center justify-center gap-1.5 shadow-sm transition-colors"
-              >
-                <Send className="w-3.5 h-3.5" />
-                <span>{isTransmitting ? 'Transmitting...' : `Transmit Payload to ${transportType.toUpperCase()}`}</span>
-              </button>
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={handleTransmitDirect}
+                  disabled={isTransmitting}
+                  className="w-full py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-black font-bold flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Send className={`w-4 h-4 ${isTransmitting ? 'animate-bounce' : ''}`} />
+                  <span>{isTransmitting ? 'Transmitting...' : `Transmit Payload to ${transportType.toUpperCase()}`}</span>
+                </button>
+                {transmitInlineMsg && (
+                  <div
+                    className={`p-3 rounded-lg text-xs flex items-start gap-2 border font-mono transition-all animate-in fade-in duration-200 ${
+                      transmitInlineMsg.type === 'success'
+                        ? 'bg-emerald-950/40 border-emerald-500/50 text-emerald-300'
+                        : transmitInlineMsg.type === 'error'
+                        ? 'bg-rose-950/40 border-rose-500/50 text-rose-300'
+                        : 'bg-amber-950/40 border-amber-500/50 text-amber-300'
+                    }`}
+                  >
+                    {transmitInlineMsg.type === 'success' ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                    ) : transmitInlineMsg.type === 'error' ? (
+                      <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                    ) : (
+                      <RefreshCw className="w-4 h-4 text-amber-400 shrink-0 mt-0.5 animate-spin" />
+                    )}
+                    <span className="leading-relaxed flex-1">{transmitInlineMsg.text}</span>
+                  </div>
+                )}
+              </div>
             )}
           </div>
 
