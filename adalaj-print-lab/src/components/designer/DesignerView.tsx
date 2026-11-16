@@ -1906,7 +1906,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                     onClick={() => handleSetLengthMm(len)}
                     className={`h-7 px-1.5 rounded text-[10px] font-mono transition-colors cursor-pointer ${
                       Math.abs(currentLengthMm - len) < 0.5
-                        ? 'bg-amber-500/30 text-amber-300 font-bold border border-amber-500/50'
+                        ? 'bg-amber-500 text-black font-bold shadow-xs'
                         : 'text-zinc-400 hover:text-white'
                     }`}
                     title={`Preset: ${len}mm`}
@@ -4447,7 +4447,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                         onClick={() => handleSetLengthMm(len)}
                         className={`py-1 rounded text-[10px] font-mono transition-colors cursor-pointer ${
                           Math.abs(currentLengthMm - len) < 0.5
-                            ? 'bg-amber-500/30 text-amber-300 font-bold border border-amber-500/50'
+                            ? 'bg-amber-500 text-black font-bold shadow-xs'
                             : 'bg-zinc-950 border border-zinc-800 text-zinc-400 hover:text-white'
                         }`}
                         title={`${len}mm preset`}
