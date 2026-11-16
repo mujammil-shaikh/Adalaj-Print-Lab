@@ -3074,7 +3074,16 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                             id="designer-live-mfd-input"
                             type="text"
                             value={editMfdInput}
-                            onChange={e => setEditMfdInput(e.target.value)}
+                            onChange={e => {
+                              const val = e.target.value;
+                              setEditMfdInput(val);
+                              try {
+                                parseDateInput(val);
+                                handleLiveUpdateMfd(val);
+                              } catch {
+                                // keep typing
+                              }
+                            }}
                             onBlur={() => {
                               if (editMfdInput.trim()) handleLiveUpdateMfd(editMfdInput.trim());
                             }}
@@ -3141,7 +3150,16 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                             id="designer-live-bb-input"
                             type="text"
                             value={editBbInput}
-                            onChange={e => setEditBbInput(e.target.value)}
+                            onChange={e => {
+                              const val = e.target.value;
+                              setEditBbInput(val);
+                              try {
+                                parseDateInput(val);
+                                handleLiveUpdateBestBefore(val);
+                              } catch {
+                                // keep typing
+                              }
+                            }}
                             onBlur={() => {
                               if (editBbInput.trim()) handleLiveUpdateBestBefore(editBbInput.trim());
                             }}

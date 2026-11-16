@@ -71,6 +71,8 @@ class HardwareManager {
   // Web Bluetooth reference
   private btDevice: BluetoothDevice | null = null;
   private btCharacteristic: BluetoothRemoteGATTCharacteristic | null = null;
+  private btDeviceName: string = '';
+  private btExplicitDisconnect: boolean = false;
 
   // Network printer config
   private networkConfig = {
@@ -233,16 +235,23 @@ class HardwareManager {
       try {
         server = await device.gatt.connect();
       } catch (gattErr: any) {
-        this.addLog('warning', `GATT connection warning: ${gattErr.message}. Attempting device handle retention.`);
+        this.addLog('warning', `GATT connection warning: ${gattErr.message}. Device handle retained.`);
       }
 
       this.btDevice = device;
+      this.btDeviceName = deviceName;
+      this.btExplicitDisconnect = false;
 
       device.addEventListener('gattserverdisconnected', () => {
-        this.addLog('warning', `Bluetooth device "${deviceName}" was disconnected.`);
-        this.btDevice = null;
-        this.btCharacteristic = null;
-        if (this.onDisconnectCallback) this.onDisconnectCallback();
+        if (this.btExplicitDisconnect) {
+          this.addLog('info', `Bluetooth device "${deviceName}" disconnected.`);
+          this.btDevice = null;
+          this.btCharacteristic = null;
+          this.btDeviceName = '';
+          if (this.onDisconnectCallback) this.onDisconnectCallback();
+        } else {
+          this.addLog('info', `Bluetooth GATT stream for "${deviceName}" cycled into standby. Retaining device.`);
+        }
       });
 
       let writeChar: BluetoothRemoteGATTCharacteristic | null = null;
@@ -297,10 +306,20 @@ class HardwareManager {
   }
 
   public async sendViaBluetooth(buffer: ArrayBuffer): Promise<{ success: boolean; bytesWritten: number; error?: string }> {
-    if (!this.btDevice || !this.btDevice.gatt?.connected) {
+    if (!this.btDevice) {
       const err = 'No Bluetooth printer is currently connected. Click "Connect Device" first.';
       this.addLog('error', err);
       return { success: false, bytesWritten: 0, error: err };
+    }
+
+    // Auto-reconnect GATT server if link cycled or went into sleep/standby
+    if (!this.btDevice.gatt?.connected) {
+      try {
+        this.addLog('info', `Re-establishing GATT stream with ${this.btDeviceName || 'printer'}...`);
+        await this.btDevice.gatt?.connect();
+      } catch (reconnectErr: any) {
+        this.addLog('warning', `GATT auto-reconnect note: ${reconnectErr.message}`);
+      }
     }
 
     if (!this.btCharacteristic) {
@@ -366,6 +385,7 @@ class HardwareManager {
   }
 
   public async disconnectBluetooth() {
+    this.btExplicitDisconnect = true;
     if (this.btDevice) {
       try {
         if (this.btDevice.gatt?.connected) {
@@ -377,6 +397,8 @@ class HardwareManager {
       this.addLog('info', 'Bluetooth printer disconnected.');
       this.btDevice = null;
       this.btCharacteristic = null;
+      this.btDeviceName = '';
+      if (this.onDisconnectCallback) this.onDisconnectCallback();
     }
   }
 

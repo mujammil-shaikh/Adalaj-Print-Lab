@@ -18,8 +18,10 @@ export function parseDateInput(value: string | Date): CalendarDate {
     };
   }
 
-  // Handle YYYY-MM-DD
-  const isoMatch = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const trimmed = (value || '').trim();
+
+  // Handle YYYY-MM-DD or YYYY/MM/DD or YYYY.MM.DD
+  const isoMatch = trimmed.match(/^(\d{4})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{1,2})$/);
   if (isoMatch) {
     return {
       year: parseInt(isoMatch[1], 10),
@@ -28,8 +30,8 @@ export function parseDateInput(value: string | Date): CalendarDate {
     };
   }
 
-  // Handle DD/MM/YY or DD/MM/YYYY
-  const dmyMatch = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  // Handle DD/MM/YY or DD/MM/YYYY or DD-MM-YY or DD-MM-YYYY or DD.MM.YY with optional spaces
+  const dmyMatch = trimmed.match(/^(\d{1,2})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{2,4})$/);
   if (dmyMatch) {
     let year = parseInt(dmyMatch[3], 10);
     if (year < 100) year += 2000;
@@ -40,7 +42,7 @@ export function parseDateInput(value: string | Date): CalendarDate {
     };
   }
 
-  const d = new Date(value);
+  const d = new Date(trimmed);
   if (isNaN(d.getTime())) {
     throw new Error(`Invalid date string: "${value}"`);
   }
@@ -69,12 +71,12 @@ export function formatCalendarDateISO(date: CalendarDate): string {
  */
 export function extractDateFromText(text: string): string | null {
   if (!text) return null;
-  // Match DD/MM/YY or DD/MM/YYYY
-  const dmy = text.match(/(\d{1,2}\/\d{1,2}\/\d{2,4})/);
-  if (dmy) return dmy[1];
-  // Match YYYY-MM-DD
-  const iso = text.match(/(\d{4}-\d{2}-\d{2})/);
-  if (iso) return iso[1];
+  // Match YYYY-MM-DD first so 4-digit years are not truncated
+  const iso = text.match(/(\d{4}\s*[-/.]\s*\d{1,2}\s*[-/.]\s*\d{1,2})/);
+  if (iso) return iso[1].replace(/\s+/g, '');
+  // Match DD/MM/YY or DD/MM/YYYY or DD-MM-YY or DD-MM-YYYY or DD.MM.YY with optional spaces
+  const dmy = text.match(/(\d{1,2}\s*[-/.]\s*\d{1,2}\s*[-/.]\s*\d{2,4})/);
+  if (dmy) return dmy[1].replace(/\s+/g, '');
   return null;
 }
 

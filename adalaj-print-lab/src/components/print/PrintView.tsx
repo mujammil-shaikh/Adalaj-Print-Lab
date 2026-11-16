@@ -87,6 +87,11 @@ export const PrintView: React.FC<PrintViewProps> = ({
   const [exportCompleteMsg, setExportCompleteMsg] = useState('');
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
+  // Local Universal Date State & Feedback
+  const [printMfdInput, setPrintMfdInput] = useState<string>('');
+  const [printBbInput, setPrintBbInput] = useState<string>('');
+  const [dateSavedFeedback, setDateSavedFeedback] = useState<string>('');
+
   // Direct Hardware Transport State
   const [transportType, setTransportType] = useState<HardwareTransportType>('usb_drive');
   const [connectedDeviceName, setConnectedDeviceName] = useState<string>('');
@@ -98,6 +103,89 @@ export const PrintView: React.FC<PrintViewProps> = ({
   const currentBatch = batches.find(b => b.id === selectedBatchId) || batches[0];
   const currentAlloc = currentBatch?.allocations.find(a => a.id === selectedAllocId) || currentBatch?.allocations[0];
   const currentProduct = products.find(p => p.id === currentBatch?.productId);
+
+  // Synchronize selectedBatchId when activeBatch prop changes
+  useEffect(() => {
+    if (activeBatch?.id && activeBatch.id !== selectedBatchId) {
+      setSelectedBatchId(activeBatch.id);
+    }
+  }, [activeBatch?.id]);
+
+  // Synchronize inputs whenever currentAlloc or currentBatch changes
+  useEffect(() => {
+    let mfd = currentAlloc?.mfd || '';
+    let bb = currentAlloc?.bestBefore || '';
+    if (!mfd && currentBatch?.lotDate) {
+      try {
+        const cal = parseDateInput(currentBatch.lotDate);
+        mfd = formatCalendarDateDMY(cal);
+      } catch {
+        // ignore
+      }
+    }
+    if (!mfd) {
+      mfd = formatCalendarDateDMY(parseDateInput(new Date()));
+    }
+    if (!bb) {
+      try {
+        const cal = parseDateInput(mfd);
+        const shelfLife = currentProduct?.defaultShelfLifeMonths || 12;
+        bb = formatCalendarDateDMY(calculateBestBeforeDate(cal, shelfLife));
+      } catch {
+        bb = '';
+      }
+    }
+    setPrintMfdInput(mfd);
+    setPrintBbInput(bb);
+  }, [currentAlloc?.id, currentAlloc?.mfd, currentAlloc?.bestBefore, currentBatch?.id, currentBatch?.lotDate, currentProduct?.id]);
+
+  // Universal Live Date Persistence
+  const handleSavePrintDates = async (newMfd: string, newBb?: string) => {
+    if (!currentBatch) return;
+    let cal;
+    try {
+      cal = parseDateInput(newMfd.trim());
+    } catch {
+      return;
+    }
+    const dmyMfd = formatCalendarDateDMY(cal);
+    const isoLotDate = formatCalendarDateISO(cal);
+    const shelfLife = currentProduct?.defaultShelfLifeMonths || 12;
+
+    let dmyBb = newBb?.trim();
+    if (dmyBb) {
+      try {
+        const bbCal = parseDateInput(dmyBb);
+        dmyBb = formatCalendarDateDMY(bbCal);
+      } catch {
+        dmyBb = formatCalendarDateDMY(calculateBestBeforeDate(cal, shelfLife));
+      }
+    } else {
+      dmyBb = formatCalendarDateDMY(calculateBestBeforeDate(cal, shelfLife));
+    }
+
+    const updatedAllocs = (currentBatch.allocations || []).map(a => ({
+      ...a,
+      mfd: dmyMfd,
+      bestBefore: dmyBb
+    }));
+
+    const updatedBatch: Batch = {
+      ...currentBatch,
+      lotDate: isoLotDate,
+      allocations: updatedAllocs
+    };
+
+    setPrintMfdInput(dmyMfd);
+    setPrintBbInput(dmyBb);
+
+    await db.batches.put(updatedBatch);
+    if (onUpdateBatch) await onUpdateBatch(updatedBatch);
+    await saveUniversalSnapshot();
+
+    setDateSavedFeedback(`✓ Synced: ${dmyMfd} • Exp ${dmyBb}`);
+    setTimeout(() => setDateSavedFeedback(''), 3000);
+  };
 
   // Subscribe to hardware manager logs
   useEffect(() => {
@@ -956,7 +1044,12 @@ export const PrintView: React.FC<PrintViewProps> = ({
                   name="batchId"
                   aria-label="Select Production Batch"
                   value={selectedBatchId}
-                  onChange={e => setSelectedBatchId(e.target.value)}
+                  onChange={e => {
+                    const newId = e.target.value;
+                    setSelectedBatchId(newId);
+                    const b = batches.find(bat => bat.id === newId);
+                    if (b && onUpdateBatch) onUpdateBatch(b);
+                  }}
                   className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 text-zinc-200 font-mono font-bold"
                 >
                   {batches.map(b => (
@@ -999,7 +1092,11 @@ export const PrintView: React.FC<PrintViewProps> = ({
                 <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800 space-y-2">
                   <div className="flex items-center justify-between text-[11px]">
                     <span className="font-bold text-amber-400 uppercase tracking-wider">Print Batch Dates</span>
-                    <span className="text-[10px] text-zinc-500 font-mono">Synced Universally</span>
+                    {dateSavedFeedback ? (
+                      <span className="text-[10px] text-emerald-400 font-mono font-bold">{dateSavedFeedback}</span>
+                    ) : (
+                      <span className="text-[10px] text-zinc-500 font-mono">Synced Universally</span>
+                    )}
                   </div>
                   <div className="grid grid-cols-2 gap-2 text-xs">
                     <div>
@@ -1007,80 +1104,98 @@ export const PrintView: React.FC<PrintViewProps> = ({
                         <label className="text-[10px] text-zinc-400">MFD (DD/MM/YY)</label>
                         <button
                           type="button"
-                          onClick={async () => {
-                            const todayCal = parseDateInput(new Date());
-                            const todayDmy = formatCalendarDateDMY(todayCal);
-                            const todayIso = formatCalendarDateISO(todayCal);
-                            const shelfLife = currentProduct?.defaultShelfLifeMonths || 12;
-                            const bbDmy = formatCalendarDateDMY(calculateBestBeforeDate(todayCal, shelfLife));
-                            const updatedAllocs = currentBatch.allocations.map(a => 
-                              a.id === currentAlloc.id ? { ...a, mfd: todayDmy, bestBefore: bbDmy } : a
-                            );
-                            const updatedBatch: Batch = {
-                              ...currentBatch,
-                              lotDate: todayIso,
-                              allocations: updatedAllocs
-                            };
-                            await db.batches.put(updatedBatch);
-                            if (onUpdateBatch) await onUpdateBatch(updatedBatch);
-                            await saveUniversalSnapshot();
+                          onClick={() => {
+                            const todayStr = formatCalendarDateDMY(parseDateInput(new Date()));
+                            handleSavePrintDates(todayStr, printBbInput);
                           }}
                           className="text-[9px] text-amber-300 hover:text-amber-200 underline cursor-pointer"
+                          title="Set MFD to Today across all views"
                         >
                           Today
                         </button>
                       </div>
                       <input
                         type="text"
-                        value={currentAlloc.mfd || ''}
-                        onChange={async e => {
+                        value={printMfdInput}
+                        onChange={e => {
                           const val = e.target.value;
-                          let newBb = currentAlloc.bestBefore;
-                          let newIso = currentBatch.lotDate;
+                          setPrintMfdInput(val);
                           try {
-                            const cal = parseDateInput(val);
-                            newIso = formatCalendarDateISO(cal);
-                            const shelfLife = currentProduct?.defaultShelfLifeMonths || 12;
-                            newBb = formatCalendarDateDMY(calculateBestBeforeDate(cal, shelfLife));
+                            parseDateInput(val);
+                            handleSavePrintDates(val, printBbInput);
                           } catch {
-                            // ignore
+                            // keep typing
                           }
-                          const updatedAllocs = currentBatch.allocations.map(a => 
-                            a.id === currentAlloc.id ? { ...a, mfd: val, bestBefore: newBb } : a
-                          );
-                          const updatedBatch: Batch = {
-                            ...currentBatch,
-                            lotDate: newIso,
-                            allocations: updatedAllocs
-                          };
-                          await db.batches.put(updatedBatch);
-                          if (onUpdateBatch) await onUpdateBatch(updatedBatch);
-                          await saveUniversalSnapshot();
                         }}
-                        className="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 font-mono text-amber-300 text-center text-xs"
+                        onBlur={() => {
+                          if (printMfdInput.trim()) {
+                            handleSavePrintDates(printMfdInput, printBbInput);
+                          }
+                        }}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter' && printMfdInput.trim()) {
+                            handleSavePrintDates(printMfdInput, printBbInput);
+                          }
+                        }}
+                        className="w-full bg-zinc-900 border border-zinc-700 focus:border-amber-500 rounded px-2 py-1 font-mono text-amber-300 text-center text-xs focus:outline-hidden"
+                        placeholder="DD/MM/YY"
+                        title="Manufacturing Date (Updates batch and all views in real time)"
                       />
                     </div>
                     <div>
                       <label className="text-[10px] text-zinc-400 block mb-0.5">Expiry Date</label>
                       <input
                         type="text"
-                        value={currentAlloc.bestBefore || ''}
-                        onChange={async e => {
+                        value={printBbInput}
+                        onChange={e => {
                           const val = e.target.value;
-                          const updatedAllocs = currentBatch.allocations.map(a => 
-                            a.id === currentAlloc.id ? { ...a, bestBefore: val } : a
-                          );
-                          const updatedBatch: Batch = {
-                            ...currentBatch,
-                            allocations: updatedAllocs
-                          };
-                          await db.batches.put(updatedBatch);
-                          if (onUpdateBatch) await onUpdateBatch(updatedBatch);
-                          await saveUniversalSnapshot();
+                          setPrintBbInput(val);
+                          try {
+                            parseDateInput(val);
+                            handleSavePrintDates(printMfdInput, val);
+                          } catch {
+                            // keep typing
+                          }
                         }}
-                        className="w-full bg-zinc-900 border border-zinc-700 rounded px-2 py-1 font-mono text-amber-300 text-center text-xs"
+                        onBlur={() => {
+                          if (printBbInput.trim()) {
+                            handleSavePrintDates(printMfdInput, printBbInput);
+                          }
+                        }}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter' && printBbInput.trim()) {
+                            handleSavePrintDates(printMfdInput, printBbInput);
+                          }
+                        }}
+                        className="w-full bg-zinc-900 border border-zinc-700 focus:border-amber-500 rounded px-2 py-1 font-mono text-amber-300 text-center text-xs focus:outline-hidden"
+                        placeholder="DD/MM/YY"
+                        title="Best Before / Expiry Date"
                       />
                     </div>
+                  </div>
+                  {/* Quick Statutory Shelf Life Presets */}
+                  <div className="flex items-center gap-1 pt-0.5">
+                    <span className="text-[9px] text-zinc-500 shrink-0">Add Expiry:</span>
+                    {[6, 12, 18, 24].map(months => (
+                      <button
+                        key={months}
+                        type="button"
+                        onClick={() => {
+                          try {
+                            const cal = parseDateInput(printMfdInput || new Date());
+                            const bbCal = calculateBestBeforeDate(cal, months);
+                            const bbStr = formatCalendarDateDMY(bbCal);
+                            handleSavePrintDates(printMfdInput, bbStr);
+                          } catch (err) {
+                            console.error('Failed to calculate shelf life:', err);
+                          }
+                        }}
+                        className="flex-1 py-0.5 rounded bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-amber-300 border border-zinc-800 hover:border-amber-500/40 text-[9px] font-mono cursor-pointer transition-colors"
+                        title={`Calculate Best Before as MFD + ${months} months (FSSAI rule: -1 day)`}
+                      >
+                        +{months}M
+                      </button>
+                    ))}
                   </div>
                 </div>
               )}
@@ -1208,9 +1323,21 @@ export const PrintView: React.FC<PrintViewProps> = ({
                   </div>
                 </div>
                 {transportType === 'bluetooth' && (
-                  <p className="text-[10px] text-zinc-500 font-mono">
-                    {connectedDeviceName ? '✓ Handheld Bluetooth paired & GATT server active.' : '💡 Click "Connect Device" to open the browser Bluetooth chooser and pair your printer.'}
-                  </p>
+                  <div className="space-y-1">
+                    <p className="text-[10px] text-zinc-500 font-mono">
+                      {connectedDeviceName ? `✓ Handheld Bluetooth paired & active (${connectedDeviceName}). Ready to print.` : '💡 Click "Connect Device" to open the browser Bluetooth chooser and pair your printer.'}
+                    </p>
+                    <p className="text-[10px] text-zinc-400 font-mono pt-0.5">
+                      Pairing a Windows Bluetooth printer? Windows often connects printers via virtual COM ports. You can also switch to{' '}
+                      <button
+                        type="button"
+                        onClick={() => setTransportType('webserial')}
+                        className="text-amber-400 hover:text-amber-300 font-bold underline cursor-pointer"
+                      >
+                        Web Serial / COM
+                      </button>
+                    </p>
+                  </div>
                 )}
                 {transportType === 'webserial' && (
                   <p className="text-[10px] text-zinc-500 font-mono">
