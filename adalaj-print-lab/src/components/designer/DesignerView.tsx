@@ -82,6 +82,81 @@ import {
 import { parseDateInput, calculateBestBeforeDate, formatCalendarDateDMY, formatCalendarDateISO, extractDateFromText } from '../../domain/dates';
 import { db, saveUniversalSnapshot } from '../../services/db';
 
+export interface ExactInkMetrics {
+  width: number;
+  height: number;
+  ascent: number;
+  descent: number;
+  xPos: number;
+}
+
+const inkMetricsCache = new Map<string, ExactInkMetrics>();
+let _metricsCanvas: HTMLCanvasElement | null = null;
+let _metricsCtx: CanvasRenderingContext2D | null = null;
+
+export function getExactTextInkMetrics(
+  text: string,
+  fontFamily: string,
+  fontSizePx: number,
+  fontWeight: string = 'normal',
+  fontStyle: string = 'normal',
+  letterSpacingPx: number = 0
+): ExactInkMetrics {
+  const safeText = text || ' ';
+  const roundedSize = Math.max(6, Math.round(fontSizePx));
+  const roundedSpacing = Math.round(letterSpacingPx * 10) / 10;
+  const cacheKey = `${safeText}|${fontFamily}|${roundedSize}|${fontWeight}|${fontStyle}|${roundedSpacing}`;
+  const cached = inkMetricsCache.get(cacheKey);
+  if (cached) return cached;
+
+  if (typeof document !== 'undefined') {
+    try {
+      if (!_metricsCanvas) {
+        _metricsCanvas = document.createElement('canvas');
+        _metricsCtx = _metricsCanvas.getContext('2d');
+      }
+      if (_metricsCtx) {
+        const weight = fontWeight === 'bold' ? 'bold ' : '';
+        const style = fontStyle === 'italic' ? 'italic ' : '';
+        _metricsCtx.font = `${style}${weight}${roundedSize}px "${fontFamily}", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+        if ('letterSpacing' in _metricsCtx && roundedSpacing) {
+          (_metricsCtx as any).letterSpacing = `${roundedSpacing}px`;
+        }
+        const m = _metricsCtx.measureText(safeText);
+        if (m.actualBoundingBoxAscent !== undefined && m.actualBoundingBoxDescent !== undefined) {
+          const xPos = m.actualBoundingBoxLeft;
+          const calcWidth = Math.max(2, Math.ceil(m.actualBoundingBoxRight + m.actualBoundingBoxLeft));
+          const calcHeight = Math.max(2, Math.ceil(m.actualBoundingBoxAscent + m.actualBoundingBoxDescent));
+          const res: ExactInkMetrics = {
+            width: calcWidth,
+            height: calcHeight,
+            ascent: m.actualBoundingBoxAscent,
+            descent: m.actualBoundingBoxDescent,
+            xPos,
+          };
+          if (inkMetricsCache.size > 500) inkMetricsCache.clear();
+          inkMetricsCache.set(cacheKey, res);
+          return res;
+        }
+      }
+    } catch {
+      // fallback below
+    }
+  }
+
+  const charFactor = fontFamily.toLowerCase().includes('condensed') ? 0.44 : 0.50;
+  const calcWidth = Math.max(2, Math.round(safeText.length * roundedSize * charFactor));
+  const calcHeight = Math.max(2, Math.round(roundedSize * 0.75));
+  const res: ExactInkMetrics = {
+    width: calcWidth,
+    height: calcHeight,
+    ascent: Math.round(roundedSize * 0.72),
+    descent: Math.round(roundedSize * 0.05),
+    xPos: 0,
+  };
+  return res;
+}
+
 interface DesignerViewProps {
   template: Template;
   machine: MachineProfile;
@@ -671,25 +746,17 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
     }
     if (obj.uppercase) text = text.toUpperCase();
 
-    try {
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        const testFontSize = 100;
-        ctx.font = `${obj.fontWeight === 'bold' ? 'bold ' : ''}${obj.fontStyle === 'italic' ? 'italic ' : ''}${testFontSize}px "${obj.fontFamily}", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
-        const measured = ctx.measureText(text || ' ');
-        const ratio = (obj.fontSizeMm || 2.0) / testFontSize;
-        const letterSpacingExtra = Math.max(0, text.length - 1) * (obj.letterSpacingMm || 0);
-        const wMm = Math.max(2.0, Math.round((measured.width * ratio + letterSpacingExtra) * 10) / 10);
-        const hMm = Math.max(1.0, Math.round((obj.fontSizeMm || 2.0) * 10) / 10);
-        return { widthMm: wMm, heightMm: hMm };
-      }
-    } catch {
-      // Fallback mathematical approximation
-    }
-    const charWidthFactor = obj.fontFamily?.includes('Barlow') ? 0.42 : obj.fontFamily?.includes('Condensed') ? 0.46 : 0.52;
-    const approxW = Math.max(2.0, Math.round(((text.length || 1) * (obj.fontSizeMm || 2.0) * charWidthFactor) * 10) / 10);
-    return { widthMm: approxW, heightMm: obj.fontSizeMm || 2.0 };
+    const metrics = getExactTextInkMetrics(
+      text,
+      obj.fontFamily,
+      (obj.fontSizeMm || 2.0) * 10,
+      obj.fontWeight,
+      obj.fontStyle,
+      (obj.letterSpacingMm || 0) * 10
+    );
+    const wMm = Math.max(1.0, Math.round((metrics.width / 10) * 10) / 10);
+    const hMm = Math.max(1.0, Math.round((metrics.height / 10) * 10) / 10);
+    return { widthMm: wMm, heightMm: hMm };
   }, [previewValues]);
 
   const handleTightFitSelectedObject = useCallback(() => {
@@ -2505,14 +2572,15 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                         const isSelected = selectedObjectId === obj.id;
                         const xPx = obj.x * zoomLevel;
                         const yPx = obj.y * zoomLevel;
-                        const wPx = Math.max(2, obj.width * zoomLevel);
-                        const hPx = obj.height * zoomLevel;
 
                         let displayText = obj.content || '';
                         if (displayText.includes('{')) {
                           displayText = displayText.replace(/\{(\w+)\}/g, (_, k) => previewValues[k] !== undefined ? previewValues[k] : `{${k}}`);
                         } else if (obj.fieldKey && previewValues[obj.fieldKey] && (!obj.content || obj.content === `{${obj.fieldKey}}`)) {
                           displayText = previewValues[obj.fieldKey];
+                        }
+                        if (obj.uppercase) {
+                          displayText = displayText.toUpperCase();
                         }
 
                         const rot = obj.rotation || 0;
@@ -2522,6 +2590,15 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                         const originX = isTextLike 
                           ? (obj.alignment === 'center' ? 'center' : obj.alignment === 'right' ? 'right' : 'left')
                           : 'center';
+
+                        const fontSizePx = Math.max(6, Math.round(obj.fontSizeMm * zoomLevel));
+                        const letterSpacingPx = (obj.letterSpacingMm || 0) * zoomLevel;
+                        const inkMetrics = isTextLike
+                          ? getExactTextInkMetrics(displayText, obj.fontFamily, fontSizePx, obj.fontWeight, obj.fontStyle, letterSpacingPx)
+                          : null;
+
+                        const wPx = isTextLike && inkMetrics ? inkMetrics.width : Math.max(2, obj.width * zoomLevel);
+                        const hPx = isTextLike && inkMetrics ? inkMetrics.height : obj.height * zoomLevel;
 
                         return (
                           <div
@@ -2546,10 +2623,10 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                               width: `${wPx}px`,
                               height: `${hPx}px`,
                               fontFamily: `${obj.fontFamily}, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`,
-                              fontSize: `${Math.max(6, Math.round(obj.fontSizeMm * zoomLevel))}px`,
+                              fontSize: `${fontSizePx}px`,
                               fontWeight: obj.fontWeight === 'bold' ? 'bold' : 'normal',
                               fontStyle: obj.fontStyle === 'italic' ? 'italic' : 'normal',
-                              letterSpacing: `${(obj.letterSpacingMm || 0) * zoomLevel}px`,
+                              letterSpacing: `${letterSpacingPx}px`,
                               transform: `rotate(${rot}deg) scale(${scaleX}, ${scaleY})`,
                               transformOrigin: `${originX} center`,
                               filter: obj.invert ? 'invert(1)' : 'none',
@@ -2590,9 +2667,28 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                                 }}
                               />
                             ) : (
-                              <span className="leading-none whitespace-nowrap overflow-visible block p-0 m-0">
-                                {displayText}
-                              </span>
+                              <svg
+                                width={wPx}
+                                height={hPx}
+                                viewBox={`0 0 ${wPx} ${hPx}`}
+                                className="overflow-visible block select-none pointer-events-none p-0 m-0"
+                                style={{ width: `${wPx}px`, height: `${hPx}px` }}
+                              >
+                                <text
+                                  x={inkMetrics?.xPos || 0}
+                                  y={inkMetrics?.ascent || Math.round(fontSizePx * 0.72)}
+                                  fontFamily={`${obj.fontFamily}, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`}
+                                  fontSize={`${fontSizePx}px`}
+                                  fontWeight={obj.fontWeight === 'bold' ? 'bold' : 'normal'}
+                                  fontStyle={obj.fontStyle === 'italic' ? 'italic' : 'normal'}
+                                  letterSpacing={letterSpacingPx ? `${letterSpacingPx}px` : undefined}
+                                  fill={obj.invert ? '#ffffff' : '#000000'}
+                                  textAnchor="start"
+                                  dominantBaseline="alphabetic"
+                                >
+                                  {displayText}
+                                </text>
+                              </svg>
                             )}
 
                             {/* Selected Bounding Box Handles: Sleek, ultra-thin border profile */}

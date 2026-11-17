@@ -11,6 +11,31 @@ export interface PreflightResult {
   warnings: string[];
 }
 
+export function estimateTextWidthMm(
+  text: string,
+  fontFamily: string = 'Barlow Condensed',
+  fontSizeMm: number = 2.5,
+  letterSpacingMm: number = 0
+): number {
+  if (!text) return 2.0;
+  const family = (fontFamily || '').toLowerCase();
+  let ratio = 0.44;
+  if (family.includes('barlow')) {
+    ratio = 0.40;
+  } else if (family.includes('roboto condensed')) {
+    ratio = 0.43;
+  } else if (family.includes('mono')) {
+    ratio = 0.58;
+  } else if (family.includes('oswald')) {
+    ratio = 0.42;
+  } else if (family.includes('noto')) {
+    ratio = 0.50;
+  }
+  const textWidth = text.length * fontSizeMm * ratio;
+  const spacing = Math.max(0, text.length - 1) * (letterSpacingMm || 0);
+  return Math.max(1.5, Math.round((textWidth + spacing) * 10) / 10);
+}
+
 export function runPreflightCheck(params: {
   product: Product | null;
   sku: SKU | null;
@@ -61,37 +86,86 @@ export function runPreflightCheck(params: {
     const widthLimit = isVertical ? bandMm : lengthMm;
     const heightLimit = isVertical ? lengthMm : bandMm;
 
+    const tokenMap: Record<string, string> = {
+      product: product?.name || '',
+      brand: 'ADALAJ',
+      batch: batch?.id || 'AD001',
+      lot: batch?.id || 'AD001',
+      lot_no: batch?.id || 'AD001',
+      net_wt: allocation?.packSize || sku?.packSize || (sku?.netWeightGrams ? `${sku.netWeightGrams} g` : '100 g'),
+      pack_size: allocation?.packSize || sku?.packSize || '100 g',
+      weight: allocation?.packSize || sku?.packSize || '100 g',
+      net_weight: allocation?.packSize || sku?.packSize || '100 g',
+      net_qty: allocation?.packSize || sku?.packSize || '100 g',
+      mrp: allocation?.mrpSnapshot ? `₹${allocation.mrpSnapshot}` : (sku?.mrp ? `₹${sku.mrp}` : '₹50'),
+      price: allocation?.mrpSnapshot ? `₹${allocation.mrpSnapshot}` : (sku?.mrp ? `₹${sku.mrp}` : '₹50'),
+      mfd: allocation?.mfd || '01/01/26',
+      best_before: allocation?.bestBefore || '01/01/27',
+      expiry: allocation?.bestBefore || '01/01/27',
+      exp: allocation?.bestBefore || '01/01/27',
+      rate_per_gm: allocation?.ratePerGmSnapshot ? `₹${allocation.ratePerGmSnapshot.toFixed(2)}/g` : '₹0.50/g',
+    };
+
     for (const obj of template.objects) {
       const scaleX = (obj.horizontalStretchPercent || 100) / 100;
       const scaleY = (obj.verticalStretchPercent || 100) / 100;
       const rot = obj.rotation || 0;
       const isRotated90or270 = rot === 90 || rot === 270;
 
+      let physicalW = obj.width;
+      let physicalH = obj.height;
+
+      if (obj.type === 'text' || obj.type === 'field') {
+        let text = obj.content || '';
+        if (text.includes('{')) {
+          text = text.replace(/\{(\w+)\}/g, (_, k) => {
+            const keyLower = k.toLowerCase();
+            return tokenMap[keyLower] ?? (allocation as any)?.[k] ?? (sku as any)?.[k] ?? (product as any)?.[k] ?? `{${k}}`;
+          });
+        } else if (obj.fieldKey) {
+          const keyLower = obj.fieldKey.toLowerCase();
+          text = tokenMap[keyLower] ?? (allocation as any)?.[obj.fieldKey] ?? text;
+        }
+        if (obj.uppercase) {
+          text = text.toUpperCase();
+        }
+        const measuredTextW = estimateTextWidthMm(text, obj.fontFamily, obj.fontSizeMm, obj.letterSpacingMm);
+        // The actual visible physical bounds occupied by glyphs:
+        physicalW = Math.min(obj.width || measuredTextW, measuredTextW);
+        physicalH = Math.min(obj.height || obj.fontSizeMm, obj.fontSizeMm);
+      }
+
       // Effective physical container dimensions after condensation, stretching, and rotation
-      const effW = isRotated90or270 ? (obj.height * scaleY) : (obj.width * scaleX);
-      const effH = isRotated90or270 ? (obj.width * scaleX) : (obj.height * scaleY);
+      const effW = isRotated90or270 ? (physicalH * scaleY) : (physicalW * scaleX);
+      const effH = isRotated90or270 ? (physicalW * scaleX) : (physicalH * scaleY);
 
       let minX = obj.x;
       let maxX = obj.x + effW;
       if (obj.type === 'text' || obj.type === 'field') {
         if (obj.alignment === 'center') {
-          const centerX = obj.x + (obj.width / 2);
+          const centerX = obj.x + (physicalW / 2);
           minX = centerX - (effW / 2);
           maxX = centerX + (effW / 2);
         } else if (obj.alignment === 'right') {
-          minX = obj.x + obj.width - effW;
-          maxX = obj.x + obj.width;
+          minX = obj.x + physicalW - effW;
+          maxX = obj.x + physicalW;
         }
       }
 
-      if (maxX > widthLimit + 0.5) {
-        blockers.push(`Object "${obj.content || obj.id}" exceeds printable width (${widthLimit} mm)`);
+      if (effW > widthLimit + 0.5) {
+        warnings.push(`Object "${obj.content || obj.id}" exceeds printable width (${effW.toFixed(1)} mm > ${widthLimit} mm limit) - excess content will be trimmed at printhead edge`);
+      } else if (maxX > widthLimit + 0.8) {
+        warnings.push(`Object "${obj.content || obj.id}" right edge (${maxX.toFixed(1)} mm) extends past printable width (${widthLimit} mm) and may be trimmed at boundary`);
       }
-      if (obj.y + effH > heightLimit + 0.5) {
-        blockers.push(`Object "${obj.content || obj.id}" exceeds printable height (${heightLimit} mm)`);
+
+      if (effH > heightLimit + 0.5) {
+        warnings.push(`Object "${obj.content || obj.id}" exceeds printable height (${effH.toFixed(1)} mm > ${heightLimit} mm limit) - excess content will be trimmed at printhead edge`);
+      } else if (obj.y + effH > heightLimit + 0.8) {
+        warnings.push(`Object "${obj.content || obj.id}" bottom edge (${(obj.y + effH).toFixed(1)} mm) extends past printable height (${heightLimit} mm) and may be trimmed at boundary`);
       }
-      if (minX < -0.1 || obj.y < -0.1) {
-        blockers.push(`Object "${obj.content || obj.id}" has negative coordinates (out of printable area)`);
+
+      if (minX < -0.5 || obj.y < -0.5) {
+        warnings.push(`Object "${obj.content || obj.id}" is partially positioned off-screen (left: ${minX.toFixed(1)} mm, top: ${obj.y.toFixed(1)} mm)`);
       }
     }
   }

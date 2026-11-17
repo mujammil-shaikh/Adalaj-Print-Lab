@@ -22,12 +22,14 @@ interface USBDevice {
 }
 
 interface BluetoothRemoteGATTCharacteristic {
+  uuid?: string;
   properties: {
     write?: boolean;
     writeWithoutResponse?: boolean;
   };
-  writeValue(value: BufferSource): Promise<void>;
-  writeValueWithoutResponse(value: BufferSource): Promise<void>;
+  writeValue?(value: BufferSource): Promise<void>;
+  writeValueWithResponse?(value: BufferSource): Promise<void>;
+  writeValueWithoutResponse?(value: BufferSource): Promise<void>;
 }
 
 interface BluetoothDevice {
@@ -362,27 +364,92 @@ class HardwareManager {
       return { success: false, bytesWritten: 0, error: err };
     }
 
-    try {
-      this.addLog('tx', `Transmitting ${buffer.byteLength} bytes over Bluetooth in 512-byte packets...`);
-      const chunkSize = 512;
-      const uint8 = new Uint8Array(buffer);
-      let offset = 0;
+    const uint8 = new Uint8Array(buffer);
+    const totalBytes = uint8.length;
 
-      while (offset < uint8.length) {
+    // Helper to send data with a specific chunk size and inter-packet pacing delay
+    const transmitWithChunkSize = async (chunkSize: number, delayMs: number): Promise<void> => {
+      let offset = 0;
+      let lastReportPercent = -1;
+
+      while (offset < totalBytes) {
         const chunk = uint8.slice(offset, offset + chunkSize);
-        if (this.btCharacteristic.properties.writeWithoutResponse) {
-          await this.btCharacteristic.writeValueWithoutResponse(chunk);
-        } else {
-          await this.btCharacteristic.writeValue(chunk);
+        
+        let written = false;
+        let lastErr: any = null;
+
+        // Try writeValueWithoutResponse first if available
+        if (this.btCharacteristic!.properties.writeWithoutResponse && this.btCharacteristic!.writeValueWithoutResponse) {
+          try {
+            await this.btCharacteristic!.writeValueWithoutResponse(chunk);
+            written = true;
+          } catch (e: any) {
+            lastErr = e;
+          }
         }
+
+        // Fallback to writeValueWithResponse or writeValue
+        if (!written) {
+          try {
+            if (this.btCharacteristic!.writeValueWithResponse) {
+              await this.btCharacteristic!.writeValueWithResponse(chunk);
+              written = true;
+            } else if (this.btCharacteristic!.writeValue) {
+              await this.btCharacteristic!.writeValue(chunk);
+              written = true;
+            }
+          } catch (e: any) {
+            lastErr = e;
+          }
+        }
+
+        if (!written) {
+          throw lastErr || new Error('GATT write operation rejected by peripheral');
+        }
+
         offset += chunk.length;
+
+        // Pacing delay to allow printer UART FIFO to drain
+        if (delayMs > 0 && offset < totalBytes) {
+          await new Promise(r => setTimeout(r, delayMs));
+        }
+
+        const percent = Math.floor((offset / totalBytes) * 100);
+        if (percent >= lastReportPercent + 25 || offset === totalBytes) {
+          lastReportPercent = percent;
+          this.addLog('tx', `Transmitting: ${percent}% (${offset} / ${totalBytes} bytes)...`);
+        }
+      }
+    };
+
+    // First attempt: Safe 64-byte packets with 10ms pacing delay
+    try {
+      this.addLog('tx', `Transmitting ${totalBytes} bytes over Bluetooth in 64-byte packets...`);
+      await transmitWithChunkSize(64, 10);
+      this.addLog('success', `✓ Bluetooth transmission complete: ${totalBytes} bytes delivered to ${this.btDeviceName || 'printer'}.`);
+      return { success: true, bytesWritten: totalBytes };
+    } catch (firstErr: any) {
+      this.addLog('warning', `Transmission with 64-byte packets returned: ${firstErr.message}. Retrying with conservative 20-byte BLE MTU packets...`);
+
+      // Reconnect GATT if link cycled
+      try {
+        if (!this.btDevice.gatt?.connected) {
+          await this.btDevice.gatt?.connect();
+        }
+      } catch {
+        // continue
       }
 
-      this.addLog('success', `Bluetooth transmission complete: ${buffer.byteLength} bytes delivered to printer.`);
-      return { success: true, bytesWritten: buffer.byteLength };
-    } catch (err: any) {
-      this.addLog('error', `Bluetooth transmission failed: ${err.message}`);
-      return { success: false, bytesWritten: 0, error: err.message };
+      // Second attempt: Universally guaranteed 20-byte BLE packets with 15ms pacing
+      try {
+        await transmitWithChunkSize(20, 15);
+        this.addLog('success', `✓ Bluetooth transmission complete (safe 20-byte mode): ${totalBytes} bytes delivered.`);
+        return { success: true, bytesWritten: totalBytes };
+      } catch (retryErr: any) {
+        const errorMsg = retryErr.message || 'GATT operation failed';
+        this.addLog('error', `Bluetooth transmission failed: ${errorMsg}. Note: On Windows, handheld TIJ printers also create virtual COM ports. You can switch to "Web Serial / COM" above for instant high-speed transmission.`);
+        return { success: false, bytesWritten: 0, error: `Bluetooth GATT failed: ${errorMsg}. Tip: Select "Web Serial / COM" to transmit via Windows virtual COM port.` };
+      }
     }
   }
 

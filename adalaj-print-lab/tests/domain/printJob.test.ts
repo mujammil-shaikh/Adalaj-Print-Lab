@@ -319,4 +319,90 @@ describe('Domain: Print Job & Preflight (P0-03, P0-04, P0-05, E2E-03, E2E-08, E2
     expect(preflight.passed).toBe(true);
     expect(preflight.blockers).toHaveLength(0);
   });
+
+  it('allows {net_wt} with nominal width 20mm when actual text 500 G is condensed to fit within 12.5mm swath', () => {
+    const templateWithLargeNetWt: Template = {
+      ...mockTemplate,
+      travel: 'Vertical',
+      customBandMm: 12.5,
+      objects: [
+        {
+          id: 'obj_net_wt',
+          type: 'field',
+          fieldKey: 'net_wt',
+          content: '{net_wt}',
+          x: 0.5,
+          y: 2.0,
+          width: 20.0, // user set nominal 20mm
+          height: 5.0,
+          fontSizePt: 14,
+          fontSizeMm: 4.5,
+          fontFamily: 'Noto Sans',
+          horizontalStretchPercent: 75,
+          rotation: 0,
+          fontWeight: 'bold',
+          fontStyle: 'normal',
+          letterSpacingMm: 0,
+          lineHeightMultiplier: 1,
+          alignment: 'left',
+          uppercase: true,
+          channel: 'Black',
+          mirrorX: false,
+          mirrorY: false,
+          invert: false,
+          locked: false,
+        },
+      ],
+    };
+
+    const mockSku: SKU = {
+      id: 'sku_500g',
+      productId: 'prod_turmeric',
+      packType: 'Pouch',
+      packSize: '500 g',
+      netWeightGrams: 500,
+      unit: 'g',
+      mrp: 200,
+      enabled: true,
+    };
+
+    const mockBatch: Batch = {
+      id: 'ADTP014',
+      productId: 'prod_turmeric',
+      rawMaterialKg: 50,
+      lotDate: '2026-11-04',
+      status: 'Open',
+      allocations: [
+        {
+          id: 'alloc_500g',
+          batchId: 'ADTP014',
+          skuId: 'sku_500g',
+          productId: 'prod_turmeric',
+          packSize: '500 g',
+          allocatedKg: 10,
+          expectedPacks: 20,
+          mfd: '04/11/26',
+          bestBefore: '03/11/27',
+          mrpSnapshot: 200,
+          templateVersionSnapshot: 1,
+          printStatus: 'Pending',
+          packsPrinted: 0,
+        },
+      ],
+      createdAt: '',
+    };
+
+    const preflight = runPreflightCheck({
+      product: mockProduct,
+      sku: mockSku,
+      batch: mockBatch,
+      allocation: mockBatch.allocations[0],
+      template: templateWithLargeNetWt,
+      machine: mockMachine,
+      packProfile: mockPackProfile,
+    });
+
+    expect(preflight.passed).toBe(true);
+    expect(preflight.blockers).toHaveLength(0);
+  });
 });

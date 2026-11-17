@@ -5,6 +5,7 @@
  */
 
 import type { Template, MachineProfile, PackProfile, DesignObject } from '../types';
+import { estimateTextWidthMm } from '../domain/printJob';
 
 export interface QualityIssue {
   id: string;
@@ -292,13 +293,48 @@ export function validateTemplateQuality(
       });
     }
 
-    // 3. Overflow locked axis (accounting for horizontal & vertical stretch condensation and rotation)
+    // 3. Overflow locked axis (accounting for actual visible glyph width, horizontal & vertical stretch condensation, and rotation)
     const scaleX = (obj.horizontalStretchPercent || 100) / 100;
     const scaleY = (obj.verticalStretchPercent || 100) / 100;
     const rot = obj.rotation || 0;
     const isRotated90or270 = rot === 90 || rot === 270;
-    const effW = isRotated90or270 ? (obj.height * scaleY) : (obj.width * scaleX);
-    const effH = isRotated90or270 ? (obj.width * scaleX) : (obj.height * scaleY);
+
+    let physicalW = obj.width;
+    let physicalH = obj.height;
+    if (obj.type === 'text' || obj.type === 'field') {
+      let text = obj.content || '';
+      if (text.includes('{')) {
+        const sampleTokens: Record<string, string> = {
+          net_wt: '500 g',
+          pack_size: '500 g',
+          weight: '500 g',
+          net_weight: '500 g',
+          net_qty: '500 g',
+          mrp: '₹200',
+          price: '₹200',
+          batch: 'AD001',
+          lot: 'AD001',
+          mfd: '01/01/26',
+          best_before: '01/01/27',
+          rate_per_gm: '₹0.50/g',
+          product: 'Adalaj',
+          brand: 'ADALAJ'
+        };
+        text = text.replace(/\{(\w+)\}/g, (_, k) => sampleTokens[k.toLowerCase()] || '500 g');
+      } else if (obj.fieldKey) {
+        if (obj.fieldKey === 'net_wt') text = '500 g';
+        else if (obj.fieldKey === 'mrp') text = '₹200';
+        else if (obj.fieldKey === 'batch') text = 'AD001';
+        else if (obj.fieldKey === 'mfd') text = '01/01/26';
+        else if (obj.fieldKey === 'best_before') text = '01/01/27';
+      }
+      const textW = estimateTextWidthMm(text, obj.fontFamily, obj.fontSizeMm, obj.letterSpacingMm);
+      physicalW = Math.min(obj.width || textW, textW);
+      physicalH = Math.min(obj.height || obj.fontSizeMm, obj.fontSizeMm);
+    }
+
+    const effW = isRotated90or270 ? (physicalH * scaleY) : (physicalW * scaleX);
+    const effH = isRotated90or270 ? (physicalW * scaleX) : (physicalH * scaleY);
 
     const axisDimension = template.travel === 'Vertical' ? effW : effH;
     if (axisDimension > lockedLimitMm + 0.05) {
@@ -306,7 +342,7 @@ export function validateTemplateQuality(
         id: `overflow_${obj.id}`,
         type: 'error',
         title: 'Print band overflow',
-        message: `Object dimension (${axisDimension.toFixed(1)} mm) exceeds machine print band (${lockedLimitMm} mm) by ${(axisDimension - lockedLimitMm).toFixed(1)} mm.`,
+        message: `Object visible dimension (${axisDimension.toFixed(1)} mm) exceeds machine print band (${lockedLimitMm} mm) by ${(axisDimension - lockedLimitMm).toFixed(1)} mm.`,
         objectId: obj.id,
         repairable: true,
         proposedAction: 'Fit object to print band'
