@@ -62,13 +62,35 @@ export function runPreflightCheck(params: {
     const heightLimit = isVertical ? lengthMm : bandMm;
 
     for (const obj of template.objects) {
-      if (obj.x + obj.width > widthLimit + 0.5) {
+      const scaleX = (obj.horizontalStretchPercent || 100) / 100;
+      const scaleY = (obj.verticalStretchPercent || 100) / 100;
+      const rot = obj.rotation || 0;
+      const isRotated90or270 = rot === 90 || rot === 270;
+
+      // Effective physical container dimensions after condensation, stretching, and rotation
+      const effW = isRotated90or270 ? (obj.height * scaleY) : (obj.width * scaleX);
+      const effH = isRotated90or270 ? (obj.width * scaleX) : (obj.height * scaleY);
+
+      let minX = obj.x;
+      let maxX = obj.x + effW;
+      if (obj.type === 'text' || obj.type === 'field') {
+        if (obj.alignment === 'center') {
+          const centerX = obj.x + (obj.width / 2);
+          minX = centerX - (effW / 2);
+          maxX = centerX + (effW / 2);
+        } else if (obj.alignment === 'right') {
+          minX = obj.x + obj.width - effW;
+          maxX = obj.x + obj.width;
+        }
+      }
+
+      if (maxX > widthLimit + 0.5) {
         blockers.push(`Object "${obj.content || obj.id}" exceeds printable width (${widthLimit} mm)`);
       }
-      if (obj.y + obj.height > heightLimit + 0.5) {
+      if (obj.y + effH > heightLimit + 0.5) {
         blockers.push(`Object "${obj.content || obj.id}" exceeds printable height (${heightLimit} mm)`);
       }
-      if (obj.x < -0.1 || obj.y < -0.1) {
+      if (minX < -0.1 || obj.y < -0.1) {
         blockers.push(`Object "${obj.content || obj.id}" has negative coordinates (out of printable area)`);
       }
     }

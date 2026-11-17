@@ -264,6 +264,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
         }
       }
       await db.templates.put(tmplToSave);
+      localStorage.setItem('als_active_template_id', tmplToSave.id);
       if (onTemplateChange) onTemplateChange(tmplToSave);
       await saveUniversalSnapshot();
     } catch (err) {
@@ -371,20 +372,24 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
     }, debounceMs);
 
     // Apply movement in real-time on canvas without flooding the undo stack
-    setTemplate(prev => ({
-      ...prev,
-      objects: prev.objects.map(obj => {
-        if (obj.id === objectId) {
-          const updated = { ...obj, ...updates };
-          if (updates.fontSizeMm !== undefined) {
-            updated.height = updates.fontSizeMm;
-            updated.fontSizePt = Math.round(updates.fontSizeMm * 2.83);
+    setTemplate(prev => {
+      const nextTmpl = {
+        ...prev,
+        objects: prev.objects.map(obj => {
+          if (obj.id === objectId) {
+            const updated = { ...obj, ...updates };
+            if (updates.fontSizeMm !== undefined) {
+              updated.height = updates.fontSizeMm;
+              updated.fontSizePt = Math.round(updates.fontSizeMm * 2.83);
+            }
+            return updated;
           }
-          return updated;
-        }
-        return obj;
-      })
-    }));
+          return obj;
+        })
+      };
+      latestTemplateRef.current = nextTmpl;
+      return nextTmpl;
+    });
   }, [template, commitPendingSession]);
 
   // Object selection wrapper that finalizes any pending movement on the previous object
@@ -640,6 +645,64 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       pack_size: previewSku?.packSize || '100 g'
     };
   }, [previewSku, activeProduct, activeBatch, allBatches]);
+
+  // Measure exact inner content dimensions for tight container fitting (zero extra padding)
+  const measureContentDimensionsMm = useCallback((obj: DesignObject, textOverride?: string): { widthMm: number; heightMm: number } => {
+    if (obj.type === 'line') {
+      return { widthMm: obj.width || 10, heightMm: obj.strokeWidthMm || 0.4 };
+    }
+    if (obj.type === 'rectangle') {
+      return { widthMm: obj.width || 10, heightMm: obj.height || 5 };
+    }
+    if (obj.type === 'qr') {
+      const sz = Math.min(obj.width || 8.5, obj.height || 8.5);
+      return { widthMm: sz, heightMm: sz };
+    }
+    if (obj.type === 'barcode') {
+      return { widthMm: Math.max(8, obj.width || 12), heightMm: Math.max(4, obj.height || 6) };
+    }
+
+    // Text / Field: measure exact width with 2D canvas context
+    let text = textOverride !== undefined ? textOverride : (obj.content || '');
+    if (text.includes('{')) {
+      text = text.replace(/\{(\w+)\}/g, (_, k) => previewValues[k] !== undefined ? previewValues[k] : `{${k}}`);
+    } else if (obj.fieldKey && previewValues[obj.fieldKey] && (!obj.content || obj.content === `{${obj.fieldKey}}`)) {
+      text = previewValues[obj.fieldKey];
+    }
+    if (obj.uppercase) text = text.toUpperCase();
+
+    try {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        const testFontSize = 100;
+        ctx.font = `${obj.fontWeight === 'bold' ? 'bold ' : ''}${obj.fontStyle === 'italic' ? 'italic ' : ''}${testFontSize}px "${obj.fontFamily}", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+        const measured = ctx.measureText(text || ' ');
+        const ratio = (obj.fontSizeMm || 2.0) / testFontSize;
+        const letterSpacingExtra = Math.max(0, text.length - 1) * (obj.letterSpacingMm || 0);
+        const wMm = Math.max(2.0, Math.round((measured.width * ratio + letterSpacingExtra) * 10) / 10);
+        const hMm = Math.max(1.0, Math.round((obj.fontSizeMm || 2.0) * 10) / 10);
+        return { widthMm: wMm, heightMm: hMm };
+      }
+    } catch {
+      // Fallback mathematical approximation
+    }
+    const charWidthFactor = obj.fontFamily?.includes('Barlow') ? 0.42 : obj.fontFamily?.includes('Condensed') ? 0.46 : 0.52;
+    const approxW = Math.max(2.0, Math.round(((text.length || 1) * (obj.fontSizeMm || 2.0) * charWidthFactor) * 10) / 10);
+    return { widthMm: approxW, heightMm: obj.fontSizeMm || 2.0 };
+  }, [previewValues]);
+
+  const handleTightFitSelectedObject = useCallback(() => {
+    if (!selectedObject) return;
+    const { widthMm, heightMm } = measureContentDimensionsMm(selectedObject);
+    updateObjectCoalesced(selectedObject.id, {
+      width: widthMm,
+      height: heightMm
+    }, 'property_tweak');
+    commitPendingSession();
+    setToastMessage(`✓ Snapped container bounds tightly to ${widthMm}mm × ${heightMm}mm`);
+    setTimeout(() => setToastMessage(null), 2000);
+  }, [selectedObject, measureContentDimensionsMm, updateObjectCoalesced, commitPendingSession]);
 
   // Synchronize Live Field Inputs whenever batch, SKU, or product changes
   useEffect(() => {
@@ -1329,9 +1392,11 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       const packTmpl = buildPackDefaultTemplate(template, targetPackSize);
       // Immediately set the local template state so canvas retains all edits
       setTemplate(packTmpl);
+      latestTemplateRef.current = packTmpl;
       setActiveSaveScope('global');
       setSelectedSaveTarget('pack_default');
       await db.templates.put(packTmpl);
+      localStorage.setItem('als_active_template_id', packTmpl.id);
       if (onTemplateChange) onTemplateChange(packTmpl);
       if (onSavePackDefault) {
         await onSavePackDefault(packTmpl, targetPackSize, activeProduct.id);
@@ -1361,9 +1426,11 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       const skuTmpl = buildSkuOverrideTemplate(template, activeProduct.id, activeProduct.name, targetPackSize);
       // Immediately set the local template state so canvas retains all edits
       setTemplate(skuTmpl);
+      latestTemplateRef.current = skuTmpl;
       setActiveSaveScope('individual');
       setSelectedSaveTarget('sku_override');
       await db.templates.put(skuTmpl);
+      localStorage.setItem('als_active_template_id', skuTmpl.id);
       if (onTemplateChange) onTemplateChange(skuTmpl);
       if (onSaveSkuOverride) {
         await onSaveSkuOverride(skuTmpl, activeProduct.id, activeProduct.name, targetPackSize);
@@ -2468,9 +2535,9 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                               e.stopPropagation();
                               handleObjectDoubleClick(obj.id);
                             }}
-                            className={`absolute flex items-center transition-shadow select-none whitespace-nowrap overflow-hidden ${
+                            className={`absolute flex items-center transition-shadow select-none whitespace-nowrap overflow-hidden p-0 m-0 ${
                               isSelected 
-                                ? 'outline outline-1.5 outline-amber-500 shadow-sm cursor-grab active:cursor-grabbing z-30' 
+                                ? 'outline outline-1 outline-amber-400 shadow-xs cursor-grab active:cursor-grabbing z-30' 
                                 : 'hover:bg-zinc-100/60 cursor-pointer z-10'
                             }`}
                             style={{
@@ -2510,31 +2577,31 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                               />
                             ) : obj.type === 'barcode' ? (
                               <div 
-                                className="w-full h-full flex flex-col items-center justify-center bg-white p-0.5 select-none overflow-hidden"
+                                className="w-full h-full flex flex-col items-center justify-center bg-white p-0 select-none overflow-hidden"
                                 dangerouslySetInnerHTML={{ 
                                   __html: renderBarcodeSvgString('barcode', displayText, obj.barcodeFormat === 'EAN13' ? 'EAN13' : 'CODE128') 
                                 }}
                               />
                             ) : obj.type === 'qr' ? (
                               <div 
-                                className="w-full h-full flex items-center justify-center bg-white p-0.5 select-none overflow-hidden"
+                                className="w-full h-full flex items-center justify-center bg-white p-0 select-none overflow-hidden"
                                 dangerouslySetInnerHTML={{ 
                                   __html: renderBarcodeSvgString('qr', displayText) 
                                 }}
                               />
                             ) : (
-                              <span className="leading-none whitespace-nowrap overflow-visible">
+                              <span className="leading-none whitespace-nowrap overflow-visible block p-0 m-0">
                                 {displayText}
                               </span>
                             )}
 
-                            {/* Selected Bounding Box Handles */}
+                            {/* Selected Bounding Box Handles: Sleek, ultra-thin border profile */}
                             {isSelected && (
                               <>
-                                <div className="absolute -top-1 -left-1 w-2 h-2 bg-amber-500 border border-white rounded-xs" />
-                                <div className="absolute -top-1 -right-1 w-2 h-2 bg-amber-500 border border-white rounded-xs" />
-                                <div className="absolute -bottom-1 -left-1 w-2 h-2 bg-amber-500 border border-white rounded-xs" />
-                                <div className="absolute -bottom-1 -right-1 w-2 h-2 bg-amber-500 border border-white rounded-xs" />
+                                <div className="absolute -top-0.5 -left-0.5 w-1.5 h-1.5 bg-amber-400 border border-black/80 rounded-[1px] pointer-events-none" />
+                                <div className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-amber-400 border border-black/80 rounded-[1px] pointer-events-none" />
+                                <div className="absolute -bottom-0.5 -left-0.5 w-1.5 h-1.5 bg-amber-400 border border-black/80 rounded-[1px] pointer-events-none" />
+                                <div className="absolute -bottom-0.5 -right-0.5 w-1.5 h-1.5 bg-amber-400 border border-black/80 rounded-[1px] pointer-events-none" />
                               </>
                             )}
                           </div>
@@ -3802,7 +3869,14 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                   />
                 </div>
                 <div>
-                  <label htmlFor="designer-dim-w-input" className="text-[10px] text-zinc-500 block mb-0.5">Width (mm)</label>
+                  <div className="flex items-center justify-between mb-0.5">
+                    <label htmlFor="designer-dim-w-input" className="text-[10px] text-zinc-500 block">Width (mm)</label>
+                    {selectedObject.horizontalStretchPercent && selectedObject.horizontalStretchPercent !== 100 && (
+                      <span className="text-[9px] font-mono text-amber-400" title="Effective printed width after condensation/stretching">
+                        Eff: {(selectedObject.width * (selectedObject.horizontalStretchPercent / 100)).toFixed(1)}mm
+                      </span>
+                    )}
+                  </div>
                   <input
                     id="designer-dim-w-input"
                     name="dimensionWidth"
@@ -3819,7 +3893,14 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                   />
                 </div>
                 <div>
-                  <label htmlFor="designer-dim-h-input" className="text-[10px] text-zinc-500 block mb-0.5">Height (mm)</label>
+                  <div className="flex items-center justify-between mb-0.5">
+                    <label htmlFor="designer-dim-h-input" className="text-[10px] text-zinc-500 block">Height (mm)</label>
+                    {selectedObject.verticalStretchPercent && selectedObject.verticalStretchPercent !== 100 && (
+                      <span className="text-[9px] font-mono text-amber-400" title="Effective printed height after condensation/stretching">
+                        Eff: {(selectedObject.height * (selectedObject.verticalStretchPercent / 100)).toFixed(1)}mm
+                      </span>
+                    )}
+                  </div>
                   <input
                     id="designer-dim-h-input"
                     name="dimensionHeight"
@@ -3835,6 +3916,19 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                     className="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-1 font-mono text-zinc-200"
                   />
                 </div>
+              </div>
+
+              {/* Snap Box to Content Button */}
+              <div className="pt-0.5">
+                <button
+                  type="button"
+                  onClick={handleTightFitSelectedObject}
+                  className="w-full py-1 px-2 rounded bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-[10px] font-mono text-amber-300 hover:text-amber-200 flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                  title="Snap container boundaries tightly around actual inner content (zero padding)"
+                >
+                  <Maximize2 className="w-3 h-3 text-amber-400" />
+                  <span>Snap Box to Inner Content</span>
+                </button>
               </div>
 
               {/* Typography Controls */}
@@ -3979,6 +4073,9 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-1">
                         <span className="text-[10px] font-bold text-zinc-300">Horizontal (X)</span>
+                        <span className="text-[9px] font-mono text-amber-400">
+                          {((selectedObject.width * (selectedObject.horizontalStretchPercent || 100)) / 100).toFixed(1)}mm
+                        </span>
                         <span className={`text-[9px] font-mono px-1 py-0.2 rounded ${
                           (selectedObject.horizontalStretchPercent || 100) < 100 
                             ? 'bg-sky-950 text-sky-400 border border-sky-800/60' 
@@ -4076,6 +4173,9 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-1">
                         <span className="text-[10px] font-bold text-zinc-300">Vertical (Y)</span>
+                        <span className="text-[9px] font-mono text-amber-400">
+                          {((selectedObject.height * (selectedObject.verticalStretchPercent || 100)) / 100).toFixed(1)}mm
+                        </span>
                         <span className={`text-[9px] font-mono px-1 py-0.2 rounded ${
                           (selectedObject.verticalStretchPercent || 100) < 100 
                             ? 'bg-sky-950 text-sky-400 border border-sky-800/60' 

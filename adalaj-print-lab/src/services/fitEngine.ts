@@ -292,8 +292,15 @@ export function validateTemplateQuality(
       });
     }
 
-    // 3. Overflow locked axis
-    const axisDimension = template.travel === 'Vertical' ? obj.width : obj.height;
+    // 3. Overflow locked axis (accounting for horizontal & vertical stretch condensation and rotation)
+    const scaleX = (obj.horizontalStretchPercent || 100) / 100;
+    const scaleY = (obj.verticalStretchPercent || 100) / 100;
+    const rot = obj.rotation || 0;
+    const isRotated90or270 = rot === 90 || rot === 270;
+    const effW = isRotated90or270 ? (obj.height * scaleY) : (obj.width * scaleX);
+    const effH = isRotated90or270 ? (obj.width * scaleX) : (obj.height * scaleY);
+
+    const axisDimension = template.travel === 'Vertical' ? effW : effH;
     if (axisDimension > lockedLimitMm + 0.05) {
       issues.push({
         id: `overflow_${obj.id}`,
@@ -307,14 +314,26 @@ export function validateTemplateQuality(
     }
   });
 
-  // 4. Overlap inspection
+  // 4. Overlap inspection (accounting for condensation/stretch scaling)
   if (template.preventOverlap) {
     for (let i = 0; i < template.objects.length; i++) {
       for (let j = i + 1; j < template.objects.length; j++) {
         const a = template.objects[i];
         const b = template.objects[j];
-        const overlapX = a.x < b.x + b.width && a.x + a.width > b.x;
-        const overlapY = a.y < b.y + b.height && a.y + a.height > b.y;
+        const aScaleX = (a.horizontalStretchPercent || 100) / 100;
+        const aScaleY = (a.verticalStretchPercent || 100) / 100;
+        const aRot90 = a.rotation === 90 || a.rotation === 270;
+        const aW = aRot90 ? (a.height * aScaleY) : (a.width * aScaleX);
+        const aH = aRot90 ? (a.width * aScaleX) : (a.height * aScaleY);
+
+        const bScaleX = (b.horizontalStretchPercent || 100) / 100;
+        const bScaleY = (b.verticalStretchPercent || 100) / 100;
+        const bRot90 = b.rotation === 90 || b.rotation === 270;
+        const bW = bRot90 ? (b.height * bScaleY) : (b.width * bScaleX);
+        const bH = bRot90 ? (b.width * bScaleX) : (b.height * bScaleY);
+
+        const overlapX = a.x < b.x + bW && a.x + aW > b.x;
+        const overlapY = a.y < b.y + bH && a.y + aH > b.y;
         if (overlapX && overlapY) {
           issues.push({
             id: `overlap_${a.id}_${b.id}`,

@@ -209,8 +209,15 @@ export default function App() {
       machs[0] ||
       null;
 
-    const initialResolved = resolveLayout(resolvedProd?.id || '', resolvedSku?.packSize || '100 g', currentTmpls, packs);
-    const defaultTemplate = initialResolved.template;
+    const savedTemplateId = localStorage.getItem('als_active_template_id');
+    let defaultTemplate: Template | null = null;
+    if (savedTemplateId) {
+      defaultTemplate = currentTmpls.find(t => t.id === savedTemplateId) || null;
+    }
+    if (!defaultTemplate) {
+      const initialResolved = resolveLayout(resolvedProd?.id || '', resolvedSku?.packSize || '100 g', currentTmpls, packs);
+      defaultTemplate = initialResolved.template;
+    }
 
     setActiveProduct(resolvedProd || null);
     setActiveSku(resolvedSku || null);
@@ -694,11 +701,13 @@ export default function App() {
       await db.templates.delete('tmpl_adalaj_6line');
     }
 
-    // 2. Also delete any conflicting custom override for currentProductId so this product inherits the new Global Default immediately
-    if (currentProductId) {
-      const overrideId = getSkuOverrideTemplateId(currentProductId, packSize);
-      await db.templates.delete(overrideId);
-      updatedTemplates = updatedTemplates.filter(t => t.id !== overrideId && t.skuOverrideKey !== `${currentProductId}_${norm}`);
+    // 2. Remove all conflicting/seeded overrides for this pack size so every product inherits the new Global Default immediately
+    const overridesToDelete = allDbTemplates.filter(t => 
+      t.isSkuOverride && (t.packSizeScope === norm || (currentProductId && t.skuOverrideKey === `${currentProductId}_${norm}`))
+    );
+    for (const ov of overridesToDelete) {
+      await db.templates.delete(ov.id);
+      updatedTemplates = updatedTemplates.filter(t => t.id !== ov.id);
     }
 
     // 3. Save new default at the top of templates so it resolves first
@@ -707,6 +716,7 @@ export default function App() {
 
     setTemplates(updatedTemplates);
     setActiveTemplate(packDefaultTmpl);
+    localStorage.setItem('als_active_template_id', packDefaultTmpl.id);
 
     await db.auditLogs.put({
       id: `audit_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
@@ -731,6 +741,7 @@ export default function App() {
     updatedTemplates = [skuOverrideTmpl, ...updatedTemplates];
     setTemplates(updatedTemplates);
     setActiveTemplate(skuOverrideTmpl);
+    localStorage.setItem('als_active_template_id', skuOverrideTmpl.id);
 
     await db.auditLogs.put({
       id: `audit_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
