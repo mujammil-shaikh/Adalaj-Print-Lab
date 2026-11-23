@@ -28,11 +28,58 @@ export function normalizePackSize(size: string): string {
   return clean;
 }
 
-export function getPackDefaultTemplateId(packSize: string): string {
+/**
+ * Standard Packaging Types identifiable in dropdowns and persistent template scopes
+ */
+export const STANDARD_PACKAGING_TYPES = [
+  { id: 'standup_pouch', label: 'Standup Pouch', short: 'Standup', surface: 'Pouch' },
+  { id: 'flat_pouch', label: 'Flat Pouch', short: 'Flat Pouch', surface: 'Pouch' },
+  { id: 'pillow_pouch', label: 'Pillow Pouch', short: 'Pillow', surface: 'Pouch' },
+  { id: 'jar', label: 'Jar', short: 'Jar', surface: 'Bottle / Jar' },
+  { id: 'bottle', label: 'Bottle', short: 'Bottle', surface: 'Bottle / Jar' },
+  { id: 'tin_can', label: 'Tin / Can', short: 'Tin', surface: 'Carton' },
+  { id: 'carton_box', label: 'Carton / Box', short: 'Carton', surface: 'Carton' },
+  { id: 'custom', label: 'Custom / Other', short: 'Custom', surface: 'Custom' },
+] as const;
+
+export type StandardPackagingTypeId = typeof STANDARD_PACKAGING_TYPES[number]['id'];
+
+export function normalizePackType(type?: string): string {
+  if (!type) return 'standup_pouch';
+  const clean = type.toLowerCase().trim().replace(/[\s\-_/]+/g, '_');
+  if (clean.includes('stand') || clean.includes('sup')) return 'standup_pouch';
+  if (clean.includes('flat')) return 'flat_pouch';
+  if (clean.includes('pillow')) return 'pillow_pouch';
+  if (clean.includes('jar')) return 'jar';
+  if (clean.includes('bottle')) return 'bottle';
+  if (clean.includes('tin') || clean.includes('can')) return 'tin_can';
+  if (clean.includes('carton') || clean.includes('box')) return 'carton_box';
+  return clean || 'standup_pouch';
+}
+
+export function formatPackTypeLabel(type?: string): string {
+  const norm = normalizePackType(type);
+  const found = STANDARD_PACKAGING_TYPES.find(p => p.id === norm);
+  return found ? found.label : (type || 'Standup Pouch');
+}
+
+export function getPackDefaultTemplateId(packSize: string, packType?: string): string {
+  const normSize = normalizePackSize(packSize);
+  const normType = normalizePackType(packType);
+  return `tmpl_pack_default_${normSize}_${normType}`;
+}
+
+export function getLegacyPackDefaultTemplateId(packSize: string): string {
   return `tmpl_pack_default_${normalizePackSize(packSize)}`;
 }
 
-export function getSkuOverrideTemplateId(productId: string, packSize: string): string {
+export function getSkuOverrideTemplateId(productId: string, packSize: string, packType?: string): string {
+  const normSize = normalizePackSize(packSize);
+  const normType = normalizePackType(packType);
+  return `tmpl_sku_override_${productId}_${normSize}_${normType}`;
+}
+
+export function getLegacySkuOverrideTemplateId(productId: string, packSize: string): string {
   return `tmpl_sku_override_${productId}_${normalizePackSize(packSize)}`;
 }
 
@@ -42,6 +89,7 @@ export interface ResolvedLayout {
   template: Template;
   source: LayoutSource;
   normalizedPackSize: string;
+  normalizedPackType: string;
   hasCustomOverride: boolean;
   hasPackDefault: boolean;
 }
@@ -738,32 +786,60 @@ export function getFactoryProductTemplate(productId: string, packSize: string): 
 export function resolveLayout(
   productId: string,
   packSize: string,
-  templates: Template[],
-  packProfiles?: PackProfile[]
+  packTypeOrTemplates?: string | Template[],
+  templatesOrProfiles?: Template[] | PackProfile[],
+  maybePackProfiles?: PackProfile[]
 ): ResolvedLayout {
-  const norm = normalizePackSize(packSize);
-  const skuOverrideId = getSkuOverrideTemplateId(productId, packSize);
-  const skuOverrideKey = `${productId}_${norm}`;
-  const packDefaultId = getPackDefaultTemplateId(packSize);
+  let packType: string | undefined = undefined;
+  let templates: Template[] = [];
+  let packProfiles: PackProfile[] | undefined = undefined;
 
-  // Check 1: Does this specific product have its own independent custom override?
+  if (typeof packTypeOrTemplates === 'string') {
+    packType = packTypeOrTemplates;
+    templates = Array.isArray(templatesOrProfiles) ? (templatesOrProfiles as Template[]) : [];
+    packProfiles = maybePackProfiles;
+  } else {
+    // Backwards-compatible signature: resolveLayout(productId, packSize, templates, packProfiles)
+    packType = 'standup_pouch';
+    templates = Array.isArray(packTypeOrTemplates) ? packTypeOrTemplates : [];
+    packProfiles = Array.isArray(templatesOrProfiles) ? (templatesOrProfiles as PackProfile[]) : undefined;
+  }
+
+  const normSize = normalizePackSize(packSize);
+  const normType = normalizePackType(packType);
+
+  const skuOverrideId = getSkuOverrideTemplateId(productId, packSize, packType);
+  const skuOverrideKey = `${productId}_${normSize}_${normType}`;
+  const legacySkuOverrideId = getLegacySkuOverrideTemplateId(productId, packSize);
+  const legacySkuOverrideKey = `${productId}_${normSize}`;
+
+  const packDefaultId = getPackDefaultTemplateId(packSize, packType);
+  const legacyPackDefaultId = getLegacyPackDefaultTemplateId(packSize);
+
+  // Check 1: SKU Override (specific to this product + size + type, or legacy product + size)
   const skuOverride = templates.find(t => 
     t.id === skuOverrideId || 
     t.skuOverrideKey === skuOverrideKey ||
     (t.isSkuOverride && t.skuOverrideKey === skuOverrideKey)
+  ) || templates.find(t =>
+    t.id === legacySkuOverrideId ||
+    t.skuOverrideKey === legacySkuOverrideKey ||
+    (t.isSkuOverride && t.skuOverrideKey === legacySkuOverrideKey)
   );
 
-  // Check 2: Global Pack Default in database (e.g. tmpl_pack_default_100g)
-  // Priority: exact target packDefaultId (tmpl_pack_default_${norm}) takes absolute precedence over generic seed
+  // Check 2: Global Pack Default for (packSize, packType), falling back gracefully to legacy pack size default
   const packDefault = templates.find(t => t.id === packDefaultId)
-    || templates.find(t => t.packSizeScope === norm && t.isPackSizeDefault && t.id !== 'tmpl_adalaj_6line')
-    || templates.find(t => t.packSizeScope === norm && t.isPackSizeDefault);
+    || templates.find(t => t.packSizeScope === normSize && t.packTypeScope === normType && t.isPackSizeDefault)
+    || templates.find(t => t.id === legacyPackDefaultId)
+    || templates.find(t => t.packSizeScope === normSize && t.isPackSizeDefault && t.id !== 'tmpl_adalaj_6line')
+    || templates.find(t => t.packSizeScope === normSize && t.isPackSizeDefault);
 
   if (skuOverride) {
     return {
       template: JSON.parse(JSON.stringify(skuOverride)),
       source: 'sku_override',
-      normalizedPackSize: norm,
+      normalizedPackSize: normSize,
+      normalizedPackType: normType,
       hasCustomOverride: true,
       hasPackDefault: !!packDefault
     };
@@ -773,64 +849,78 @@ export function resolveLayout(
     return {
       template: JSON.parse(JSON.stringify(packDefault)),
       source: 'pack_default',
-      normalizedPackSize: norm,
+      normalizedPackSize: normSize,
+      normalizedPackType: normType,
       hasCustomOverride: false,
       hasPackDefault: true
     };
   }
 
   // Fallback 1: Pristine global 100g template
-  if (norm === '100g') {
-    const seed = templates.find(t => t.id === packDefaultId) || templates.find(t => t.id === 'tmpl_adalaj_6line') || default100gTemplate;
+  if (normSize === '100g') {
+    const seed = templates.find(t => t.id === packDefaultId) 
+      || templates.find(t => t.id === legacyPackDefaultId) 
+      || templates.find(t => t.id === 'tmpl_adalaj_6line') 
+      || default100gTemplate;
     return {
       template: JSON.parse(JSON.stringify(seed)),
       source: 'pack_default',
-      normalizedPackSize: norm,
+      normalizedPackSize: normSize,
+      normalizedPackType: normType,
       hasCustomOverride: false,
       hasPackDefault: true
     };
   }
 
   // Fallback 2: Pristine global 500g template
-  if (norm === '500g') {
-    const seed = templates.find(t => t.id === packDefaultId) || default500gTemplate;
+  if (normSize === '500g') {
+    const seed = templates.find(t => t.id === packDefaultId) 
+      || templates.find(t => t.id === legacyPackDefaultId) 
+      || default500gTemplate;
     return {
       template: JSON.parse(JSON.stringify(seed)),
       source: 'pack_default',
-      normalizedPackSize: norm,
+      normalizedPackSize: normSize,
+      normalizedPackType: normType,
       hasCustomOverride: false,
       hasPackDefault: true
     };
   }
 
-  // Fallback 3: Scratch starter for other pack sizes
+  // Fallback 3: Scratch starter for other pack sizes & types
   const scratch = createScratchTemplate(packSize, packProfiles);
+  scratch.packTypeScope = normType;
   return {
     template: scratch,
     source: 'scratch_new',
-    normalizedPackSize: norm,
+    normalizedPackSize: normSize,
+    normalizedPackType: normType,
     hasCustomOverride: false,
     hasPackDefault: false
   };
 }
 
 /**
- * Prepares a template to be saved as the General Pack Size Default
- * Strips any SKU-specific lock or key, and brands it as the default for all SKUs of this pack size.
+ * Prepares a template to be saved as the General Pack Size + Pack Type Default
+ * Strips any SKU-specific lock or key, and brands it as the default for all SKUs of this pack size and packaging type.
  */
 export function buildPackDefaultTemplate(
   currentTemplate: Template,
-  packSize: string
+  packSize: string,
+  packType?: string
 ): Template {
-  const norm = normalizePackSize(packSize);
-  const targetId = getPackDefaultTemplateId(packSize);
+  const normSize = normalizePackSize(packSize);
+  const normType = normalizePackType(packType || currentTemplate.packTypeScope);
+  const targetId = getPackDefaultTemplateId(packSize, normType);
+  const typeLabel = formatPackTypeLabel(normType);
 
   return {
     ...currentTemplate,
     id: targetId,
-    name: `Default ${packSize} Layout`,
-    description: `General visual layout default for all ${packSize} packaging across all products`,
-    packSizeScope: norm,
+    name: `Default ${packSize} ${typeLabel} Layout`,
+    description: `General visual layout default for all ${packSize} ${typeLabel} packaging across all products`,
+    packSizeScope: normSize,
+    packTypeScope: normType,
     isPackSizeDefault: true,
     isSkuOverride: false,
     skuOverrideKey: undefined,
@@ -841,24 +931,28 @@ export function buildPackDefaultTemplate(
 
 /**
  * Prepares a template to be saved as a Product/SKU Specific Override
- * Isolates adjustments strictly to this product and pack size.
+ * Isolates adjustments strictly to this product, pack size, and packaging type.
  */
 export function buildSkuOverrideTemplate(
   currentTemplate: Template,
   productId: string,
   productName: string,
-  packSize: string
+  packSize: string,
+  packType?: string
 ): Template {
-  const norm = normalizePackSize(packSize);
-  const targetId = getSkuOverrideTemplateId(productId, packSize);
-  const skuOverrideKey = `${productId}_${norm}`;
+  const normSize = normalizePackSize(packSize);
+  const normType = normalizePackType(packType || currentTemplate.packTypeScope);
+  const targetId = getSkuOverrideTemplateId(productId, packSize, normType);
+  const skuOverrideKey = `${productId}_${normSize}_${normType}`;
+  const typeLabel = formatPackTypeLabel(normType);
 
   return {
     ...currentTemplate,
     id: targetId,
-    name: `${productName} (${packSize}) Custom Override`,
-    description: `Specific layout override for ${productName} ${packSize}. Does not alter general ${packSize} default.`,
-    packSizeScope: norm,
+    name: `${productName} (${packSize} ${typeLabel}) Custom Override`,
+    description: `Specific layout override for ${productName} ${packSize} ${typeLabel}. Does not alter general ${packSize} default.`,
+    packSizeScope: normSize,
+    packTypeScope: normType,
     isSkuOverride: true,
     isPackSizeDefault: false,
     skuOverrideKey,

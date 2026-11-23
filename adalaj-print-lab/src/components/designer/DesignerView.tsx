@@ -72,8 +72,13 @@ import {
   buildPackDefaultTemplate, 
   buildSkuOverrideTemplate, 
   getSkuOverrideTemplateId,
+  getLegacySkuOverrideTemplateId,
   getPackDefaultTemplateId,
+  getLegacyPackDefaultTemplateId,
   normalizePackSize, 
+  normalizePackType,
+  formatPackTypeLabel,
+  STANDARD_PACKAGING_TYPES,
   getCleanGlobalPackDefault,
   getFactoryProductTemplate,
   type LayoutSource, 
@@ -173,9 +178,9 @@ interface DesignerViewProps {
   onSelectSku?: (s: SKU) => void;
   onSelectBatch?: (b: Batch) => void;
   onSaveTemplate: (t: Template, scope: DesignScope) => void;
-  onSavePackDefault?: (t: Template, packSize: string, currentProductId?: string) => Promise<void>;
-  onSaveSkuOverride?: (t: Template, productId: string, productName: string, packSize: string) => Promise<void>;
-  onRevertSkuOverride?: (productId: string, packSize: string) => Promise<void>;
+  onSavePackDefault?: (t: Template, packSize: string, packType?: string, currentProductId?: string) => Promise<void>;
+  onSaveSkuOverride?: (t: Template, productId: string, productName: string, packSize: string, packType?: string) => Promise<void>;
+  onRevertSkuOverride?: (productId: string, packSize: string, packType?: string) => Promise<void>;
   onTemplateChange?: (t: Template) => void;
   onUpdateBatch?: (b: Batch) => Promise<void> | void;
   onUpdateSku?: (s: SKU) => Promise<void> | void;
@@ -272,42 +277,60 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
 
   const previewSku = productSkus.find(s => s.id === previewSkuId) || productSkus[0] || activeSku;
 
+  // Track active packaging type (e.g. standup_pouch, flat_pouch, jar, bottle)
+  const [activePackagingType, setActivePackagingType] = useState<string>(() => {
+    return normalizePackType(previewSku.packType || initialTemplate.packTypeScope);
+  });
+
+  useEffect(() => {
+    if (previewSku.packType) {
+      setActivePackagingType(normalizePackType(previewSku.packType));
+    }
+  }, [previewSku.id, previewSku.packType]);
+
   // Resolve two-tier layout inheritance: SKU Override > Pack Default > Scratch Starter
   const currentLayoutInfo = useMemo(() => {
     return resolveLayout(
       activeProduct.id,
       previewSku.packSize,
+      activePackagingType,
       templates && templates.length > 0 ? templates : [template],
       packProfiles
     );
-  }, [activeProduct.id, previewSku.packSize, templates, packProfiles, template.id]);
+  }, [activeProduct.id, previewSku.packSize, activePackagingType, templates, packProfiles, template.id]);
 
   const selectedObject = template.objects.find(o => o.id === selectedObjectId);
 
-  // Track currently loaded product and pack size
-  const activeProductAndPackRef = useRef<string>(`${activeProduct.id}_${previewSku.packSize}`);
+  // Track currently loaded product, pack size and packaging type
+  const activeProductAndPackRef = useRef<string>(`${activeProduct.id}_${previewSku.packSize}_${activePackagingType}`);
 
-  // Synchronize template whenever product or pack size changes
+  // Synchronize template whenever product, pack size or packaging type changes
   useEffect(() => {
-    const key = `${activeProduct.id}_${previewSku.packSize}`;
+    const key = `${activeProduct.id}_${previewSku.packSize}_${activePackagingType}`;
     const productOrPackChanged = activeProductAndPackRef.current !== key;
     activeProductAndPackRef.current = key;
 
-    // Only force resolve and replace template if the user switched product or SKU pack size!
+    // Only force resolve and replace template if the user switched product, SKU pack size, or packaging type!
     // If they just saved (which updates templates prop), DO NOT wipe out the canvas template!
     if (productOrPackChanged) {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+      }
       const resolved = resolveLayout(
         activeProduct.id,
         previewSku.packSize,
+        activePackagingType,
         templates && templates.length > 0 ? templates : [initialTemplate],
         packProfiles
       );
       setTemplate(resolved.template);
+      latestTemplateRef.current = resolved.template;
       setSelectedObjectId(resolved.template.objects[0]?.id || null);
       setHistory([]);
       setRedoStack([]);
     }
-  }, [activeProduct.id, previewSku.packSize, templates]);
+  }, [activeProduct.id, previewSku.packSize, activePackagingType, templates]);
 
   // Synchronize Save Scope selection with layout inheritance source
   useEffect(() => {
@@ -327,15 +350,24 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
   const flushTemplateToStorage = useCallback(async (tmpl: Template) => {
     if (!tmpl || !tmpl.id) return;
     try {
+      const normSize = normalizePackSize(previewSku.packSize);
+      const normType = normalizePackType(activePackagingType || tmpl.packTypeScope);
+
+      // SAFETY GUARD: Do NOT flush if this template was configured for a different pack size!
+      // This prevents the old template from overwriting the new pack size slot during transitions!
+      if (tmpl.packSizeScope && tmpl.packSizeScope !== normSize) {
+        return;
+      }
+
       let tmplToSave = tmpl;
-      const norm = normalizePackSize(previewSku.packSize);
       if (activeSaveScope === 'global') {
-        if (!tmplToSave.isPackSizeDefault || tmplToSave.packSizeScope !== norm) {
-          tmplToSave = buildPackDefaultTemplate(tmplToSave, previewSku.packSize);
+        if (!tmplToSave.isPackSizeDefault || tmplToSave.packSizeScope !== normSize || tmplToSave.packTypeScope !== normType) {
+          tmplToSave = buildPackDefaultTemplate(tmplToSave, previewSku.packSize, normType);
         }
       } else {
-        if (!tmplToSave.isSkuOverride || tmplToSave.skuOverrideKey !== `${activeProduct.id}_${norm}`) {
-          tmplToSave = buildSkuOverrideTemplate(tmplToSave, activeProduct.id, activeProduct.name, previewSku.packSize);
+        const expectedKey = `${activeProduct.id}_${normSize}_${normType}`;
+        if (!tmplToSave.isSkuOverride || tmplToSave.skuOverrideKey !== expectedKey) {
+          tmplToSave = buildSkuOverrideTemplate(tmplToSave, activeProduct.id, activeProduct.name, previewSku.packSize, normType);
         }
       }
       await db.templates.put(tmplToSave);
@@ -345,14 +377,17 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
     } catch (err) {
       console.error('Template flush error:', err);
     }
-  }, [previewSku.packSize, activeSaveScope, activeProduct.id, activeProduct.name, onTemplateChange]);
+  }, [previewSku.packSize, activePackagingType, activeSaveScope, activeProduct.id, activeProduct.name, onTemplateChange]);
+
+  const flushRef = useRef(flushTemplateToStorage);
+  flushRef.current = flushTemplateToStorage;
 
   // Real-time Auto-Save with Explicit Scope Awareness & Dual-Layer Persistence
   useEffect(() => {
     if (!template || !template.id) return;
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     autoSaveTimerRef.current = setTimeout(async () => {
-      await flushTemplateToStorage(template);
+      await flushRef.current(template);
       const now = new Date();
       const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       setAutoSaveStatus(`Auto-saved ${timeStr}`);
@@ -361,7 +396,41 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
     return () => {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     };
-  }, [template, flushTemplateToStorage]);
+  }, [template]);
+
+  // Handler for Packaging Type dropdown switch
+  const handlePackTypeChange = async (newType: string) => {
+    const normType = normalizePackType(newType);
+    if (normType === activePackagingType) return;
+
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+
+    setActivePackagingType(normType);
+
+    if (onUpdateSku && previewSku) {
+      const updatedSku: SKU = { ...previewSku, packType: normType };
+      onUpdateSku(updatedSku);
+    }
+
+    const resolved = resolveLayout(
+      activeProduct.id,
+      previewSku.packSize,
+      normType,
+      templates && templates.length > 0 ? templates : [template],
+      packProfiles
+    );
+    setTemplate(resolved.template);
+    latestTemplateRef.current = resolved.template;
+    setSelectedObjectId(resolved.template.objects[0]?.id || null);
+    setHistory([]);
+    setRedoStack([]);
+    if (onTemplateChange) onTemplateChange(resolved.template);
+    setToastMessage(`Packaging type: ${formatPackTypeLabel(normType)} (${previewSku.packSize})`);
+    setTimeout(() => setToastMessage(null), 2500);
+  };
 
   // Flush on unmount (e.g. when navigating to Print or Batches tab)
   useEffect(() => {
@@ -1031,31 +1100,35 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
   const handleToggleScope = async (newScope: 'global' | 'individual') => {
     if (newScope === activeSaveScope) return;
     const targetPackSize = previewSku.packSize;
+    const normType = normalizePackType(activePackagingType);
+    const typeLabel = formatPackTypeLabel(normType);
     if (newScope === 'global') {
-      const packTmpl = buildPackDefaultTemplate(template, targetPackSize);
+      const packTmpl = buildPackDefaultTemplate(template, targetPackSize, normType);
       setTemplate(packTmpl);
+      latestTemplateRef.current = packTmpl;
       setActiveSaveScope('global');
       setSelectedSaveTarget('pack_default');
       if (onSavePackDefault) {
-        await onSavePackDefault(template, targetPackSize, activeProduct.id);
+        await onSavePackDefault(template, targetPackSize, normType, activeProduct.id);
       } else {
         await db.templates.put(packTmpl);
         await saveUniversalSnapshot();
       }
-      setToastMessage(`✓ Switched to Global (${targetPackSize}) Default`);
+      setToastMessage(`✓ Switched to Global (${targetPackSize} ${typeLabel}) Default`);
       setTimeout(() => setToastMessage(null), 3000);
     } else {
-      const skuTmpl = buildSkuOverrideTemplate(template, activeProduct.id, activeProduct.name, targetPackSize);
+      const skuTmpl = buildSkuOverrideTemplate(template, activeProduct.id, activeProduct.name, targetPackSize, normType);
       setTemplate(skuTmpl);
+      latestTemplateRef.current = skuTmpl;
       setActiveSaveScope('individual');
       setSelectedSaveTarget('sku_override');
       if (onSaveSkuOverride) {
-        await onSaveSkuOverride(template, activeProduct.id, activeProduct.name, targetPackSize);
+        await onSaveSkuOverride(template, activeProduct.id, activeProduct.name, targetPackSize, normType);
       } else {
         await db.templates.put(skuTmpl);
         await saveUniversalSnapshot();
       }
-      setToastMessage(`✓ Switched to Individual (${activeProduct.shortCode}) Override`);
+      setToastMessage(`✓ Switched to Individual (${activeProduct.shortCode} ${targetPackSize}) Override`);
       setTimeout(() => setToastMessage(null), 3000);
     }
   };
@@ -1449,14 +1522,15 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
     updateTemplateWithHistory(res.template);
   };
 
-  // Tier 1: Save as General Default for all products of this pack size
+  // Tier 1: Save as General Default for all products of this pack size & packaging type
   const handleSaveGeneralPackDefault = async () => {
     setSaveStatus('saving');
     setIsSaveMenuOpen(false);
     setShowScopeConfirmModal(false);
     try {
       const targetPackSize = previewSku.packSize;
-      const packTmpl = buildPackDefaultTemplate(template, targetPackSize);
+      const normType = normalizePackType(activePackagingType);
+      const packTmpl = buildPackDefaultTemplate(template, targetPackSize, normType);
       // Immediately set the local template state so canvas retains all edits
       setTemplate(packTmpl);
       latestTemplateRef.current = packTmpl;
@@ -1466,13 +1540,14 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       localStorage.setItem('als_active_template_id', packTmpl.id);
       if (onTemplateChange) onTemplateChange(packTmpl);
       if (onSavePackDefault) {
-        await onSavePackDefault(packTmpl, targetPackSize, activeProduct.id);
+        await onSavePackDefault(packTmpl, targetPackSize, normType, activeProduct.id);
       } else {
         await onSaveTemplate(packTmpl, 'All SKUs of this pack size');
       }
       await saveUniversalSnapshot();
       setSaveStatus('saved');
-      setToastMessage(`✓ Saved as Global Default for all ${targetPackSize} packages!`);
+      const typeLabel = formatPackTypeLabel(normType);
+      setToastMessage(`✓ Saved as Global Default for all ${targetPackSize} ${typeLabel} packages!`);
       setTimeout(() => setSaveStatus('idle'), 2500);
       setTimeout(() => setToastMessage(null), 3500);
     } catch (err) {
@@ -1483,14 +1558,15 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
     }
   };
 
-  // Tier 2: Save as Custom Override specifically for this Product & SKU
+  // Tier 2: Save as Custom Override specifically for this Product & SKU & packaging type
   const handleSaveSkuCustomOverride = async () => {
     setSaveStatus('saving');
     setIsSaveMenuOpen(false);
     setShowScopeConfirmModal(false);
     try {
       const targetPackSize = previewSku.packSize;
-      const skuTmpl = buildSkuOverrideTemplate(template, activeProduct.id, activeProduct.name, targetPackSize);
+      const normType = normalizePackType(activePackagingType);
+      const skuTmpl = buildSkuOverrideTemplate(template, activeProduct.id, activeProduct.name, targetPackSize, normType);
       // Immediately set the local template state so canvas retains all edits
       setTemplate(skuTmpl);
       latestTemplateRef.current = skuTmpl;
@@ -1500,13 +1576,14 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       localStorage.setItem('als_active_template_id', skuTmpl.id);
       if (onTemplateChange) onTemplateChange(skuTmpl);
       if (onSaveSkuOverride) {
-        await onSaveSkuOverride(skuTmpl, activeProduct.id, activeProduct.name, targetPackSize);
+        await onSaveSkuOverride(skuTmpl, activeProduct.id, activeProduct.name, targetPackSize, normType);
       } else {
         await onSaveTemplate(skuTmpl, 'This SKU');
       }
       await saveUniversalSnapshot();
       setSaveStatus('saved');
-      setToastMessage(`✓ Saved Custom Override for ${activeProduct.shortCode} (${targetPackSize})`);
+      const typeLabel = formatPackTypeLabel(normType);
+      setToastMessage(`✓ Saved Custom Override for ${activeProduct.shortCode} (${targetPackSize} ${typeLabel})`);
       setTimeout(() => setSaveStatus('idle'), 2500);
       setTimeout(() => setToastMessage(null), 3500);
     } catch (err) {
@@ -1517,27 +1594,36 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
     }
   };
 
-  // Reset design back to the current Global Default for this pack size (clears product override if any, or restores last saved global default)
+  // Reset design back to the current Global Default for this pack size & packaging type
   const handleResetToGlobal = async () => {
     setIsSaveMenuOpen(false);
     setShowScopeConfirmModal(false);
     try {
       const targetPackSize = previewSku.packSize;
       const norm = normalizePackSize(targetPackSize);
+      const normType = normalizePackType(activePackagingType);
       if (onRevertSkuOverride) {
-        await onRevertSkuOverride(activeProduct.id, targetPackSize);
+        await onRevertSkuOverride(activeProduct.id, targetPackSize, normType);
       }
-      const overrideId = getSkuOverrideTemplateId(activeProduct.id, targetPackSize);
-      const remainingTemplates = (templates || []).filter(t => t.id !== overrideId && t.skuOverrideKey !== `${activeProduct.id}_${norm}`);
-      const resolved = resolveLayout(activeProduct.id, targetPackSize, remainingTemplates, packProfiles);
+      const overrideId = getSkuOverrideTemplateId(activeProduct.id, targetPackSize, normType);
+      const legacyId = getLegacySkuOverrideTemplateId(activeProduct.id, targetPackSize);
+      const remainingTemplates = (templates || []).filter(t => 
+        t.id !== overrideId && 
+        t.id !== legacyId && 
+        t.skuOverrideKey !== `${activeProduct.id}_${norm}_${normType}` &&
+        t.skuOverrideKey !== `${activeProduct.id}_${norm}`
+      );
+      const resolved = resolveLayout(activeProduct.id, targetPackSize, normType, remainingTemplates, packProfiles);
       setTemplate(resolved.template);
+      latestTemplateRef.current = resolved.template;
       setActiveSaveScope('global');
       setSelectedSaveTarget('pack_default');
       if (onTemplateChange) onTemplateChange(resolved.template);
       setSelectedObjectId(resolved.template.objects[0]?.id || null);
       setHistory(h => [...h.slice(-24), JSON.parse(JSON.stringify(template))]);
       setRedoStack([]);
-      setToastMessage(`↺ Reverted ${activeProduct.shortCode} back to Global ${targetPackSize} Default`);
+      const typeLabel = formatPackTypeLabel(normType);
+      setToastMessage(`↺ Reverted ${activeProduct.shortCode} back to Global ${targetPackSize} ${typeLabel} Default`);
       setTimeout(() => setToastMessage(null), 3000);
     } catch (err) {
       console.error(err);
@@ -1854,13 +1940,20 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                 onChange={e => {
                   const p = allProducts.find(prod => prod.id === e.target.value);
                   if (p && onSelectProduct) {
+                    if (autoSaveTimerRef.current) {
+                      clearTimeout(autoSaveTimerRef.current);
+                      autoSaveTimerRef.current = null;
+                    }
                     onSelectProduct(p);
-                    const matchedSku = allSkus.find(s => s.productId === p.id && s.packSize === previewSku.packSize) || allSkus.find(s => s.productId === p.id);
+                    const matchedSku = allSkus.find(s => s.productId === p.id && s.packSize === previewSku.packSize && normalizePackType(s.packType) === activePackagingType)
+                      || allSkus.find(s => s.productId === p.id && s.packSize === previewSku.packSize)
+                      || allSkus.find(s => s.productId === p.id);
                     if (matchedSku) {
                       setPreviewSkuId(matchedSku.id);
                       if (onSelectSku) onSelectSku(matchedSku);
-                      const resolved = resolveLayout(p.id, matchedSku.packSize, templates && templates.length > 0 ? templates : [template], packProfiles);
+                      const resolved = resolveLayout(p.id, matchedSku.packSize, activePackagingType, templates && templates.length > 0 ? templates : [template], packProfiles);
                       setTemplate(resolved.template);
+                      latestTemplateRef.current = resolved.template;
                       setSelectedObjectId(resolved.template.objects[0]?.id || null);
                       setHistory([]);
                       setRedoStack([]);
@@ -1889,10 +1982,16 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
               onChange={e => {
                 const s = productSkus.find(sku => sku.id === e.target.value);
                 if (s) {
+                  if (autoSaveTimerRef.current) {
+                    clearTimeout(autoSaveTimerRef.current);
+                    autoSaveTimerRef.current = null;
+                  }
                   setPreviewSkuId(s.id);
+                  if (s.packType) setActivePackagingType(normalizePackType(s.packType));
                   if (onSelectSku) onSelectSku(s);
-                  const resolved = resolveLayout(activeProduct.id, s.packSize, templates && templates.length > 0 ? templates : [template], packProfiles);
+                  const resolved = resolveLayout(activeProduct.id, s.packSize, s.packType || activePackagingType, templates && templates.length > 0 ? templates : [template], packProfiles);
                   setTemplate(resolved.template);
+                  latestTemplateRef.current = resolved.template;
                   setSelectedObjectId(resolved.template.objects[0]?.id || null);
                   setHistory([]);
                   setRedoStack([]);
@@ -1909,6 +2008,26 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
             </select>
           </div>
 
+          {/* Packaging Type Selector */}
+          <div className="flex items-center gap-1.5 bg-zinc-950 border border-zinc-800 rounded-lg px-2 py-0.5 h-8">
+            <label htmlFor="designer-pack-type-select" className="text-zinc-500 text-[11px] font-medium cursor-pointer shrink-0">Type:</label>
+            <select
+              id="designer-pack-type-select"
+              name="designerPackType"
+              aria-label="Packaging Type"
+              value={activePackagingType}
+              onChange={e => handlePackTypeChange(e.target.value)}
+              className="bg-transparent font-medium text-cyan-400 focus:outline-hidden cursor-pointer text-xs max-w-[125px] truncate"
+              title="Select packaging type (Standup Pouch, Jar, Flat Pouch, etc.)"
+            >
+              {STANDARD_PACKAGING_TYPES.map(pt => (
+                <option key={pt.id} value={pt.id} className="bg-zinc-900 text-cyan-400">
+                  {pt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
           {/* Universal Scope Selector: Global vs Individual Override */}
           <div className="flex items-center bg-zinc-950 border border-zinc-800 rounded-lg p-0.5 h-8">
             <button
@@ -1919,10 +2038,10 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                   ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/50 shadow-xs'
                   : 'text-zinc-400 hover:text-white'
               }`}
-              title={`Save edits as Global Default for ALL ${previewSku.packSize} products across all categories`}
+              title={`Save edits as Global Default for ALL ${previewSku.packSize} ${formatPackTypeLabel(activePackagingType)} packages across all products`}
             >
               <Globe className="w-3 h-3 text-emerald-400 shrink-0" />
-              <span className="hidden md:inline">Global ({previewSku.packSize})</span>
+              <span className="hidden md:inline">Global ({previewSku.packSize} {formatPackTypeLabel(activePackagingType)})</span>
               <span className="md:hidden">Global</span>
             </button>
             <button
@@ -1933,10 +2052,10 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                   ? 'bg-amber-500/20 text-amber-300 border border-amber-500/50 shadow-xs'
                   : 'text-zinc-400 hover:text-white'
               }`}
-              title={`Save edits as Custom Override ONLY for ${activeProduct.name} (${previewSku.packSize})`}
+              title={`Save edits as Custom Override ONLY for ${activeProduct.name} (${previewSku.packSize} ${formatPackTypeLabel(activePackagingType)})`}
             >
               <Star className="w-3 h-3 text-amber-400 fill-amber-400 shrink-0" />
-              <span className="hidden md:inline">Individual ({activeProduct.shortCode})</span>
+              <span className="hidden md:inline">Individual ({activeProduct.shortCode} {previewSku.packSize})</span>
               <span className="md:hidden">Individual</span>
             </button>
           </div>
@@ -4764,10 +4883,16 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
             onChange={e => {
               const s = productSkus.find(sku => sku.id === e.target.value);
               if (s) {
+                if (autoSaveTimerRef.current) {
+                  clearTimeout(autoSaveTimerRef.current);
+                  autoSaveTimerRef.current = null;
+                }
                 setPreviewSkuId(s.id);
+                if (s.packType) setActivePackagingType(normalizePackType(s.packType));
                 if (onSelectSku) onSelectSku(s);
-                const resolved = resolveLayout(activeProduct.id, s.packSize, templates && templates.length > 0 ? templates : [template], packProfiles);
+                const resolved = resolveLayout(activeProduct.id, s.packSize, s.packType || activePackagingType, templates && templates.length > 0 ? templates : [template], packProfiles);
                 setTemplate(resolved.template);
+                latestTemplateRef.current = resolved.template;
                 setSelectedObjectId(resolved.template.objects[0]?.id || null);
                 setHistory([]);
                 setRedoStack([]);

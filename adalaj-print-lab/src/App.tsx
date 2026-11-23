@@ -30,10 +30,15 @@ import type {
 import { 
   resolveLayout, 
   normalizePackSize,
+  normalizePackType,
+  formatPackTypeLabel,
   buildPackDefaultTemplate, 
   buildSkuOverrideTemplate, 
   getSkuOverrideTemplateId,
+  getLegacySkuOverrideTemplateId,
   getPackDefaultTemplateId,
+  getLegacyPackDefaultTemplateId,
+  STANDARD_PACKAGING_TYPES,
   default100gTemplate,
   default500gTemplate,
   turmeric100gOverrideTemplate,
@@ -482,6 +487,9 @@ export default function App() {
   const handleUpdateSku = async (updated: SKU) => {
     await db.skus.put(updated);
     setSkus(prev => prev.map(s => s.id === updated.id ? updated : s));
+    if (activeSku?.id === updated.id) {
+      setActiveSku(updated);
+    }
     await saveUniversalSnapshot();
   };
 
@@ -681,29 +689,48 @@ export default function App() {
     await saveUniversalSnapshot();
   };
 
-  // Tier 1: Save General Default for all packages of this pack size
-  const handleSavePackSizeDefault = async (tmplToSave: Template, packSize: string, currentProductId?: string) => {
+  // Tier 1: Save General Default for all packages of this pack size & packaging type
+  const handleSavePackSizeDefault = async (tmplToSave: Template, packSize: string, packTypeOrCurrentProdId?: string, currentProductId?: string) => {
+    let packType: string | undefined = undefined;
+    let prodId: string | undefined = currentProductId;
+
+    if (packTypeOrCurrentProdId && packTypeOrCurrentProdId.startsWith('prod_')) {
+      prodId = packTypeOrCurrentProdId;
+      packType = tmplToSave.packTypeScope || 'standup_pouch';
+    } else {
+      packType = packTypeOrCurrentProdId || tmplToSave.packTypeScope || 'standup_pouch';
+    }
+
     const norm = normalizePackSize(packSize);
-    const targetId = getPackDefaultTemplateId(packSize);
-    const packDefaultTmpl = buildPackDefaultTemplate(tmplToSave, packSize);
+    const normType = normalizePackType(packType);
+    const targetId = getPackDefaultTemplateId(packSize, normType);
+    const legacyTargetId = getLegacyPackDefaultTemplateId(packSize);
+    const packDefaultTmpl = buildPackDefaultTemplate(tmplToSave, packSize, normType);
 
     const allDbTemplates = await db.templates.toArray();
 
-    // 1. Remove ANY previous template that served as the default for this pack size
+    // 1. Remove ANY previous template that served as the default for this pack size & packaging type
     let updatedTemplates = allDbTemplates.filter(t => 
       t.id !== targetId && 
-      !(t.packSizeScope === norm && t.isPackSizeDefault) &&
-      !(norm === '100g' && t.id === 'tmpl_adalaj_6line')
+      !(normType === 'standup_pouch' && t.id === legacyTargetId) &&
+      !(t.packSizeScope === norm && (t.packTypeScope === normType || (!t.packTypeScope && normType === 'standup_pouch')) && t.isPackSizeDefault) &&
+      !(norm === '100g' && normType === 'standup_pouch' && t.id === 'tmpl_adalaj_6line')
     );
 
     await db.templates.delete(targetId);
-    if (norm === '100g') {
-      await db.templates.delete('tmpl_adalaj_6line');
+    if (normType === 'standup_pouch') {
+      await db.templates.delete(legacyTargetId);
+      if (norm === '100g') {
+        await db.templates.delete('tmpl_adalaj_6line');
+      }
     }
 
-    // 2. Remove all conflicting/seeded overrides for this pack size so every product inherits the new Global Default immediately
+    // 2. Remove all conflicting/seeded overrides for this pack size & type so every product inherits the new Global Default immediately
     const overridesToDelete = allDbTemplates.filter(t => 
-      t.isSkuOverride && (t.packSizeScope === norm || (currentProductId && t.skuOverrideKey === `${currentProductId}_${norm}`))
+      t.isSkuOverride && (
+        (t.packSizeScope === norm && (t.packTypeScope === normType || (!t.packTypeScope && normType === 'standup_pouch'))) ||
+        (prodId && (t.skuOverrideKey === `${prodId}_${norm}_${normType}` || (normType === 'standup_pouch' && t.skuOverrideKey === `${prodId}_${norm}`)))
+      )
     );
     for (const ov of overridesToDelete) {
       await db.templates.delete(ov.id);
@@ -718,11 +745,12 @@ export default function App() {
     setActiveTemplate(packDefaultTmpl);
     localStorage.setItem('als_active_template_id', packDefaultTmpl.id);
 
+    const typeLabel = formatPackTypeLabel(normType);
     await db.auditLogs.put({
       id: `audit_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
       timestamp: new Date().toISOString(),
       action: 'PACK_SIZE_DEFAULT_SAVED',
-      details: `Saved new Global Default layout for all ${packSize} packages across all products. Conflicting custom override cleared.`,
+      details: `Saved new Global Default layout for all ${packSize} ${typeLabel} packages across all products. Conflicting custom override cleared.`,
       user: 'Operator',
       undoable: true
     });
@@ -731,23 +759,29 @@ export default function App() {
     await saveUniversalSnapshot();
   };
 
-  // Tier 2: Save Custom Override specifically for this product & pack size
-  const handleSaveSkuOverride = async (tmplToSave: Template, productId: string, productName: string, packSize: string) => {
+  // Tier 2: Save Custom Override specifically for this product, pack size & packaging type
+  const handleSaveSkuOverride = async (tmplToSave: Template, productId: string, productName: string, packSize: string, packType?: string) => {
     const norm = normalizePackSize(packSize);
-    const skuOverrideTmpl = buildSkuOverrideTemplate(tmplToSave, productId, productName, packSize);
+    const normType = normalizePackType(packType || tmplToSave.packTypeScope);
+    const skuOverrideTmpl = buildSkuOverrideTemplate(tmplToSave, productId, productName, packSize, normType);
     await db.templates.put(skuOverrideTmpl);
     const allDbTemplates = await db.templates.toArray();
-    let updatedTemplates = allDbTemplates.filter(t => t.id !== skuOverrideTmpl.id && t.skuOverrideKey !== `${productId}_${norm}`);
+    let updatedTemplates = allDbTemplates.filter(t => 
+      t.id !== skuOverrideTmpl.id && 
+      t.skuOverrideKey !== `${productId}_${norm}_${normType}` &&
+      t.skuOverrideKey !== `${productId}_${norm}`
+    );
     updatedTemplates = [skuOverrideTmpl, ...updatedTemplates];
     setTemplates(updatedTemplates);
     setActiveTemplate(skuOverrideTmpl);
     localStorage.setItem('als_active_template_id', skuOverrideTmpl.id);
 
+    const typeLabel = formatPackTypeLabel(normType);
     await db.auditLogs.put({
       id: `audit_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
       timestamp: new Date().toISOString(),
       action: 'SKU_OVERRIDE_SAVED',
-      details: `Saved Custom Override layout specifically for ${productName} (${packSize}). General ${packSize} default preserved for other products.`,
+      details: `Saved Custom Override layout specifically for ${productName} (${packSize} ${typeLabel}). General ${packSize} default preserved for other products.`,
       user: 'Operator',
       undoable: true
     });
@@ -757,22 +791,31 @@ export default function App() {
   };
 
   // Revert Custom Override back to General Pack Size Default
-  const handleRevertSkuOverride = async (productId: string, packSize: string) => {
+  const handleRevertSkuOverride = async (productId: string, packSize: string, packType?: string) => {
     const norm = normalizePackSize(packSize);
-    const overrideId = getSkuOverrideTemplateId(productId, packSize);
+    const normType = normalizePackType(packType);
+    const overrideId = getSkuOverrideTemplateId(productId, packSize, normType);
+    const legacyOverrideId = getLegacySkuOverrideTemplateId(productId, packSize);
     await db.templates.delete(overrideId);
-    const updatedTemplates = templates.filter(t => t.id !== overrideId && t.skuOverrideKey !== `${productId}_${norm}`);
+    await db.templates.delete(legacyOverrideId);
+    const updatedTemplates = templates.filter(t => 
+      t.id !== overrideId && 
+      t.id !== legacyOverrideId && 
+      t.skuOverrideKey !== `${productId}_${norm}_${normType}` &&
+      t.skuOverrideKey !== `${productId}_${norm}`
+    );
     setTemplates(updatedTemplates);
 
     // Re-resolve layout from general default
-    const resolved = resolveLayout(productId, packSize, updatedTemplates, packProfiles);
+    const resolved = resolveLayout(productId, packSize, normType, updatedTemplates, packProfiles);
     setActiveTemplate(resolved.template);
 
+    const typeLabel = formatPackTypeLabel(normType);
     await db.auditLogs.put({
       id: `audit_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
       timestamp: new Date().toISOString(),
       action: 'SKU_OVERRIDE_REVERTED',
-      details: `Reverted custom override for ${productId} (${packSize}) back to general ${packSize} default layout.`,
+      details: `Reverted custom override for ${productId} (${packSize} ${typeLabel}) back to general ${packSize} default layout.`,
       user: 'Operator',
       undoable: true
     });
@@ -1007,7 +1050,7 @@ export default function App() {
               if (pSku) {
                 setActiveSku(pSku);
                 localStorage.setItem('als_active_sku_id', pSku.id);
-                const resolved = resolveLayout(p.id, pSku.packSize, templates, packProfiles);
+                const resolved = resolveLayout(p.id, pSku.packSize, pSku.packType || 'standup_pouch', templates, packProfiles);
                 setActiveTemplate(resolved.template);
               }
             }}
@@ -1018,14 +1061,14 @@ export default function App() {
               if (p) {
                 setActiveProduct(p);
                 localStorage.setItem('als_active_product_id', p.id);
-                const resolved = resolveLayout(p.id, s.packSize, templates, packProfiles);
+                const resolved = resolveLayout(p.id, s.packSize, s.packType || 'standup_pouch', templates, packProfiles);
                 setActiveTemplate(resolved.template);
               }
             }}
             onSaveTemplate={handleSaveTemplate}
-            onSavePackDefault={(tmpl, packSize, currentProdId) => handleSavePackSizeDefault(tmpl, packSize, currentProdId || activeProduct?.id)}
-            onSaveSkuOverride={handleSaveSkuOverride}
-            onRevertSkuOverride={handleRevertSkuOverride}
+            onSavePackDefault={(tmpl, packSize, packType, currentProdId) => handleSavePackSizeDefault(tmpl, packSize, packType, currentProdId || activeProduct?.id)}
+            onSaveSkuOverride={(tmpl, prodId, prodName, packSize, packType) => handleSaveSkuOverride(tmpl, prodId, prodName, packSize, packType)}
+            onRevertSkuOverride={(prodId, packSize, packType) => handleRevertSkuOverride(prodId, packSize, packType)}
             onTemplateChange={handleTemplateChange}
             onUpdateBatch={handleUpdateBatch}
             onUpdateSku={handleUpdateSku}

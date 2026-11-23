@@ -212,7 +212,8 @@ export interface Template {
   customHeightPx?: number; // Direct 1:1 pixel height override (e.g. 1181 px)
   customDownloadOrientation?: '1to1' | 'rotate90' | 'rotate180' | 'rotate270';
   packSizeScope?: string;  // Normalized pack size, e.g. "100g", "500g"
-  skuOverrideKey?: string; // Product + pack size key, e.g. "prod_adtp_500g"
+  packTypeScope?: string;  // Normalized packaging type, e.g. "standup_pouch", "flat_pouch", "jar", "bottle"
+  skuOverrideKey?: string; // Product + pack size + pack type key, e.g. "prod_adtp_500g_standup_pouch"
   isPackSizeDefault?: boolean;
   isSkuOverride?: boolean;
   createdAt: string;
