@@ -36,11 +36,16 @@ import { renderTemplateToCanvas, canvasTo1BitBmp, canvasToStandardBmp, createExp
 import { fitObjectsToBand, validateTemplateQuality, type QualityIssue } from '../../services/fitEngine';
 import { buildPassPlan } from '../../services/passPlanner';
 import { hardwareManager, type HardwareTransportType, type HardwareLogEntry } from '../../services/hardwareAdapters';
-import { resolveLayout } from '../../services/layoutRegistry';
+import { 
+  resolveLayout, 
+  normalizePackSize, 
+  normalizePackType, 
+  formatPackTypeLabel, 
+  STANDARD_PACKAGING_TYPES 
+} from '../../services/layoutRegistry';
 import { createImmutablePrintJobSnapshot, runPreflightCheck } from '../../domain/printJob';
 import { db, saveUniversalSnapshot } from '../../services/db';
 import { parseDateInput, formatCalendarDateDMY, formatCalendarDateISO, calculateBestBeforeDate } from '../../domain/dates';
-import { normalizePackSize } from '../../services/layoutRegistry';
 
 interface PrintViewProps {
   batches: Batch[];
@@ -218,13 +223,52 @@ export const PrintView: React.FC<PrintViewProps> = ({
     }
   }, [currentBatch, selectedAllocId]);
 
-  // Dynamically resolve template for exact selected allocation (WF-002, PR-08) or immutable reprint snapshot (HIST-02)
+  // Active packaging type for current print session
+  const [activePackType, setActivePackType] = useState<string>(() => {
+    return normalizePackType(template?.packTypeScope || 'standup_pouch');
+  });
+
+  // Keep activePackType in sync if user selected a different allocation or if template prop changes
+  useEffect(() => {
+    if (template?.packTypeScope) {
+      setActivePackType(normalizePackType(template.packTypeScope));
+    } else if (currentAlloc) {
+      const allocSku = skus.find(s => s.id === currentAlloc.skuId) || skus.find(s => s.productId === currentProduct?.id && normalizePackSize(s.packSize) === normalizePackSize(currentAlloc.packSize));
+      if (allocSku?.packType) {
+        setActivePackType(normalizePackType(allocSku.packType));
+      }
+    }
+  }, [template?.id, template?.packTypeScope, currentAlloc?.id, currentAlloc?.packSize, currentProduct?.id, skus]);
+
+  // Dynamically resolve template for exact selected allocation and packaging type (WF-002, PR-08) or immutable reprint snapshot (HIST-02)
   const activeTemplate = useMemo(() => {
     if (reprintJob?.templateSnapshot) return reprintJob.templateSnapshot;
-    if (!currentProduct || !currentAlloc || !templates || templates.length === 0) return template;
-    const resolved = resolveLayout(currentProduct.id, currentAlloc.packSize, templates, packProfiles || [packProfile]);
+    if (!currentProduct || !currentAlloc) return template;
+
+    const normAllocSize = normalizePackSize(currentAlloc.packSize);
+    const normType = normalizePackType(activePackType);
+
+    // If template passed in as prop directly matches current product/alloc pack size and active packaging type, use it directly!
+    // (Crucial for seamless Designer -> Print transitions with live custom overrides)
+    if (
+      template &&
+      template.packSizeScope === normAllocSize &&
+      (normalizePackType(template.packTypeScope) === normType || (!template.packTypeScope && normType === 'standup_pouch'))
+    ) {
+      return template;
+    }
+
+    if (!templates || templates.length === 0) return template;
+
+    const resolved = resolveLayout(
+      currentProduct.id,
+      currentAlloc.packSize,
+      normType,
+      templates,
+      packProfiles || [packProfile]
+    );
     return resolved.template || template;
-  }, [reprintJob, currentProduct?.id, currentAlloc?.packSize, templates, packProfiles, template, packProfile]);
+  }, [reprintJob, currentProduct?.id, currentAlloc?.packSize, activePackType, templates, packProfiles, template, packProfile]);
 
   // Derived values memoized with self-healing calibrated MRP/Date/Batch (P0-03, PR-09)
   const values = useMemo<Record<string, string>>(() => {
@@ -1135,6 +1179,30 @@ export const PrintView: React.FC<PrintViewProps> = ({
                 </div>
               )}
 
+              {/* Packaging Type Selector for Active Allocation */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between text-xs">
+                  <label htmlFor="print-pack-type-select" className="text-zinc-400 font-medium">Packaging Type</label>
+                  <span className="text-[10px] text-cyan-400 font-mono font-semibold">
+                    {formatPackTypeLabel(activePackType)}
+                  </span>
+                </div>
+                <select
+                  id="print-pack-type-select"
+                  name="printPackType"
+                  aria-label="Packaging Type for Print"
+                  value={activePackType}
+                  onChange={e => setActivePackType(normalizePackType(e.target.value))}
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-1.5 text-cyan-300 font-medium text-xs focus:outline-hidden cursor-pointer"
+                >
+                  {STANDARD_PACKAGING_TYPES.map(pt => (
+                    <option key={pt.id} value={pt.id} className="bg-zinc-900 text-cyan-400">
+                      {pt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               {/* Universal Live Date Control (MFD & Expiry) */}
               {currentBatch && currentAlloc && (
                 <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800 space-y-2">
@@ -1485,6 +1553,18 @@ export const PrintView: React.FC<PrintViewProps> = ({
                     <CheckCircle2 className="w-3 h-3" />
                     Zero Edge Loss (Swath Safe)
                   </span>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-950/80 text-cyan-300 border border-cyan-500/40 font-semibold">
+                    {formatPackTypeLabel(activePackType)}
+                  </span>
+                  {activeTemplate.isSkuOverride ? (
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-950/80 text-amber-300 border border-amber-500/40 font-semibold">
+                      Custom ({currentProduct?.shortCode || 'SKU'})
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-500/40 font-semibold">
+                      Global Default
+                    </span>
+                  )}
                 </div>
                 <p className="text-xs text-zinc-400 font-mono">
                   {machine.name} • {machine.technology} • {machine.printBandMm}mm swath ({Math.round(machine.printBandMm * (300 / 25.4))}px) @ {machine.defaultDpi} DPI

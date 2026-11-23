@@ -1081,7 +1081,9 @@ export default function App() {
           const printAlloc = (printAllocId ? printBatch?.allocations.find(a => a.id === printAllocId) : null) || printBatch?.allocations[0];
           const printPackSize = printAlloc?.packSize || activeSku?.packSize || '100 g';
           const printProductId = printBatch?.productId || activeProduct?.id || '';
-          const resolvedPrintTmpl = resolveLayout(printProductId, printPackSize, templates, packProfiles).template;
+          const printAllocSku = skus.find(s => s.id === printAlloc?.skuId) || skus.find(s => s.productId === printProductId && normalizePackSize(s.packSize) === normalizePackSize(printPackSize));
+          const printPackType = activeTemplate?.packTypeScope || printAllocSku?.packType || activeSku?.packType || 'standup_pouch';
+          const resolvedPrintTmpl = resolveLayout(printProductId, printPackSize, printPackType, templates, packProfiles).template;
           return (
             <PrintView
               batches={batches}
@@ -1091,7 +1093,7 @@ export default function App() {
               skus={skus}
               templates={templates}
               packProfiles={packProfiles}
-              template={resolvedPrintTmpl || activeTemplate || templates[0]}
+              template={activeTemplate || resolvedPrintTmpl || templates[0]}
               machine={activeMachine || machines[0]}
               packProfile={activePackProfile || packProfiles[0]}
               reprintJob={reprintJob}

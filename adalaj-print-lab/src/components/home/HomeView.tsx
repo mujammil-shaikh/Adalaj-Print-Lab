@@ -226,11 +226,12 @@ export const HomeView: React.FC<HomeViewProps> = ({
   // Resolve truthful layout matching Pack View Designer ground-truth
   const effectiveTemplate = useMemo(() => {
     if (currentProduct && activeSku && templates && templates.length > 0) {
-      const resolved = resolveLayout(currentProduct.id, activeSku.packSize, templates, packProfiles);
+      const packType = activeSku.packType || template?.packTypeScope || 'standup_pouch';
+      const resolved = resolveLayout(currentProduct.id, activeSku.packSize, packType, templates, packProfiles);
       return resolved.template;
     }
     return template;
-  }, [currentProduct?.id, activeSku?.packSize, templates, packProfiles, template]);
+  }, [currentProduct?.id, activeSku?.packSize, activeSku?.packType, templates, packProfiles, template]);
 
   // Update canvas/raster preview
   useEffect(() => {
