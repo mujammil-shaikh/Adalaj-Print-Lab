@@ -215,12 +215,34 @@ export default function App() {
       null;
 
     const savedTemplateId = localStorage.getItem('als_active_template_id');
+    const savedDraftStr = localStorage.getItem('als_active_template_draft');
     let defaultTemplate: Template | null = null;
-    if (savedTemplateId) {
+    if (savedDraftStr) {
+      try {
+        const parsed = JSON.parse(savedDraftStr);
+        if (parsed && parsed.id && parsed.objects && Array.isArray(parsed.objects)) {
+          const normSize = normalizePackSize(resolvedSku?.packSize || '100g');
+          if (parsed.id === savedTemplateId || parsed.packSizeScope === normSize) {
+            defaultTemplate = parsed;
+            const existingIdx = currentTmpls.findIndex(t => t.id === parsed.id);
+            if (existingIdx >= 0) {
+              currentTmpls[existingIdx] = parsed;
+            } else {
+              currentTmpls.push(parsed);
+            }
+            await db.templates.put(parsed);
+          }
+        }
+      } catch (e) {
+        console.error('Failed to parse active template draft:', e);
+      }
+    }
+    if (!defaultTemplate && savedTemplateId) {
       defaultTemplate = currentTmpls.find(t => t.id === savedTemplateId) || null;
     }
     if (!defaultTemplate) {
-      const initialResolved = resolveLayout(resolvedProd?.id || '', resolvedSku?.packSize || '100 g', currentTmpls, packs);
+      const pType = localStorage.getItem('als_active_pack_type') || resolvedSku?.packType || 'flat_pouch';
+      const initialResolved = resolveLayout(resolvedProd?.id || '', resolvedSku?.packSize || '100 g', pType, currentTmpls, packs);
       defaultTemplate = initialResolved.template;
     }
 
@@ -725,16 +747,22 @@ export default function App() {
       }
     }
 
-    // 2. Remove all conflicting/seeded overrides for this pack size & type so every product inherits the new Global Default immediately
-    const overridesToDelete = allDbTemplates.filter(t => 
-      t.isSkuOverride && (
-        (t.packSizeScope === norm && (t.packTypeScope === normType || (!t.packTypeScope && normType === 'standup_pouch'))) ||
-        (prodId && (t.skuOverrideKey === `${prodId}_${norm}_${normType}` || (normType === 'standup_pouch' && t.skuOverrideKey === `${prodId}_${norm}`)))
-      )
-    );
-    for (const ov of overridesToDelete) {
-      await db.templates.delete(ov.id);
-      updatedTemplates = updatedTemplates.filter(t => t.id !== ov.id);
+    // 2. Remove ONLY this product's override (if any) so this product immediately uses the new Global Default
+    // Preserves all other products' independent custom overrides intact!
+    if (prodId) {
+      const overrideKey = `${prodId}_${norm}_${normType}`;
+      const legacyOverrideKey = `${prodId}_${norm}`;
+      const overridesToDelete = allDbTemplates.filter(t => 
+        t.isSkuOverride && (
+          t.skuOverrideKey === overrideKey ||
+          (normType === 'standup_pouch' && t.skuOverrideKey === legacyOverrideKey) ||
+          t.id === getSkuOverrideTemplateId(prodId, packSize, normType)
+        )
+      );
+      for (const ov of overridesToDelete) {
+        await db.templates.delete(ov.id);
+        updatedTemplates = updatedTemplates.filter(t => t.id !== ov.id);
+      }
     }
 
     // 3. Save new default at the top of templates so it resolves first
@@ -972,7 +1000,8 @@ export default function App() {
               if (pSku) {
                 setActiveSku(pSku);
                 localStorage.setItem('als_active_sku_id', pSku.id);
-                const resolved = resolveLayout(p.id, pSku.packSize, templates, packProfiles);
+                const pType = localStorage.getItem('als_active_pack_type') || pSku.packType || 'flat_pouch';
+                const resolved = resolveLayout(p.id, pSku.packSize, pType, templates, packProfiles);
                 setActiveTemplate(resolved.template);
               }
             }}
@@ -1050,7 +1079,8 @@ export default function App() {
               if (pSku) {
                 setActiveSku(pSku);
                 localStorage.setItem('als_active_sku_id', pSku.id);
-                const resolved = resolveLayout(p.id, pSku.packSize, pSku.packType || 'standup_pouch', templates, packProfiles);
+                const pType = localStorage.getItem('als_active_pack_type') || pSku.packType || activeTemplate?.packTypeScope || 'flat_pouch';
+                const resolved = resolveLayout(p.id, pSku.packSize, pType, templates, packProfiles);
                 setActiveTemplate(resolved.template);
               }
             }}
@@ -1061,7 +1091,8 @@ export default function App() {
               if (p) {
                 setActiveProduct(p);
                 localStorage.setItem('als_active_product_id', p.id);
-                const resolved = resolveLayout(p.id, s.packSize, s.packType || 'standup_pouch', templates, packProfiles);
+                const pType = localStorage.getItem('als_active_pack_type') || s.packType || activeTemplate?.packTypeScope || 'flat_pouch';
+                const resolved = resolveLayout(p.id, s.packSize, pType, templates, packProfiles);
                 setActiveTemplate(resolved.template);
               }
             }}

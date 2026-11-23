@@ -28,6 +28,81 @@ export interface RenderRasterResult {
   };
 }
 
+export interface ExactInkMetrics {
+  width: number;
+  height: number;
+  ascent: number;
+  descent: number;
+  xPos: number;
+}
+
+const inkMetricsCache = new Map<string, ExactInkMetrics>();
+let _metricsCanvas: HTMLCanvasElement | null = null;
+let _metricsCtx: CanvasRenderingContext2D | null = null;
+
+export function getExactTextInkMetrics(
+  text: string,
+  fontFamily: string,
+  fontSizePx: number,
+  fontWeight: string = 'normal',
+  fontStyle: string = 'normal',
+  letterSpacingPx: number = 0
+): ExactInkMetrics {
+  const safeText = text || ' ';
+  const roundedSize = Math.max(4, Math.round(fontSizePx));
+  const roundedSpacing = Math.round(letterSpacingPx * 10) / 10;
+  const cacheKey = `${safeText}|${fontFamily}|${roundedSize}|${fontWeight}|${fontStyle}|${roundedSpacing}`;
+  const cached = inkMetricsCache.get(cacheKey);
+  if (cached) return cached;
+
+  if (typeof document !== 'undefined') {
+    try {
+      if (!_metricsCanvas) {
+        _metricsCanvas = document.createElement('canvas');
+        _metricsCtx = _metricsCanvas.getContext('2d');
+      }
+      if (_metricsCtx) {
+        const weight = fontWeight === 'bold' ? 'bold ' : '';
+        const style = fontStyle === 'italic' ? 'italic ' : '';
+        _metricsCtx.font = `${style}${weight}${roundedSize}px "${fontFamily}", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+        if ('letterSpacing' in _metricsCtx && roundedSpacing) {
+          (_metricsCtx as any).letterSpacing = `${roundedSpacing}px`;
+        }
+        const m = _metricsCtx.measureText(safeText);
+        if (m.actualBoundingBoxAscent !== undefined && m.actualBoundingBoxDescent !== undefined && (m.actualBoundingBoxAscent > 0 || m.actualBoundingBoxDescent > 0)) {
+          const xPos = m.actualBoundingBoxLeft !== undefined ? m.actualBoundingBoxLeft : 0;
+          const calcWidth = Math.max(2, Math.ceil((m.actualBoundingBoxRight !== undefined ? m.actualBoundingBoxRight : m.width) + (m.actualBoundingBoxLeft !== undefined ? m.actualBoundingBoxLeft : 0)));
+          const calcHeight = Math.max(2, Math.ceil(m.actualBoundingBoxAscent + m.actualBoundingBoxDescent));
+          const res: ExactInkMetrics = {
+            width: calcWidth,
+            height: calcHeight,
+            ascent: m.actualBoundingBoxAscent,
+            descent: m.actualBoundingBoxDescent,
+            xPos,
+          };
+          if (inkMetricsCache.size > 500) inkMetricsCache.clear();
+          inkMetricsCache.set(cacheKey, res);
+          return res;
+        }
+      }
+    } catch {
+      // fallback below
+    }
+  }
+
+  const charFactor = fontFamily.toLowerCase().includes('condensed') ? 0.44 : 0.50;
+  const calcWidth = Math.max(2, Math.round(safeText.length * roundedSize * charFactor));
+  const calcHeight = Math.max(2, Math.round(roundedSize * 0.75));
+  const res: ExactInkMetrics = {
+    width: calcWidth,
+    height: calcHeight,
+    ascent: Math.round(roundedSize * 0.72),
+    descent: Math.round(roundedSize * 0.05),
+    xPos: 0,
+  };
+  return res;
+}
+
 /**
  * Generates an official 1-bit Windows Bitmap (BMP) binary ArrayBuffer
  * biBitCount = 1, 2 color entries (0x000000 and 0xFFFFFF), row bytes padded to 4-byte boundaries.
@@ -415,16 +490,35 @@ function renderSingleObject(
   canvasWidthPx?: number,
   canvasHeightPx?: number
 ) {
+  const isTextLike = obj.type === 'text' || obj.type === 'field';
+
+  let text = obj.content || '';
+  if (isTextLike) {
+    if (text.includes('{')) {
+      text = text.replace(/\{(\w+)\}/g, (_, k) => values[k] !== undefined ? values[k] : `{${k}}`);
+    } else if (obj.fieldKey && values[obj.fieldKey] && (!obj.content || obj.content === `{${obj.fieldKey}}`)) {
+      text = values[obj.fieldKey];
+    }
+    if (obj.uppercase) {
+      text = text.toUpperCase();
+    }
+  }
+
+  const fontSizePx = Math.max(4, Math.round(obj.fontSizeMm * dpmm));
+  const letterSpacingPx = (obj.letterSpacingMm || 0) * dpmm;
+  const inkMetrics = isTextLike
+    ? getExactTextInkMetrics(text, obj.fontFamily, fontSizePx, obj.fontWeight, obj.fontStyle, letterSpacingPx)
+    : null;
+
   // Exact 1:1 ground-truth positioning matching Pack View canvas with zero artificial offsets or margins
   const x = obj.x * dpmm;
   const y = obj.y * dpmm;
-  const w = obj.width * dpmm;
-  const h = obj.height * dpmm;
+  const w = isTextLike && inkMetrics ? inkMetrics.width : obj.width * dpmm;
+  const h = isTextLike && inkMetrics ? inkMetrics.height : obj.height * dpmm;
 
-  const isTextLike = obj.type === 'text' || obj.type === 'field';
-  const alignPivotX = obj.alignment === 'center' ? (w / 2) : obj.alignment === 'right' ? w : 0;
-  const alignPivotY = h / 2;
-  const originPivotX = isTextLike ? alignPivotX : (w / 2);
+  const originPivotX = isTextLike 
+    ? (obj.alignment === 'center' ? (w / 2) : obj.alignment === 'right' ? w : 0)
+    : (w / 2);
   const originPivotY = h / 2;
 
   const scaleX = (obj.mirrorX ? -1 : 1) * ((obj.horizontalStretchPercent || 100) / 100);
@@ -444,29 +538,19 @@ function renderSingleObject(
   // 3. Move back to top-left of the object
   ctx.translate(-originPivotX, -originPivotY);
 
-  // 4. Clip to the object's box (which now scales WITH the object, preventing unwanted text cutoff)
-  ctx.beginPath();
-  ctx.rect(0, 0, w, h);
-  ctx.clip();
+  // 4. Clip ONLY non-text objects to prevent font cutting/trimming on ascenders, descenders, and stretched glyphs
+  if (!isTextLike) {
+    ctx.beginPath();
+    ctx.rect(0, 0, w, h);
+    ctx.clip();
+  }
 
-  if (obj.type === 'text' || obj.type === 'field') {
-    let text = obj.content || '';
-    if (text.includes('{')) {
-      text = text.replace(/\{(\w+)\}/g, (_, k) => values[k] !== undefined ? values[k] : `{${k}}`);
-    } else if (obj.fieldKey && values[obj.fieldKey] && (!obj.content || obj.content === `{${obj.fieldKey}}`)) {
-      text = values[obj.fieldKey];
-    }
-
-    if (obj.uppercase) {
-      text = text.toUpperCase();
-    }
-
-    // Exact 1:1 font size matching Pack View mm scale exactly - no artificial reduction or shrinking
-    const fontSizePx = Math.max(4, Math.round(obj.fontSizeMm * dpmm));
+  if (isTextLike) {
     const fontStyle = obj.fontStyle === 'italic' ? 'italic ' : '';
     const fontWeight = obj.fontWeight === 'bold' ? 'bold ' : '';
-    ctx.font = `${fontStyle}${fontWeight}${fontSizePx}px ${obj.fontFamily}, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
-    ctx.textBaseline = 'middle';
+    ctx.font = `${fontStyle}${fontWeight}${fontSizePx}px "${obj.fontFamily}", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+    ctx.textBaseline = 'alphabetic';
+    ctx.textAlign = 'start';
 
     if (obj.invert) {
       ctx.fillStyle = '#000000';
@@ -489,20 +573,11 @@ function renderSingleObject(
       } catch {}
     }
 
-    let textX = 0;
-    if (obj.alignment === 'center') {
-      ctx.textAlign = 'center';
-      textX = w / 2;
-    } else if (obj.alignment === 'right') {
-      ctx.textAlign = 'right';
-      textX = w;
-    } else {
-      ctx.textAlign = 'left';
-      textX = 0;
-    }
+    const textX = inkMetrics?.xPos || 0;
+    const textY = inkMetrics?.ascent || Math.round(fontSizePx * 0.72);
 
     // Direct 1:1 text rendering identical to Pack View canvas
-    ctx.fillText(text, textX, h / 2);
+    ctx.fillText(text, textX, textY);
   } else {
     // Non-text objects (line, rectangle, rounded_rect, ellipse, image, barcode, qr)
     if (obj.type === 'line') {
@@ -873,6 +948,7 @@ export function renderTemplateToSvgString(
     elementsSvg += `
       <!-- Object: ${escapeXml(obj.id)} (${obj.type}) -->
       <g transform="translate(${obj.x}, ${obj.y}) translate(${originPivotX}, ${originPivotY}) rotate(${rot}) scale(${mirrorX * scaleX}, ${mirrorY * scaleY}) translate(${-originPivotX}, ${-originPivotY})">
+        ${isTextLike ? innerContent : `
         <defs>
           <clipPath id="${clipId}">
             <rect x="0" y="0" width="${w}" height="${h}" />
@@ -881,6 +957,7 @@ export function renderTemplateToSvgString(
         <g clip-path="url(#${clipId})">
           ${innerContent}
         </g>
+        `}
       </g>
     `;
   }

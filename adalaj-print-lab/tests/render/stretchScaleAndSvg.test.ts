@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { renderTemplateToSvgString, canvasToStandardBmp, canvasTo1BitBmp } from '../../src/services/printTransform';
+import { 
+  renderTemplateToSvgString, 
+  canvasToStandardBmp, 
+  canvasTo1BitBmp,
+  renderTemplateToCanvas,
+  getExactTextInkMetrics
+} from '../../src/services/printTransform';
 import type { Template, MachineProfile } from '../../src/types';
 
 describe('Dual-Axis Scale, Condense & SVG Vector Engine', () => {
@@ -206,5 +212,20 @@ describe('Dual-Axis Scale, Condense & SVG Vector Engine', () => {
     // biXPelsPerMeter at offset 38: 1200 * 39.3701 ≈ 47244
     expect(view.getInt32(38, true)).toBe(47244);
     expect(view.getUint16(28, true)).toBe(1); // 1-bit color depth
+  });
+
+  it('measures text ink metrics with non-zero dimensions and ascents', () => {
+    const metrics = getExactTextInkMetrics('500 G', 'Roboto Condensed', 30, 'bold');
+    expect(metrics).toBeDefined();
+    expect(metrics.width).toBeGreaterThan(0);
+    expect(metrics.height).toBeGreaterThan(0);
+    expect(metrics.ascent).toBeGreaterThan(0);
+  });
+
+  it('renders template with stretched text to canvas without clipping errors', () => {
+    const canvas = renderTemplateToCanvas(mockTemplate, mockMachine, mockValues);
+    expect(canvas).toBeDefined();
+    expect(canvas.width).toBeGreaterThan(0);
+    expect(canvas.height).toBeGreaterThan(0);
   });
 });

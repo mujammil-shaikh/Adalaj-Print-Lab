@@ -18,7 +18,7 @@ import type {
   AuditLogEntry,
   LooseStockRecord
 } from '../types';
-import { default500gTemplate, normalizePackSize } from './layoutRegistry';
+import { default500gTemplate, turmeric500gOverrideTemplate, normalizePackSize } from './layoutRegistry';
 import { parseDateInput, formatCalendarDateDMY, formatCalendarDateISO, calculateBestBeforeDate } from '../domain/dates';
 
 export class LabelStudioDatabase extends Dexie {
@@ -887,6 +887,17 @@ async function doInitializeDatabase() {
       name: 'Default 500 g Layout',
       description: 'General visual layout default for all 500 g packaging across all products (45 mm travel length, 12.5 mm nozzle band, enlarged high-impact MRP typography)',
       packSizeScope: '500g',
+      packTypeScope: 'flat_pouch',
+      isPackSizeDefault: true,
+      isSkuOverride: false
+    };
+    const pack500gFlatPouchDefaultTmpl: Template = {
+      ...turmeric500gOverrideTemplate,
+      id: 'tmpl_pack_default_500g_flat_pouch',
+      name: 'Default 500 g Flat Pouch Layout',
+      description: 'General visual layout default for all 500 g Flat Pouch packaging across all products',
+      packSizeScope: '500g',
+      packTypeScope: 'flat_pouch',
       isPackSizeDefault: true,
       isSkuOverride: false
     };
@@ -898,7 +909,25 @@ async function doInitializeDatabase() {
       isPackSizeDefault: false,
       skuOverrideKey: 'prod_adtp_100g'
     };
-    await db.templates.bulkPut([defaultTemplate, pack100gDefaultTmpl, pack500gDefaultTmpl, turmeric100gTmpl]);
+    const turmeric500gFlatPouchTmpl: Template = {
+      ...turmeric500gOverrideTemplate,
+      id: 'tmpl_sku_override_prod_adtp_500g_flat_pouch',
+      name: 'Turmeric Powder (500 g Flat Pouch) Custom Override',
+      description: 'Specific calibrated placement for Turmeric Powder 500 g Flat Pouch',
+      packSizeScope: '500g',
+      packTypeScope: 'flat_pouch',
+      isSkuOverride: true,
+      isPackSizeDefault: false,
+      skuOverrideKey: 'prod_adtp_500g_flat_pouch'
+    };
+    await db.templates.bulkPut([
+      defaultTemplate, 
+      pack100gDefaultTmpl, 
+      pack500gDefaultTmpl, 
+      pack500gFlatPouchDefaultTmpl,
+      turmeric100gTmpl,
+      turmeric500gFlatPouchTmpl
+    ]);
     await db.batches.bulkPut([redChilliBatch, historicalBatch]);
 
     const seedLooseStock: LooseStockRecord = {

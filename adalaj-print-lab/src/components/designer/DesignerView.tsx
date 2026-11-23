@@ -66,7 +66,16 @@ import type {
 } from '../../types';
 import { fitObjectsToBand, validateTemplateQuality, type QualityIssue } from '../../services/fitEngine';
 import { getLayoutAdvice, buildPassPlan } from '../../services/passPlanner';
-import { renderTemplateToCanvas, canvasTo1BitBmp, canvasToStandardBmp, renderBarcodeSvgString, renderTemplateToSvgString } from '../../services/printTransform';
+import { 
+  renderTemplateToCanvas, 
+  canvasTo1BitBmp, 
+  canvasToStandardBmp, 
+  renderBarcodeSvgString, 
+  renderTemplateToSvgString,
+  getExactTextInkMetrics,
+  type ExactInkMetrics
+} from '../../services/printTransform';
+export { getExactTextInkMetrics, type ExactInkMetrics };
 import { 
   resolveLayout, 
   buildPackDefaultTemplate, 
@@ -86,81 +95,6 @@ import {
 } from '../../services/layoutRegistry';
 import { parseDateInput, calculateBestBeforeDate, formatCalendarDateDMY, formatCalendarDateISO, extractDateFromText } from '../../domain/dates';
 import { db, saveUniversalSnapshot } from '../../services/db';
-
-export interface ExactInkMetrics {
-  width: number;
-  height: number;
-  ascent: number;
-  descent: number;
-  xPos: number;
-}
-
-const inkMetricsCache = new Map<string, ExactInkMetrics>();
-let _metricsCanvas: HTMLCanvasElement | null = null;
-let _metricsCtx: CanvasRenderingContext2D | null = null;
-
-export function getExactTextInkMetrics(
-  text: string,
-  fontFamily: string,
-  fontSizePx: number,
-  fontWeight: string = 'normal',
-  fontStyle: string = 'normal',
-  letterSpacingPx: number = 0
-): ExactInkMetrics {
-  const safeText = text || ' ';
-  const roundedSize = Math.max(6, Math.round(fontSizePx));
-  const roundedSpacing = Math.round(letterSpacingPx * 10) / 10;
-  const cacheKey = `${safeText}|${fontFamily}|${roundedSize}|${fontWeight}|${fontStyle}|${roundedSpacing}`;
-  const cached = inkMetricsCache.get(cacheKey);
-  if (cached) return cached;
-
-  if (typeof document !== 'undefined') {
-    try {
-      if (!_metricsCanvas) {
-        _metricsCanvas = document.createElement('canvas');
-        _metricsCtx = _metricsCanvas.getContext('2d');
-      }
-      if (_metricsCtx) {
-        const weight = fontWeight === 'bold' ? 'bold ' : '';
-        const style = fontStyle === 'italic' ? 'italic ' : '';
-        _metricsCtx.font = `${style}${weight}${roundedSize}px "${fontFamily}", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
-        if ('letterSpacing' in _metricsCtx && roundedSpacing) {
-          (_metricsCtx as any).letterSpacing = `${roundedSpacing}px`;
-        }
-        const m = _metricsCtx.measureText(safeText);
-        if (m.actualBoundingBoxAscent !== undefined && m.actualBoundingBoxDescent !== undefined) {
-          const xPos = m.actualBoundingBoxLeft;
-          const calcWidth = Math.max(2, Math.ceil(m.actualBoundingBoxRight + m.actualBoundingBoxLeft));
-          const calcHeight = Math.max(2, Math.ceil(m.actualBoundingBoxAscent + m.actualBoundingBoxDescent));
-          const res: ExactInkMetrics = {
-            width: calcWidth,
-            height: calcHeight,
-            ascent: m.actualBoundingBoxAscent,
-            descent: m.actualBoundingBoxDescent,
-            xPos,
-          };
-          if (inkMetricsCache.size > 500) inkMetricsCache.clear();
-          inkMetricsCache.set(cacheKey, res);
-          return res;
-        }
-      }
-    } catch {
-      // fallback below
-    }
-  }
-
-  const charFactor = fontFamily.toLowerCase().includes('condensed') ? 0.44 : 0.50;
-  const calcWidth = Math.max(2, Math.round(safeText.length * roundedSize * charFactor));
-  const calcHeight = Math.max(2, Math.round(roundedSize * 0.75));
-  const res: ExactInkMetrics = {
-    width: calcWidth,
-    height: calcHeight,
-    ascent: Math.round(roundedSize * 0.72),
-    descent: Math.round(roundedSize * 0.05),
-    xPos: 0,
-  };
-  return res;
-}
 
 interface DesignerViewProps {
   template: Template;
@@ -372,6 +306,8 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       }
       await db.templates.put(tmplToSave);
       localStorage.setItem('als_active_template_id', tmplToSave.id);
+      localStorage.setItem('als_active_template_draft', JSON.stringify(tmplToSave));
+      localStorage.setItem(`als_draft_${tmplToSave.id}`, JSON.stringify(tmplToSave));
       if (onTemplateChange) onTemplateChange(tmplToSave);
       await saveUniversalSnapshot();
     } catch (err) {
@@ -382,6 +318,21 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
   const flushRef = useRef(flushTemplateToStorage);
   flushRef.current = flushTemplateToStorage;
 
+  // Immediate Synchronous Draft Persistence: sync to localStorage and memory on EVERY edit
+  useEffect(() => {
+    if (!template || !template.id) return;
+    try {
+      localStorage.setItem('als_active_template_draft', JSON.stringify(template));
+      localStorage.setItem('als_active_template_id', template.id);
+      localStorage.setItem(`als_draft_${template.id}`, JSON.stringify(template));
+      if (onTemplateChange) {
+        onTemplateChange(template);
+      }
+    } catch (e) {
+      // quota or private mode fallback
+    }
+  }, [template, onTemplateChange]);
+
   // Real-time Auto-Save with Explicit Scope Awareness & Dual-Layer Persistence
   useEffect(() => {
     if (!template || !template.id) return;
@@ -391,14 +342,14 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       const now = new Date();
       const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       setAutoSaveStatus(`Auto-saved ${timeStr}`);
-    }, 300);
+    }, 200);
 
     return () => {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     };
   }, [template]);
 
-  // Handler for Packaging Type dropdown switch
+  // Handler for Packaging Type dropdown switch with instant flush of existing template
   const handlePackTypeChange = async (newType: string) => {
     const normType = normalizePackType(newType);
     if (normType === activePackagingType) return;
@@ -408,7 +359,12 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
       autoSaveTimerRef.current = null;
     }
 
+    if (latestTemplateRef.current) {
+      await flushRef.current(latestTemplateRef.current);
+    }
+
     setActivePackagingType(normType);
+    localStorage.setItem('als_active_pack_type', normType);
 
     if (onUpdateSku && previewSku) {
       const updatedSku: SKU = { ...previewSku, packType: normType };
@@ -431,6 +387,26 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
     setToastMessage(`Packaging type: ${formatPackTypeLabel(normType)} (${previewSku.packSize})`);
     setTimeout(() => setToastMessage(null), 2500);
   };
+
+  // Immediate synchronous flush on beforeunload / pagehide (F5 or tab close)
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (latestTemplateRef.current) {
+        try {
+          const current = latestTemplateRef.current;
+          localStorage.setItem('als_active_template_draft', JSON.stringify(current));
+          localStorage.setItem('als_active_template_id', current.id);
+          localStorage.setItem(`als_draft_${current.id}`, JSON.stringify(current));
+        } catch {}
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener('pagehide', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('pagehide', handleBeforeUnload);
+    };
+  }, []);
 
   // Flush on unmount (e.g. when navigating to Print or Batches tab)
   useEffect(() => {
@@ -1937,12 +1913,15 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                 name="designerProduct"
                 aria-label="Designer active product"
                 value={activeProduct?.id}
-                onChange={e => {
+                onChange={async e => {
                   const p = allProducts.find(prod => prod.id === e.target.value);
                   if (p && onSelectProduct) {
                     if (autoSaveTimerRef.current) {
                       clearTimeout(autoSaveTimerRef.current);
                       autoSaveTimerRef.current = null;
+                    }
+                    if (latestTemplateRef.current) {
+                      await flushRef.current(latestTemplateRef.current);
                     }
                     onSelectProduct(p);
                     const matchedSku = allSkus.find(s => s.productId === p.id && s.packSize === previewSku.packSize && normalizePackType(s.packType) === activePackagingType)
@@ -1957,6 +1936,7 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
                       setSelectedObjectId(resolved.template.objects[0]?.id || null);
                       setHistory([]);
                       setRedoStack([]);
+                      if (onTemplateChange) onTemplateChange(resolved.template);
                     }
                   }
                 }}
@@ -1979,22 +1959,28 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
               name="designerSku"
               aria-label="Designer active SKU"
               value={previewSkuId}
-              onChange={e => {
+              onChange={async e => {
                 const s = productSkus.find(sku => sku.id === e.target.value);
                 if (s) {
                   if (autoSaveTimerRef.current) {
                     clearTimeout(autoSaveTimerRef.current);
                     autoSaveTimerRef.current = null;
                   }
+                  if (latestTemplateRef.current) {
+                    await flushRef.current(latestTemplateRef.current);
+                  }
                   setPreviewSkuId(s.id);
-                  if (s.packType) setActivePackagingType(normalizePackType(s.packType));
+                  const targetPackType = s.packType ? normalizePackType(s.packType) : activePackagingType;
+                  setActivePackagingType(targetPackType);
+                  localStorage.setItem('als_active_pack_type', targetPackType);
                   if (onSelectSku) onSelectSku(s);
-                  const resolved = resolveLayout(activeProduct.id, s.packSize, s.packType || activePackagingType, templates && templates.length > 0 ? templates : [template], packProfiles);
+                  const resolved = resolveLayout(activeProduct.id, s.packSize, targetPackType, templates && templates.length > 0 ? templates : [template], packProfiles);
                   setTemplate(resolved.template);
                   latestTemplateRef.current = resolved.template;
                   setSelectedObjectId(resolved.template.objects[0]?.id || null);
                   setHistory([]);
                   setRedoStack([]);
+                  if (onTemplateChange) onTemplateChange(resolved.template);
                 }
               }}
               className="bg-transparent font-mono font-bold text-amber-400 focus:outline-hidden cursor-pointer text-xs max-w-[100px] truncate"
@@ -4880,22 +4866,28 @@ export const DesignerView: React.FC<DesignerViewProps> = ({
             name="livePreviewSku"
             aria-label="Select SKU for Live Values Preview"
             value={previewSkuId}
-            onChange={e => {
+            onChange={async e => {
               const s = productSkus.find(sku => sku.id === e.target.value);
               if (s) {
                 if (autoSaveTimerRef.current) {
                   clearTimeout(autoSaveTimerRef.current);
                   autoSaveTimerRef.current = null;
                 }
+                if (latestTemplateRef.current) {
+                  await flushRef.current(latestTemplateRef.current);
+                }
                 setPreviewSkuId(s.id);
-                if (s.packType) setActivePackagingType(normalizePackType(s.packType));
+                const targetPackType = s.packType ? normalizePackType(s.packType) : activePackagingType;
+                setActivePackagingType(targetPackType);
+                localStorage.setItem('als_active_pack_type', targetPackType);
                 if (onSelectSku) onSelectSku(s);
-                const resolved = resolveLayout(activeProduct.id, s.packSize, s.packType || activePackagingType, templates && templates.length > 0 ? templates : [template], packProfiles);
+                const resolved = resolveLayout(activeProduct.id, s.packSize, targetPackType, templates && templates.length > 0 ? templates : [template], packProfiles);
                 setTemplate(resolved.template);
                 latestTemplateRef.current = resolved.template;
                 setSelectedObjectId(resolved.template.objects[0]?.id || null);
                 setHistory([]);
                 setRedoStack([]);
+                if (onTemplateChange) onTemplateChange(resolved.template);
               }
             }}
             className="bg-zinc-950 border border-zinc-700 rounded px-2 py-0.5 text-xs text-amber-400 font-mono font-bold focus:outline-hidden cursor-pointer"
